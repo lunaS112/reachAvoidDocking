@@ -36,6 +36,12 @@ python run_experiment.py --mode train --experiment_name Dubins_avoid --dynamics_
 # to learn the reach-avoid problem solution 
 python run_experiment.py --mode train --experiment_name Dubins_RA --dynamics_class Dubins3D --tMax 1 --pretrain --pretrain_iters 1000 --num_epochs 13000 --counter_end 10000 --num_nl 128 --set_mode reach_avoid --lr 5e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 3 --num_MPC_data_samples 500 --numpoints 5000 --use_wandb --wandb_project MPC --wandb_name Dubins_RA --wandb_group Dubins3D --wandb_entity YOUR_WANDB_ACCOUNT
 
+############################################# Docking6D Reach_avoid problem ##########################################
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_clas
+s Docking6D --tMax 1 --pretrain --pretrain_iters 1000 --num_epochs 13000 --counter_end 10000 --num_nl 128 --set_mode reach_avoid --lr 
+5e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 3 --num_MPC_data_samples 500 --numpoints 5000 --use_wandb -
+-wandb_project Docking6D --wandb_name Docking6D_RA --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+
 ############################################## Quadrotor ##########################################
 # To train (exp time: 3h on RTX 4090)
 python run_experiment.py --mode train --experiment_name Quadrotor --use_wandb --wandb_entity YOUR_WANDB_ACCOUNT --wandb_project MPC --wandb_name Quadrotor --wandb_group Quadrotor --dynamics_class Quadrotor --tMax 1 --pretrain --pretrain_iters 1000 --num_epochs 104000 --counter_end 100000 --num_nl 512 --collisionR 0.5 --collective_thrust_max 20 --set_mode avoid --lr 2e-5 --num_MPC_batches 20 

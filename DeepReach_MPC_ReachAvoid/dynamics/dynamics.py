@@ -502,8 +502,239 @@ class Dubins3D(Dynamics):
             'z_axis_idx': 2,
         }
 
+class Docking6D(Dynamics):
+    def __init__(self, set_mode ,mc = 200, orbit_alt = 400 , u_bar = 20.0, u_theta_bar = 1.5):
+        # Defineing dynamic parameters
+        self.orbit_alt = orbit_alt  # Orbital altitude (km)
+        self.u_bar = u_bar  # Maximum control input
+        self.u_theta_bar = u_theta_bar  # Maximum control input for angular velocity
+
+        # Define Chaser spacecraft (Planar)
+        self.mc = mc    # Mass of chaser spacecraft (kg)
+        self.w_c = 1.0  # width of chaser spacecraft (m) (along x-axis)
+        self.h_c = 1.0  # height of chaser spacecraft (m) (along y-axis)
+        
+        # Calculate derived parameters
+        self.jc = self.moment_of_inertia()    # Moment of inertia of chaser spacecraft (kg*m^2)
+        self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
+
+        # Define docking parameters
+        self.eps_p = 0.05 # Position tolerance for docking (m)
+        self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
+        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
+        self.eps_omega = 0.005 # Angular velocity tolerance for docking (rad/s)
+
+        # Define target spacecraft (Planar)
+        self.w_t = 6  # width of target spacecraft (m) (along x-axis)
+        self.h_t = 3  # height of target spacecraft (m) (along y-axis)
+        self.dock_rad = 1.75 # Radius of target spacecraft docking indentation (m)
+
+        # BRAT parameters
+        self.reach_fn_weight = 1.0
+        self.avoid_fn_weight = 1.0
+        self.set_mode = set_mode
+
+        if set_mode == 'reach_avoid':
+            l_type = 'brat_hjivi'
+        else:
+            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+
+        # Not used?
+        #self.eps_var = torch.tensor([1]).cuda()
+        #self.control_init = torch.zeros(1).cuda()
+        
+        # Define state/control space
+        self.state_range_ = torch.tensor(
+            [[-15, 15], [-15, 15], [-2.5, 2.5], [-2.5, 2.5], [-math.pi, math.pi], [-5.0, 5.0]]).cuda()
+        self.control_range_ = torch.tensor(
+            [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
+        
+        # Calculate state mean/var for normalization
+        state_mean_ = (self.state_range_[:, 0]+self.state_range_[:, 1])/2.0
+        state_var_ = (self.state_range_[:, 1]-self.state_range_[:, 0])/2.0
+
+        super().__init__(
+            name="Docking6D",
+            loss_type=l_type, 
+            set_mode=set_mode,
+            state_dim=6,
+            input_dim=8,  # 6 states + 1 time + 1 for periodic transform
+            control_dim=3, 
+            disturbance_dim=0,
+            state_mean=state_mean_.cpu().tolist(),
+            state_var=state_var_.cpu().tolist(),
+            value_mean=0.5,
+            value_var=1,
+            value_normto=0.02,
+            deepReach_model='exact'
+        )
+
+    def mean_motion(self):
+        """Calculate the mean motion based on the orbital altitude."""
+        mu = 3.986004418e14 # Gravitational parameter for Earth (m^3/s^2)
+        r_earth = 6371e3  # Radius of Earth (m)
+        r = r_earth + (self.orbit_alt * 1e3)
+        return torch.sqrt(mu / r**3)
+    
+    def moment_of_inertia(self):
+        """Calculate the moment of inertia for the chaser spacecraft."""
+        # Assuming a rectangular shape for the chaser spacecraft
+        return 1.0/12.0 * (self.mc * (self.w_c**2 + self.h_c**2)) 
+
+    def control_range(self, state):
+        return [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]
+
+    def state_test_range(self):
+        return self.state_range_.cpu().tolist()
+
+    def state_verification_range(self):
+        return self.state_range_.cpu().tolist()
+
+    def equivalent_wrapped_state(self, state):
+        wrapped_state = torch.clone(state)
+        wrapped_state[..., 4] = (
+            wrapped_state[..., 4] + math.pi) % (2 * math.pi) - math.pi
+        return wrapped_state
+
+    def periodic_transform_fn(self, input):
+        output_shape = list(input.shape)
+        output_shape[-1] = output_shape[-1] + 1  # Add one more dimension for cos(theta)
+        transformed_input = torch.zeros(output_shape)
+        
+        # Copy the first 5 elements: [time, x, y, ux, uy]
+        transformed_input[..., :5] = input[..., :5]
+        
+        # Transform the periodic angle theta (at index 4 in state, index 5 in input)
+        transformed_input[..., 5] = torch.sin(input[..., 5] * self.state_var[4])
+        transformed_input[..., 6] = torch.cos(input[..., 5] * self.state_var[4])
+        
+        # Copy the remaining element: omega (at index 5 in state, index 6 in input)
+        transformed_input[..., 7] = input[..., 6]
+        
+        return transformed_input.cuda()
+
+    # Docking6D dynamics (CW equations + rotational dynamics)
+    # \dot px = vx
+    # \dot py = vy
+    # \dot vx = 3*n^2*px + 2*n*vy + u_x/mc
+    # \dot vy = -2*n*vx + u_y/mc
+    # \dot \theta = \omega
+    # \dot \omega = u_theta/jc
+
+    def dsdt(self, state, control, disturbance):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2]
+        dsdt[..., 1] = state[..., 3]
+        dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 1] + control[..., 0] / self.mc
+        dsdt[..., 3] = -2 * self.mean_motion() * state[..., 0] + control[..., 1] / self.mc
+        dsdt[..., 4] = state[..., 5]
+        dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
+        return dsdt
+
+    def reach_fn(self, state):
+        """Signed distance <= 0 if within docking position/velocity tolerances."""
+        px = state[..., 0]
+        py = state[..., 1]
+        vx = state[..., 2]
+        vy = state[..., 3]
+        theta = state[..., 4]
+        omega = state[..., 5]
+        # Distance from allowable box in (px,py,vx,vy)
+        goal = torch.stack([
+            torch.abs(px) - self.eps_p,
+            torch.abs(py) - self.eps_p,
+            torch.abs(vx) - self.eps_v,
+            torch.abs(vy) - self.eps_v,
+            torch.abs(theta - np.pi/2) - self.eps_theta,
+            torch.abs(omega) - self.eps_omega
+        ], axis=-1)
+        return (torch.max(goal, axis=-1))*self.reach_fn_weight
+
+    def avoid_fn(self, state):
+        """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
+        px = state[..., 0]
+        py = state[..., 1]
+        
+        # Defining buffer to acount for chaser spacecraft dimensions
+        self.chaser_buffer = np.sqrt(self.w_c**2 + self.h_c**2)/2
+        
+        # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
+        s_rect = torch.maximum(
+            torch.abs(px) - (self.w_t/2 + self.chaser_buffer),
+            torch.maximum(-(py + self.chaser_buffer), py - (self.h_t + self.chaser_buffer))
+        )
+        # Bottom semicircular indentation centered at (0,0) covering py >= 0
+        dist_semi = torch.sqrt(px**2 + (py + self.chaser_buffer)**2) - (self.dock_rad - self.chaser_buffer)
+        # For upper half of circle: ensure we only carve out if py >= 0
+        s_dock = torch.maximum(-(py + self.chaser_buffer), dist_semi)
+        # Failure region: inside rectangle but not inside semicircle
+        s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
+        return self.avoid_fn_weight* s_fail
+
+    def boundary_fn(self, state):
+        if self.set_mode in ['reach_avoid']:
+            return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+        else:
+            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+
+    def hamiltonian(self, state, dvds):
+        if self.set_mode == "reach_avoid":
+            # Extract state variables
+            px, py, vx, vy, theta, omega = state[..., 0], state[..., 1], state[..., 2], state[..., 3], state[..., 4], state[..., 5]
+            
+            # Extract costate variables
+            dvds_px, dvds_py, dvds_vx, dvds_vy, dvds_theta, dvds_omega = dvds[..., 0], dvds[..., 1], dvds[..., 2], dvds[..., 3], dvds[..., 4], dvds[..., 5]
+            
+            # Drift terms (no control input)
+            ham_drift = dvds_px * vx + dvds_py * vy + dvds_theta * omega
+            ham_drift += dvds_vx * (3 * self.mean_motion()**2 * px + 2 * self.mean_motion() * vy)
+            ham_drift += dvds_vy * (-2 * self.mean_motion() * vx)
+            
+            # Control terms (maximize for reach-avoid)
+            ham_control = -torch.abs(dvds_vx / self.mc) * self.u_bar  # u_x control
+            ham_control -= torch.abs(dvds_vy / self.mc) * self.u_bar  # u_y control  
+            ham_control -= torch.abs(dvds_omega / self.moment_of_inertia()) * self.u_theta_bar  # u_theta control
+            
+            return ham_drift + ham_control
+        else:
+            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+   
+    def optimal_control(self, state, dvds):
+        if self.set_mode == 'reach_avoid':
+            # Extract the relevant costate variables for control
+            dvds_vx = dvds[..., 2]    # ∂V/∂vx
+            dvds_vy = dvds[..., 3]    # ∂V/∂vy  
+            dvds_omega = dvds[..., 5] # ∂V/∂ω
+            # Optimal bang-bang control 
+            u_x = torch.where(dvds_vx > 0, -self.u_bar, self.u_bar)
+            u_y = torch.where(dvds_vy > 0, -self.u_bar, self.u_bar)
+            u_theta = torch.where(dvds_omega > 0, -self.u_theta_bar, self.u_theta_bar)
+            
+            return torch.stack([u_x, u_y, u_theta], dim=-1)
+        else:
+            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+
+    def optimal_disturbance(self, state, dvds):
+        return 0
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0, 0, 0],
+            'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': 4,  # Use theta for the z-axis instead of vx
+        }
+
 
 class Quadrotor(Dynamics):
+
     def __init__(self, collisionR: float, collective_thrust_max: float,  set_mode: str):  # simpler quadrotor
         self.collective_thrust_max = collective_thrust_max
         # self.body_rate_acc_max = body_rate_acc_max
