@@ -754,7 +754,7 @@ class Docking6D(Dynamics):
 
     def plot_config(self):
         return {
-            'state_slices': [0, 0, 0, 0, 0, 0],
+            'state_slices': [0, 0, 0, 0, np.pi/2, 0],
             'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,
