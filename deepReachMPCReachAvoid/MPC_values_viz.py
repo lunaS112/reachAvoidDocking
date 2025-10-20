@@ -66,9 +66,11 @@ if __name__ == "__main__":
     initial_condition_tensor[:, :] = torch.tensor(plot_config['state_slices'])
     initial_condition_tensor[:, plot_config['x_axis_idx']] = xys[:, 0]
     initial_condition_tensor[:, plot_config['y_axis_idx']] = xys[:, 1]
-    initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
+    #initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
 
-    mpc = MPC.MPC(horizon=None, receding_horizon=-1, dT=0.02, num_samples=100, 
+    # Try to use Receeding Syle MPC
+    # - There may be a BUG (Try direct frist and we can try receeding)
+    mpc = MPC.MPC(horizon=None, receding_horizon=-1, dT=0.1, num_samples=100, 
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='direct',num_iterative_refinement=10)
 
