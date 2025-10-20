@@ -625,7 +625,7 @@ class Docking6D(Dynamics):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]
         dsdt[..., 1] = state[..., 3]
-        dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 1] + control[..., 0] / self.mc
+        dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
         dsdt[..., 3] = -2 * self.mean_motion() * state[..., 0] + control[..., 1] / self.mc
         dsdt[..., 4] = state[..., 5]
         dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
