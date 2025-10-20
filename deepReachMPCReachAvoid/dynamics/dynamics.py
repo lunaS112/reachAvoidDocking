@@ -539,9 +539,8 @@ class Docking6D(Dynamics):
         else:
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
-        # Not used?
-        #self.eps_var = torch.tensor([1]).cuda()
-        #self.control_init = torch.zeros(1).cuda()
+        self.eps_var = torch.tensor([1]).cuda()
+        self.control_init = torch.zeros(1).cuda()
         
         # Define state/control space
         self.state_range_ = torch.tensor(
@@ -571,11 +570,11 @@ class Docking6D(Dynamics):
 
     def mean_motion(self):
         """Calculate the mean motion based on the orbital altitude."""
-        mu = 3.986004418e14 # Gravitational parameter for Earth (m^3/s^2)
+        mu = torch.tensor(3.986004418e14)  # Gravitational parameter for Earth (m^3/s^2)
         r_earth = 6371e3  # Radius of Earth (m)
         r = r_earth + (self.orbit_alt * 1e3)
         return torch.sqrt(mu / r**3)
-    
+
     def moment_of_inertia(self):
         """Calculate the moment of inertia for the chaser spacecraft."""
         # Assuming a rectangular shape for the chaser spacecraft

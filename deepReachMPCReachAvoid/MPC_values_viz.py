@@ -12,10 +12,6 @@ np.random.seed(1)
 
 ROLLOUT_NUM = 100
 
-
-
-
-
 def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
@@ -52,8 +48,8 @@ if __name__ == "__main__":
     else:
         device = torch.device('cpu')
    
-    dynamics_ = dynamics.ParameterizedVertDrone2D(9.8, 12.0, 1.0)
-    T = 1.2
+    dynamics_ = dynamics.Docking6D("reach_avoid")
+    T = 6
     x_res=100
     y_res=100
     plot_config = dynamics_.plot_config()
