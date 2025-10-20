@@ -539,9 +539,9 @@ class Docking6D(Dynamics):
         else:
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
-        # Not used?
-        #self.eps_var = torch.tensor([1]).cuda()
-        #self.control_init = torch.zeros(1).cuda()
+        # look into what we want to make these
+        self.eps_var = torch.tensor([3]).cuda()
+        self.control_init = torch.zeros(1).cuda()
         
         # Define state/control space
         self.state_range_ = torch.tensor(
@@ -563,8 +563,8 @@ class Docking6D(Dynamics):
             disturbance_dim=0,
             state_mean=state_mean_.cpu().tolist(),
             state_var=state_var_.cpu().tolist(),
-            value_mean=0.5,
-            value_var=1,
+            value_mean=0.5, # Normalization (based off of problem) 
+            value_var=1, # look into expected maximum V and V
             value_normto=0.02,
             deepReach_model='exact'
         )
@@ -631,6 +631,7 @@ class Docking6D(Dynamics):
         dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
         return dsdt
 
+    # Update to use L2 Norm (exact) vs L2 for Vanilla Deep Reach
     def reach_fn(self, state):
         """Signed distance <= 0 if within docking position/velocity tolerances."""
         px = state[..., 0]
@@ -683,6 +684,7 @@ class Docking6D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
+    # Update with F1 Tenth
     def hamiltonian(self, state, dvds):
         if self.set_mode == "reach_avoid":
             # Extract state variables
