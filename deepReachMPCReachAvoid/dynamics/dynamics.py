@@ -541,7 +541,7 @@ class Docking6D(Dynamics):
 
         # look into what we want to make these
         self.eps_var = torch.tensor([3]).cuda()
-        self.control_init = torch.zeros(1).cuda()
+        self.control_init = torch.zeros(3).cuda()
         
         # Define state/control space
         self.state_range_ = torch.tensor(
@@ -754,7 +754,7 @@ class Docking6D(Dynamics):
 
     def plot_config(self):
         return {
-            'state_slices': [0, 0, 0, 0, np.pi/2, 0],
+            'state_slices': [0, 0, 0, 0, 0, 0],
             'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,
