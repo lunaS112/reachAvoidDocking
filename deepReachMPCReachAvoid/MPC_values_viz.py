@@ -70,7 +70,8 @@ if __name__ == "__main__":
 
     # Try to use Receeding Syle MPC
     # - There may be a BUG (Try direct first and we can try receeding)
-    mpc = MPC.MPC(horizon=None, receding_horizon=-1, dT=0.2, num_samples=100, 
+    horizon = int(T / 0.2)
+    mpc = MPC.MPC(horizon=horizon, receding_horizon=-1, dT=0.2, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='direct',num_iterative_refinement=10)
 
