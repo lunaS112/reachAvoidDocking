@@ -79,7 +79,10 @@ if __name__ == "__main__":
         costs0, state_trajs, _, _ = mpc.get_batch_data(
             initial_condition_tensor[i*2500:(i+1)*2500,...], T)
         costs.append(costs0)
+    
     costs=torch.cat(costs,dim=0)
     plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    plt.show()
+    #plt.show()
+    print("Images saved successfully!")
+    
 __all__ = ['run_quadrotor_mppi']

@@ -631,9 +631,36 @@ class Docking6D(Dynamics):
         dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
         return dsdt
 
-    # Update to use L2 Norm (exact) vs L2 for Vanilla Deep Reach
+    # Try L1 for Vanilla Deep Reach
+
+    # L2 Norm (exact)
     def reach_fn(self, state):
-        """Signed distance <= 0 if within docking position/velocity tolerances."""
+        """Signed distance <= 0 if within docking position/velocity tolerances using L2 norm."""
+        px = state[..., 0]
+        py = state[..., 1]
+        vx = state[..., 2]
+        vy = state[..., 3]
+        theta = state[..., 4]
+        omega = state[..., 5]
+        
+        # L2 norm distances from origin for each component
+        position_dist = torch.sqrt(px**2 + py**2) - self.eps_p
+        velocity_dist = torch.sqrt(vx**2 + vy**2) - self.eps_v
+        theta_dist = torch.abs(theta - np.pi/2) - self.eps_theta  # Angular position (scalar)
+        omega_dist = torch.abs(omega) - self.eps_omega  # Angular velocity (scalar)
+        
+        # Maximum of all constraint violations (signed distance)
+        goal = torch.stack([
+            position_dist,
+            velocity_dist, 
+            theta_dist,
+            omega_dist
+        ], dim=-1)
+        return torch.max(goal, dim=-1)[0] * self.reach_fn_weight
+    
+    """ L inf norm for reach-avoid
+    def reach_fn(self, state):
+        # Signed distance <= 0 if within docking position/velocity tolerances.
         px = state[..., 0]
         py = state[..., 1]
         vx = state[..., 2]
@@ -649,7 +676,7 @@ class Docking6D(Dynamics):
             torch.abs(theta - np.pi/2) - self.eps_theta,
             torch.abs(omega) - self.eps_omega
         ], axis=-1)
-        return (torch.max(goal, axis=-1))*self.reach_fn_weight
+        return (torch.max(goal, axis=-1))*self.reach_fn_weight """
 
     def avoid_fn(self, state):
         """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
