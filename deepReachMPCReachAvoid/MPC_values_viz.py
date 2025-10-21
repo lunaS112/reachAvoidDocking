@@ -49,7 +49,7 @@ if __name__ == "__main__":
         device = torch.device('cpu')
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 30
+    T = 6
     x_res=100
     y_res=100
     plot_config = dynamics_.plot_config()
@@ -58,7 +58,6 @@ if __name__ == "__main__":
     y_min, y_max = state_test_range[plot_config['y_axis_idx']]
     z_min, z_max = state_test_range[plot_config['z_axis_idx']]
 
-       
     xs = torch.linspace(x_min, x_max, x_res)
     ys = torch.linspace(y_min, y_max, y_res)
     xys = torch.cartesian_prod(xs, ys).to(device)
@@ -68,10 +67,13 @@ if __name__ == "__main__":
     initial_condition_tensor[:, plot_config['y_axis_idx']] = xys[:, 1]
     #initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
 
+    # Horizon Options
+    horizon = int(T / 0.1)
+    #horizon = None 
+
     # Try to use Receeding Syle MPC
     # - There may be a BUG (Try direct first and we can try receeding)
-    horizon = int(T / 0.2)
-    mpc = MPC.MPC(horizon=horizon, receding_horizon=-1, dT=0.2, num_samples=100,
+    mpc = MPC.MPC(horizon=horizon, receding_horizon=-1, dT=0.1, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='direct',num_iterative_refinement=10)
 

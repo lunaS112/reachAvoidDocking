@@ -531,7 +531,7 @@ class Docking6D(Dynamics):
 
         # BRAT parameters
         self.reach_fn_weight = 1.0
-        self.avoid_fn_weight = 1.0
+        self.avoid_fn_weight = 10.0
         self.set_mode = set_mode
 
         if set_mode == 'reach_avoid':
@@ -710,7 +710,7 @@ class Docking6D(Dynamics):
 
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
-
+    
     # Update with F1 Tenth
     def hamiltonian(self, state, dvds):
         if self.set_mode == "reach_avoid":
