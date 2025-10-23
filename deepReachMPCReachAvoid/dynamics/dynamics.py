@@ -518,7 +518,7 @@ class Docking6D(Dynamics):
         self.jc = self.moment_of_inertia()    # Moment of inertia of chaser spacecraft (kg*m^2)
         self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
 
-        # Define docking parameters
+        # Define docking parameters (10x) <- to make the docking region reasonably sized
         self.eps_p = 0.05 # Position tolerance for docking (m)
         self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
         self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
@@ -530,7 +530,7 @@ class Docking6D(Dynamics):
         self.dock_rad = 1.75 # Radius of target spacecraft docking indentation (m)
 
         # BRAT parameters
-        self.reach_fn_weight = 1.0
+        self.reach_fn_weight = 5.0
         self.avoid_fn_weight = 10.0
         self.set_mode = set_mode
 
@@ -656,7 +656,12 @@ class Docking6D(Dynamics):
             theta_dist,
             omega_dist
         ], dim=-1)
-        return torch.max(goal, dim=-1)[0] * self.reach_fn_weight
+
+        goal = torch.max(goal, dim=-1)[0]
+        goal[goal < 0] *= 200.0
+        goal[goal > 0] *= 0.05
+
+        return goal
     
     """ L inf norm for reach-avoid
     def reach_fn(self, state):
@@ -697,7 +702,13 @@ class Docking6D(Dynamics):
         s_dock = torch.maximum(-(py + self.chaser_buffer), dist_semi)
         # Failure region: inside rectangle but not inside semicircle
         s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
-        return self.avoid_fn_weight* s_fail
+
+        s_fail[s_fail < 0] *= 1
+        #s_fail[s_fail > 0] *= 0.05
+
+        return s_fail
+
+    
 
     def boundary_fn(self, state):
         if self.set_mode in ['reach_avoid']:
@@ -754,7 +765,7 @@ class Docking6D(Dynamics):
 
     def plot_config(self):
         return {
-            'state_slices': [0, 0, 0, 0, 0, 0],
+            'state_slices': [0, 0, 0, 0, np.pi/2, 0],
             'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,

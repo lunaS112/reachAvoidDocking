@@ -49,13 +49,15 @@ if __name__ == "__main__":
         device = torch.device('cpu')
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 6
+    T = 8
     x_res=100
     y_res=100
     plot_config = dynamics_.plot_config()
     state_test_range = dynamics_.state_test_range()
-    x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-    y_min, y_max = state_test_range[plot_config['y_axis_idx']]
+    #x_min, x_max = state_test_range[plot_config['x_axis_idx']]
+    x_min, x_max = -1, 1
+    y_min, y_max = -1, 1
+    #y_min, y_max = state_test_range[plot_config['y_axis_idx']]
     z_min, z_max = state_test_range[plot_config['z_axis_idx']]
 
     xs = torch.linspace(x_min, x_max, x_res)
@@ -68,12 +70,12 @@ if __name__ == "__main__":
     #initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
 
     # Horizon Options
-    horizon = int(T / 0.1)
-    #horizon = None 
+    #horizon = int(T / 0.1)
+    horizon = None 
 
     # Try to use Receeding Syle MPC
     # - There may be a BUG (Try direct first and we can try receeding)
-    mpc = MPC.MPC(horizon=horizon, receding_horizon=-1, dT=0.1, num_samples=100,
+    mpc = MPC.MPC(horizon=horizon, receding_horizon=1, dT=0.05, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='direct',num_iterative_refinement=10)
 
@@ -86,6 +88,8 @@ if __name__ == "__main__":
     costs=torch.cat(costs,dim=0)
     plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
     #plt.show()
-    print("Images saved successfully!")
-    
+    print("Images saved successfully!") 
+
+    #plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+
 __all__ = ['run_quadrotor_mppi']
