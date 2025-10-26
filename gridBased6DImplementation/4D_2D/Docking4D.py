@@ -73,7 +73,7 @@ eps_v = 0.05  # Velocity tolerance (m/s)
 # Target geometry (centered at origin)
 w_t = 6.0  # Width of target (m) (along x-axis)
 h_t = 3.0  # Height of target (m) (along y-axis)
-dock_rad = 1.0  # Docking indentation radius (m) (centered at origin)
+dock_rad = 1.23  # Docking indentation radius (m) (centered at origin)
 
 def target_set(state):
     """Signed distance <= 0 if within docking position/velocity tolerances."""
