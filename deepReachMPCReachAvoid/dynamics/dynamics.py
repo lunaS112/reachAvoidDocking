@@ -513,6 +513,7 @@ class Docking6D(Dynamics):
         self.mc = 200    # Mass of chaser spacecraft (kg)
         self.w_c = 1.0  # width of chaser spacecraft (m) (along x-axis)
         self.h_c = 1.0  # height of chaser spacecraft (m) (along y-axis)
+        self.chaser_buffer = np.sqrt(self.w_c**2 + self.h_c**2)/2 # Defining buffer to account for chaser spacecraft dimensions
         
         # Calculate derived parameters
         self.jc = self.moment_of_inertia()    # Moment of inertia of chaser spacecraft (kg*m^2)
@@ -527,7 +528,7 @@ class Docking6D(Dynamics):
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
         self.h_t = 3  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = 1.75 # Radius of target spacecraft docking indentation (m)
+        self.dock_rad = self.chaser_buffer * 1.75 # Radius of target spacecraft docking indentation (m)
 
         # BRAT parameters
         self.reach_fn_weight = 5.0
@@ -687,9 +688,6 @@ class Docking6D(Dynamics):
         """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
         px = state[..., 0]
         py = state[..., 1]
-        
-        # Defining buffer to acount for chaser spacecraft dimensions
-        self.chaser_buffer = np.sqrt(self.w_c**2 + self.h_c**2)/2
         
         # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
         s_rect = torch.maximum(
