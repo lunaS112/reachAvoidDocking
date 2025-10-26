@@ -704,10 +704,9 @@ class Docking6D(Dynamics):
         s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
 
         s_fail[s_fail < 0] *= 1
-        s_fail[s_fail > 0] *= 50
+        s_fail[s_fail > 0] *= 5
 
         return s_fail
-
     
 
     def boundary_fn(self, state):
