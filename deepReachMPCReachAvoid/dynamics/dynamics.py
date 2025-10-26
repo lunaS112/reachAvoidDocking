@@ -503,7 +503,7 @@ class Dubins3D(Dynamics):
         }
 
 class Docking6D(Dynamics):
-    def __init__(self, set_mode: str):
+    def __init__(self, set_mode: str, goal_state = None):
         # Defineing dynamic parameters
         self.orbit_alt = 400  # Orbital altitude (km)
         self.u_bar = 20.0  # Maximum control input
@@ -523,6 +523,12 @@ class Docking6D(Dynamics):
         self.eps_v = 0.5 # Velocity tolerance for docking (m/s)
         self.eps_theta = 0.1 # Angular position tolerance for docking (rad)
         self.eps_omega = 0.5 # Angular velocity tolerance for docking (rad/s)
+
+        # Define goal state
+        if goal_state is None:
+            self.goal_state = torch.tensor([0.0, 0.0, 0.0, 0.0, np.pi/2, 0.0])
+        else:
+            self.goal_state = torch.tensor(goal_state)
 
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
@@ -544,6 +550,7 @@ class Docking6D(Dynamics):
         self.control_init = torch.zeros(3).cuda()
         
         # Define state/control space
+        self.state_dim = 6
         self.state_range_ = torch.tensor(
             [[-15, 15], [-15, 15], [-2.5, 2.5], [-2.5, 2.5], [-math.pi, math.pi], [-5.0, 5.0]]).cuda()
         self.control_range_ = torch.tensor(
@@ -552,6 +559,17 @@ class Docking6D(Dynamics):
         # Calculate state mean/var for normalization
         state_mean_ = (self.state_range_[:, 0]+self.state_range_[:, 1])/2.0
         state_var_ = (self.state_range_[:, 1]-self.state_range_[:, 0])/2.0
+
+        # Define an MPC cost weight matrix for these dynamics
+        # MPC cost: sum of stage costs + terminal cost
+        # MPC weight matrix
+        self.Q = torch.eye(self.state_dim)
+        self.Q[0,0] = 10.0 # High weight on x position
+        self.Q[1,1] = 10.0 # High weight on y position
+        self.Q[2,2] = 1.0  # Moderate weight on velocity x
+        self.Q[3,3] = 1.0  # Moderate weight on velocity y
+        self.Q[4,4] = 5.0  # Low weight on heading angle
+        self.Q[5,5] = 1.0  # Low weight on angular velocity
 
         super().__init__(
             name="Docking6D",
@@ -643,11 +661,21 @@ class Docking6D(Dynamics):
         theta = state[..., 4]
         omega = state[..., 5]
         
-        # L2 norm distances from origin for each component
-        position_dist = torch.sqrt(px**2 + py**2) - self.eps_p
-        velocity_dist = torch.sqrt(vx**2 + vy**2) - self.eps_v
-        theta_dist = torch.abs(theta - np.pi/2) - self.eps_theta  # Angular position (scalar)
-        omega_dist = torch.abs(omega) - self.eps_omega  # Angular velocity (scalar)
+        goal_state = self.goal_state.to(state.device)
+
+        # Extract goal state variables
+        px_goal = goal_state[0]
+        py_goal = goal_state[1]
+        vx_goal = goal_state[2]
+        vy_goal = goal_state[3]
+        theta_goal = goal_state[4]
+        omega_goal = goal_state[5]
+        
+        # L2 norm distances from goal for each component
+        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) - self.eps_p
+        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) - self.eps_v
+        theta_dist = torch.abs(theta - theta_goal) - self.eps_theta  # Angular position (scalar)
+        omega_dist = torch.abs(omega - omega_goal) - self.eps_omega  # Angular velocity (scalar)
         
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([

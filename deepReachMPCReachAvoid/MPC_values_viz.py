@@ -73,7 +73,8 @@ if __name__ == "__main__":
     # - There may be a BUG (Try direct first and we can try receeding)
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=0.1, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
-              style='direct',num_iterative_refinement=10)
+              style='direct',num_iterative_refinement=10, 
+              cost_type="mixed", mpc_percentage=0.8)
 
     costs=[]
     for i in tqdm(range(4)):
