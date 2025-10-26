@@ -519,10 +519,10 @@ class Docking6D(Dynamics):
         self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
 
         # Define docking parameters (10x) <- to make the docking region reasonably sized
-        self.eps_p = 0.05 # Position tolerance for docking (m)
-        self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
-        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
-        self.eps_omega = 0.005 # Angular velocity tolerance for docking (rad/s)
+        self.eps_p = 0.5 # Position tolerance for docking (m)
+        self.eps_v = 0.5 # Velocity tolerance for docking (m/s)
+        self.eps_theta = 0.1 # Angular position tolerance for docking (rad)
+        self.eps_omega = 0.5 # Angular velocity tolerance for docking (rad/s)
 
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
@@ -704,7 +704,7 @@ class Docking6D(Dynamics):
         s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
 
         s_fail[s_fail < 0] *= 1
-        #s_fail[s_fail > 0] *= 0.05
+        s_fail[s_fail > 0] *= 50
 
         return s_fail
 

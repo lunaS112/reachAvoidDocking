@@ -10,7 +10,7 @@ import math
 torch.manual_seed(1)
 np.random.seed(1)
 
-ROLLOUT_NUM = 100
+ROLLOUT_NUM = 250
 
 def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
     fig = plt.figure(figsize=(6, 6))
@@ -49,15 +49,15 @@ if __name__ == "__main__":
         device = torch.device('cpu')
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 8
-    x_res=100
-    y_res=100
+    T = 15
+    x_res=101
+    y_res=101
     plot_config = dynamics_.plot_config()
     state_test_range = dynamics_.state_test_range()
-    #x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-    x_min, x_max = -1, 1
-    y_min, y_max = -1, 1
-    #y_min, y_max = state_test_range[plot_config['y_axis_idx']]
+    x_min, x_max = state_test_range[plot_config['x_axis_idx']]
+    #x_min, x_max = -1, 1
+    #y_min, y_max = -1, 1
+    y_min, y_max = state_test_range[plot_config['y_axis_idx']]
     z_min, z_max = state_test_range[plot_config['z_axis_idx']]
 
     xs = torch.linspace(x_min, x_max, x_res)
@@ -69,20 +69,19 @@ if __name__ == "__main__":
     initial_condition_tensor[:, plot_config['y_axis_idx']] = xys[:, 1]
     #initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
 
-    # Horizon Options
-    #horizon = int(T / 0.1)
-    horizon = None 
-
     # Try to use Receeding Syle MPC
     # - There may be a BUG (Try direct first and we can try receeding)
-    mpc = MPC.MPC(horizon=horizon, receding_horizon=1, dT=0.05, num_samples=100,
+    mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=0.1, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='direct',num_iterative_refinement=10)
 
     costs=[]
     for i in tqdm(range(4)):
+        batch_size = len(initial_condition_tensor) // 4
+        start_idx = i * batch_size
+        end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
         costs0, state_trajs, _, _ = mpc.get_batch_data(
-            initial_condition_tensor[i*2500:(i+1)*2500,...], T)
+            initial_condition_tensor[start_idx:end_idx,...], T)
         costs.append(costs0)
     
     costs=torch.cat(costs,dim=0)
