@@ -75,8 +75,8 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
     ax2.set_xlabel('px (m)')
     ax2.set_ylabel('py (m)')
     
-    fig.savefig("./data/heatmap.png", dpi=300, bbox_inches='tight')
-    fig2.savefig("./data/BRT.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/heatmapMixed.png", dpi=300, bbox_inches='tight')
+    fig2.savefig("./data/BRTMixed.png", dpi=300, bbox_inches='tight')
 
 def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation=False):
     import matplotlib.patches as patches
@@ -202,8 +202,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     ax5 = axes[1, 1]
     
     # Create bar chart showing reach values
-    bar_colors = ['green' if s else 'red' for s in successful_dockings]
-    reach_bars = ax5.bar(range(n_trajs), reach_values, color=bar_colors, alpha=0.7)
+    reach_bars = ax5.bar(range(n_trajs), reach_values, color=colors, alpha=0.7)
     ax5.axhline(y=0, color='black', linestyle='-', linewidth=1, label='Success threshold')
     ax5.set_xlabel('Trajectory')
     ax5.set_ylabel('Reach Function Value')
@@ -238,7 +237,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     # Save the plot
     import os
     os.makedirs('./data', exist_ok=True)
-    fig.savefig("./data/mpc_trajectories.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/mpc_trajectoriesMixed.png", dpi=300, bbox_inches='tight')
     
     # Print summary statistics
     print("\n=== MPC Trajectory Summary ===")
@@ -353,6 +352,41 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
                            head_width=0.05, head_length=0.03, 
                            fc=colors[i], ec=colors[i], alpha=0.7)
     
+    # Add target region visualization based on reach_fn parameters
+    # For Docking6D, the reach function defines a region with eps_p, eps_v, eps_theta, eps_omega tolerances
+    eps_p = mpc.dynamics_.eps_p
+    target_circle = patches.Circle((0, 0), eps_p, fill=False, color='green', linewidth=1, linestyle='--')
+    ax.add_patch(target_circle)
+    
+    # Add failure region (avoid_fn) visualization if available
+    if hasattr(mpc.dynamics_, 'avoid_fn'):
+        # Draw target spacecraft body with docking port cutout
+        w_t = mpc.dynamics_.w_t
+        h_t = mpc.dynamics_.h_t
+        dock_rad = mpc.dynamics_.dock_rad
+        
+        # Draw the main rectangular body
+        body_rect = patches.Rectangle((-w_t/2, 0), w_t, h_t, 
+                                    fill=False, color='red', linewidth=2, alpha=0.7, label='Avoid region')
+        ax.add_patch(body_rect)
+        
+        # Draw only the upper semicircle of the docking port (cutout)
+        theta = np.linspace(0, np.pi, 100)  # Upper semicircle from 0 to π
+        dock_x = dock_rad * np.cos(theta)
+        dock_y = dock_rad * np.sin(theta)
+        
+        # Plot the semicircular cutout
+        ax.plot(dock_x, dock_y, color='red', linewidth=2, alpha=0.7)
+        
+        # Connect the ends of the semicircle to show the opening
+        ax.plot([-dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
+        
+        # Optional: Add vertical lines connecting the rectangle to the docking port
+        # This helps visualize that it's a cutout, not separate shapes
+        if dock_rad < w_t/2:  # Only if docking port is smaller than spacecraft width
+            ax.plot([-dock_rad, -dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
+            ax.plot([dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
+
     # 5. Formatting and labels
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -368,7 +402,7 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     # Add legend
     ax.legend(bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
 
-    fig.savefig("./data/trajectory_overlay.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/trajectory_overlayMixed.png", dpi=300, bbox_inches='tight')
     
     return fig, state_trajs_np, successful_dockings
 
@@ -404,7 +438,8 @@ if __name__ == "__main__":
     # - There may be a BUG (Try direct first and we can try receeding)
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
-              style='direct',num_iterative_refinement=10)
+              style='direct',num_iterative_refinement=10, 
+              cost_type="mixed", mpc_percentage=0.8)
 
     costs=[]
     for i in tqdm(range(4)):
@@ -422,6 +457,7 @@ if __name__ == "__main__":
     interesting_ics.append(torch.tensor([x_min*0.8, y_min*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([x_max*0.8, y_max*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([0, -1.5, 0, 0, 0, 0]).to(device))  
+    interesting_ics.append(torch.tensor([0, 0.75, 0, 0, np.pi/4, 0]).to(device)) 
     interesting_ics.append(torch.tensor([4, -1.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([1.0, -2.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
