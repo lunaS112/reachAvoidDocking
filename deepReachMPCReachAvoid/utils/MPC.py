@@ -268,8 +268,11 @@ class MPC:
             # initial_condition_tensor: A*D
             state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,start_iter=self.receding_start,rollout_horizon=self.horizon-self.receding_start)
 
-            current_controls, best_traj = self.update_control_tensor(
-                state_trajs, permuted_controls) 
+            current_controls, best_traj, best_costs = self.update_control_tensor(
+                state_trajs, permuted_controls, receding=True,
+                current_iter=self.current_refinement_iter, 
+                total_iters=num_iterative_refinement - self.num_effective_horizon_refinement)
+            self.current_refinement_iter += 1
         
             return current_controls, best_traj
       

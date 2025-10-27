@@ -15,7 +15,7 @@ np.random.seed(1)
 
 ROLLOUT_NUM = 100
 
-def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
+def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
 
@@ -74,11 +74,11 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
     ax2.set_title('Binary Reachability (BRT ≤ 0)')
     ax2.set_xlabel('px (m)')
     ax2.set_ylabel('py (m)')
-    
-    fig.savefig("./data/heatmapClassicMPC.png", dpi=300, bbox_inches='tight')
-    fig2.savefig("./data/BRTClassicMPC.png", dpi=300, bbox_inches='tight')
 
-def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation=False):
+    fig.savefig(f"./data/heatmap{save_def}.png", dpi=300, bbox_inches='tight')
+    fig2.savefig(f"./data/BRT{save_def}.png", dpi=300, bbox_inches='tight')
+
+def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     import matplotlib.patches as patches
     
     # Limit number of trajectories for visualization clarity
@@ -237,7 +237,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     # Save the plot
     import os
     os.makedirs('./data', exist_ok=True)
-    fig.savefig("./data/mpc_trajectoriesClassicMPC.png", dpi=300, bbox_inches='tight')
+    fig.savefig(f"./data/mpc_trajectories{save_def}.png", dpi=300, bbox_inches='tight')
     
     # Print summary statistics
     print("\n=== MPC Trajectory Summary ===")
@@ -269,7 +269,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
 
 def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resolution, y_resolution, 
-                         x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6]):
+                         x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6], save_def=""):
     import matplotlib.patches as patches
     
     # Get trajectories for all interesting initial conditions
@@ -402,7 +402,7 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     # Add legend
     ax.legend(bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
 
-    fig.savefig("./data/trajectory_overlayClassicMPC.png", dpi=300, bbox_inches='tight')
+    fig.savefig(f"./data/trajectory_overlay{save_def}.png", dpi=300, bbox_inches='tight')
     
     return fig, state_trajs_np, successful_dockings
 
@@ -415,6 +415,8 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
     T = 6
     dt = 0.1
+    save_def = "RecedingMixedMPC"
+
     x_res=101
     y_res=101
     plot_config = dynamics_.plot_config()
@@ -439,7 +441,7 @@ if __name__ == "__main__":
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='receding',num_iterative_refinement=10, 
-              cost_type="classic_mpc", mpc_percentage=0.8)
+              cost_type="mixed", mpc_percentage=0.8)
 
     costs=[]
     for i in tqdm(range(4)):
@@ -463,11 +465,11 @@ if __name__ == "__main__":
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting Images")
-    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
     #plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5)
+    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
     plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.3])
+        level_sets=[0.0, 0.1, 0.3], save_def=save_def)
 
     print("Images saved successfully!") 
 
