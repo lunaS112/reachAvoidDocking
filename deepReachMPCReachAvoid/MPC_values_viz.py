@@ -75,8 +75,8 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max):
     ax2.set_xlabel('px (m)')
     ax2.set_ylabel('py (m)')
     
-    fig.savefig("./data/heatmapMixed.png", dpi=300, bbox_inches='tight')
-    fig2.savefig("./data/BRTMixed.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/heatmapClassicMPC.png", dpi=300, bbox_inches='tight')
+    fig2.savefig("./data/BRTClassicMPC.png", dpi=300, bbox_inches='tight')
 
 def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation=False):
     import matplotlib.patches as patches
@@ -238,7 +238,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     # Save the plot
     import os
     os.makedirs('./data', exist_ok=True)
-    fig.savefig("./data/mpc_trajectoriesMixed.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/mpc_trajectoriesClassicMPC.png", dpi=300, bbox_inches='tight')
     
     # Print summary statistics
     print("\n=== MPC Trajectory Summary ===")
@@ -403,7 +403,7 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     # Add legend
     ax.legend(bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
 
-    fig.savefig("./data/trajectory_overlayMixed.png", dpi=300, bbox_inches='tight')
+    fig.savefig("./data/trajectory_overlayClassicMPC.png", dpi=300, bbox_inches='tight')
     
     return fig, state_trajs_np, successful_dockings
 
@@ -439,8 +439,8 @@ if __name__ == "__main__":
     # - There may be a BUG (Try direct first and we can try receeding)
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
-              style='direct',num_iterative_refinement=10, 
-              cost_type="mixed", mpc_percentage=0.8)
+              style='receding',num_iterative_refinement=10, 
+              cost_type="classic_mpc", mpc_percentage=0.8)
 
     costs=[]
     for i in tqdm(range(4)):

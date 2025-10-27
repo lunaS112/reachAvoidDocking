@@ -142,8 +142,6 @@ class MPC:
             
 
         elif self.style == 'receding':
-            if self.dynamics_.set_mode =='reach_avoid':
-                raise NotImplementedError
 
             state_trajs = torch.zeros(( self.batch_size, num_iters+1, self.dynamics_.state_dim)).to(self.device)  # A*H*D
             state_trajs[:, 0, :] = initial_condition_tensor
@@ -154,7 +152,7 @@ class MPC:
                 for i in range(self.num_effective_horizon_refinement):
                     self.warm_start_with_policy(initial_condition_tensor, policy, t)
             lxs=torch.zeros(self.batch_size, num_iters+1).to(self.device)
-            self.receiding_start=0
+            self.receding_start=0
             for i in tqdm(range(int(num_iters/self.receding_horizon))):
                 best_controls,_ = self.get_control(
                         state_trajs[:,i, :])
@@ -163,8 +161,16 @@ class MPC:
                                             state_trajs[:, i*self.receding_horizon+k, :]) 
                     state_trajs[:,i*self.receding_horizon+1+k,:] = self.get_next_step_state(
                         state_trajs[:,i*self.receding_horizon+k,:], best_controls[:, k, :])
-                    self.receiding_start+=1
+                    self.receding_start+=1
             lxs[:,-1] = self.dynamics_.boundary_fn(state_trajs[:, -1, :]) 
+
+            if self.dynamics_.set_mode in ['avoid', 'reach']:
+                return state_trajs, lxs, num_iters
+            elif self.dynamics_.set_mode == 'reach_avoid':
+                avoid_values = self.dynamics_.avoid_fn(state_trajs)
+                reach_values = self.dynamics_.reach_fn(state_trajs)
+                return state_trajs, avoid_values, reach_values, num_iters
+
             return state_trajs, lxs, num_iters
         else:
             return NotImplementedError
@@ -260,7 +266,7 @@ class MPC:
             return self.control_tensors, best_traj
         elif self.style == 'receding':
             # initial_condition_tensor: A*D
-            state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,start_iter=self.receiding_start,rollout_horizon=self.horizon-self.receiding_start)
+            state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,start_iter=self.receding_start,rollout_horizon=self.horizon-self.receding_start)
 
             current_controls, best_traj = self.update_control_tensor(
                 state_trajs, permuted_controls) 
@@ -346,9 +352,14 @@ class MPC:
             expanded_idx = best_idx[...,None, None, None].expand(-1, -1, permuted_controls.size(2), permuted_controls.size(3))  
 
             best_controls = torch.gather(permuted_controls, dim=1, index=expanded_idx).squeeze(1) # A * H * D_u
-            self.control_tensors = best_controls*1.0
+            if receding:
+                self.control_tensors[...,self.receding_start:,:] = best_controls*1.0
+            else:
+                self.control_tensors = best_controls*1.0
             expanded_idx_traj = best_idx[...,None, None, None].expand(-1, -1, state_trajs.size(2), state_trajs.size(3))  
             best_traj= torch.gather(state_trajs, dim=1, index=expanded_idx_traj).squeeze(1)
+
+
         elif self.mode=="MPPI":
             # use weighted average
             if self.dynamics_.set_mode == 'avoid':
@@ -369,14 +380,20 @@ class MPC:
                 self.control_tensors, self.dynamics_.control_range_[..., 0], self.dynamics_.control_range_[..., 1])
         else:
             raise NotImplementedError
-        # update controls
-        current_controls = self.control_tensors[:, :self.receding_horizon, :]
-        if receding:
-          self.control_tensors[:, :self.horizon-self.receding_horizon,
-                              :] = self.control_tensors[:,self.receding_horizon:, :]
-          self.control_tensors[:, self.horizon-self.receding_horizon:, :] = self.control_init.unsqueeze(1).repeat(1,self.receding_horizon,1) # A * H_r * D_u 
 
+        # update controls
+        # current_controls = self.control_tensors[:, :self.receding_horizon, :]
+        # if receding:
+        #   self.control_tensors[:, :self.horizon-self.receding_horizon,
+        #                       :] = self.control_tensors[:,self.receding_horizon:, :]
+        #   self.control_tensors[:, self.horizon-self.receding_horizon:, :] = self.control_init.unsqueeze(1).repeat(1,self.receding_horizon,1) # A * H_r * D_u 
+        if receding:
+            current_controls = self.control_tensors[:,self.receding_start:self.receding_start+self.receding_horizon, :].clone()
+        else:
+            current_controls = self.control_tensors[:, :self.receding_horizon, :].clone()
+            
         return current_controls, best_traj, best_costs
+
     
     def rollout_nominal_trajs(self,initial_state_tensor):
         '''
