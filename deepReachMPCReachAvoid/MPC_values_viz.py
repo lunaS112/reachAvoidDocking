@@ -202,8 +202,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_animation
     ax5 = axes[1, 1]
     
     # Create bar chart showing reach values
-    bar_colors = ['green' if s else 'red' for s in successful_dockings]
-    reach_bars = ax5.bar(range(n_trajs), reach_values, color=bar_colors, alpha=0.7)
+    reach_bars = ax5.bar(range(n_trajs), reach_values, color=colors, alpha=0.7)
     ax5.axhline(y=0, color='black', linestyle='-', linewidth=1, label='Success threshold')
     ax5.set_xlabel('Trajectory')
     ax5.set_ylabel('Reach Function Value')
@@ -458,7 +457,7 @@ if __name__ == "__main__":
     interesting_ics.append(torch.tensor([x_min*0.8, y_min*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([x_max*0.8, y_max*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([0, -1.5, 0, 0, 0, 0]).to(device))  
-    interesting_ics.append(torch.tensor([0, 0.5, 0, 0, 0, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([0, 0.75, 0, 0, np.pi/4, 0]).to(device)) 
     interesting_ics.append(torch.tensor([4, -1.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([1.0, -2.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
