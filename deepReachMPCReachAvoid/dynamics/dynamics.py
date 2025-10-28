@@ -503,8 +503,9 @@ class Dubins3D(Dynamics):
         }
 
 class Docking6D(Dynamics):
-    def __init__(self, set_mode: str, goal_state = None):
+    def __init__(self, set_mode: str):
         # Defineing dynamic parameters
+        goal_state = None
         self.orbit_alt = 400  # Orbital altitude (km)
         self.u_bar = 20.0  # Maximum control input
         self.u_theta_bar = 1.5  # Maximum control input for angular velocity

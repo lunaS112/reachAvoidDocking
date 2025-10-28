@@ -441,7 +441,7 @@ if __name__ == "__main__":
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='receding',num_iterative_refinement=10, 
-              cost_type="mixed", mpc_percentage=0.8)
+              cost_type="classic_mpc", mpc_percentage=0.8)
 
     costs=[]
     for i in tqdm(range(4)):
