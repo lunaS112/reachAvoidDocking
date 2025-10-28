@@ -107,8 +107,8 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f'MPC Trajectory Analysis (T={actual_T}, dt={mpc.dT})', fontsize=16)
     
-    colors = plt.cm.tab10(np.linspace(0, 1, n_trajs))
-    
+    colors = plt.cm.Set1(np.linspace(0, 1, n_trajs))
+
     # 1. Position trajectories (px, py)
     ax1 = axes[0, 0]
     for i in range(n_trajs):
@@ -261,10 +261,19 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     theta_dist = np.abs(theta - np.pi/2)  # Assuming target attitude is π/2
     omega_dist = np.abs(omega)
     
-    print(f"Final position distances: [{position_dist.min():.3f}, {position_dist.max():.3f}] m (tolerance: {mpc.dynamics_.eps_p:.3f})")
-    print(f"Final velocity magnitudes: [{velocity_dist.min():.3f}, {velocity_dist.max():.3f}] m/s (tolerance: {mpc.dynamics_.eps_v:.3f})")
-    print(f"Final theta errors: [{theta_dist.min():.3f}, {theta_dist.max():.3f}] rad (tolerance: {mpc.dynamics_.eps_theta:.3f})")
-    print(f"Final omega magnitudes: [{omega_dist.min():.3f}, {omega_dist.max():.3f}] rad/s (tolerance: {mpc.dynamics_.eps_omega:.3f})")
+    print("\n=== Final State Analysis for Each Trajectory ===")
+    print(f"{'IC':<3} {'Pos Dist':<9} {'Vel Mag':<8} {'Theta Err':<10} {'Omega Mag':<9} {'Success':<7}")
+    print(f"{'#':<3} {'(m)':<9} {'(m/s)':<8} {'(rad)':<10} {'(rad/s)':<9} {'(Y/N)':<7}")
+    print("-" * 55)
+    
+    for i in range(n_trajs):
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<3} {position_dist[i]:<9.3f} {velocity_dist[i]:<8.3f} "
+              f"{theta_dist[i]:<10.3f} {omega_dist[i]:<9.3f} {success_str:<7}")
+    
+    print("-" * 55)
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, "
+          f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
 
@@ -406,6 +415,219 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     
     return fig, state_trajs_np, successful_dockings
 
+def plotMPCControls(mpc, initial_conditions, T, max_trajs=10):
+    """
+    Plot control inputs for MPC trajectories
+    """
+    import matplotlib.patches as patches
+    
+    # Limit number of trajectories for visualization clarity
+    n_trajs = min(len(initial_conditions), max_trajs)
+    ic_subset = initial_conditions[:n_trajs]
+    
+    # Get optimal trajectories
+    costs, state_trajs, _, _ = mpc.get_batch_data(ic_subset, T)
+    
+    # Convert to numpy for plotting
+    state_trajs_np = state_trajs.detach().cpu().numpy()
+    costs_np = costs.detach().cpu().numpy()
+    
+    # Get actual trajectory length from the data
+    actual_T = state_trajs_np.shape[1] - 1
+    time_steps = np.arange(actual_T) * mpc.dT
+    
+    # Extract control inputs by computing them from state dynamics
+    controls_np = np.zeros((n_trajs, actual_T, 3))  # [ux, uy, tau] for each trajectory
+    
+    for i in range(n_trajs):
+        for t in range(actual_T):
+            # Current state
+            state_curr = torch.tensor(state_trajs_np[i, t, :]).to(mpc.device)
+            state_next = torch.tensor(state_trajs_np[i, t+1, :]).to(mpc.device)
+            
+            # Compute control that would produce this state transition
+            control = compute_control_from_transition(state_curr, state_next, mpc.dT, mpc.dynamics_)
+            controls_np[i, t, :] = control.detach().cpu().numpy()
+    
+    # Define successful dockings based on reach_fn
+    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
+    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
+    successful_dockings = reach_values <= 0
+    
+    # Create figure with subplots for different control components
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle(f'MPC Control Analysis (T={actual_T}, dt={mpc.dT})', fontsize=16)
+    
+    colors = plt.cm.Set1(np.linspace(0, 1, n_trajs))
+    
+    # 1. X-direction thrust (ux)
+    ax1 = axes[0, 0]
+    for i in range(n_trajs):
+        ux = controls_np[i, :, 0]
+        success_label = "Success" if successful_dockings[i] else "Failed"
+        ax1.plot(time_steps, ux, color=colors[i], alpha=0.7, linewidth=2, 
+                label=f'IC {i+1} ({success_label})')
+    
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('ux (N)')
+    ax1.set_title('X-Direction Thrust')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Add control limits if available
+    if hasattr(mpc.dynamics_, 'u_bar'):
+        u_max = mpc.dynamics_.u_bar
+        ax1.axhline(y=u_max, color='black', linestyle='--', alpha=0.5, label=f'Max thrust: ±{u_max:.2f}N')
+        ax1.axhline(y=-u_max, color='black', linestyle='--', alpha=0.5)
+    
+    # 2. Y-direction thrust (uy)
+    ax2 = axes[0, 1]
+    for i in range(n_trajs):
+        uy = controls_np[i, :, 1]
+        ax2.plot(time_steps, uy, color=colors[i], alpha=0.7, linewidth=2)
+    
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('uy (N)')
+    ax2.set_title('Y-Direction Thrust')
+    ax2.grid(True, alpha=0.3)
+    
+    # Add control limits
+    if hasattr(mpc.dynamics_, 'u_bar'):
+        u_max = mpc.dynamics_.u_bar
+        ax2.axhline(y=u_max, color='black', linestyle='--', alpha=0.5)
+        ax2.axhline(y=-u_max, color='black', linestyle='--', alpha=0.5)
+    
+    # 3. Torque (tau)
+    ax3 = axes[0, 2]
+    for i in range(n_trajs):
+        tau = controls_np[i, :, 2]
+        ax3.plot(time_steps, tau, color=colors[i], alpha=0.7, linewidth=2)
+    
+    ax3.set_xlabel('Time (s)')
+    ax3.set_ylabel('τ (N⋅m)')
+    ax3.set_title('Torque')
+    ax3.grid(True, alpha=0.3)
+    
+    # Add control limits
+    if hasattr(mpc.dynamics_, 'u_theta_bar'):
+        tau_max = mpc.dynamics_.u_theta_bar
+        ax3.axhline(y=tau_max, color='black', linestyle='--', alpha=0.5)
+        ax3.axhline(y=-tau_max, color='black', linestyle='--', alpha=0.5)
+    
+    # 4. Control magnitude over time
+    ax4 = axes[1, 0]
+    for i in range(n_trajs):
+        thrust_mag = np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2)
+        ax4.plot(time_steps, thrust_mag, color=colors[i], alpha=0.7, linewidth=2)
+    
+    ax4.set_xlabel('Time (s)')
+    ax4.set_ylabel('||thrust|| (N)')
+    ax4.set_title('Thrust Magnitude')
+    ax4.grid(True, alpha=0.3)
+    
+    # 5. Control effort (cumulative)
+    ax5 = axes[1, 1]
+    for i in range(n_trajs):
+        # Compute cumulative control effort
+        thrust_effort = np.cumsum(np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2) * mpc.dT)
+        ax5.plot(time_steps, thrust_effort, color=colors[i], alpha=0.7, linewidth=2)
+    
+    ax5.set_xlabel('Time (s)')
+    ax5.set_ylabel('Cumulative Thrust Effort (N⋅s)')
+    ax5.set_title('Control Effort Over Time')
+    ax5.grid(True, alpha=0.3)
+    
+    # 6. Control phase plot (ux vs uy)
+    ax6 = axes[1, 2]
+    for i in range(n_trajs):
+        ux = controls_np[i, :, 0]
+        uy = controls_np[i, :, 1]
+        ax6.plot(ux, uy, color=colors[i], alpha=0.7, linewidth=2)
+        ax6.scatter(ux[0], uy[0], color=colors[i], s=100, marker='o')  # Start
+        ax6.scatter(ux[-1], uy[-1], color=colors[i], s=100, marker='s')  # End
+    
+    ax6.set_xlabel('ux (N)')
+    ax6.set_ylabel('uy (N)')
+    ax6.set_title('Thrust Vector Phase Plot')
+    ax6.grid(True, alpha=0.3)
+    ax6.axis('equal')
+    
+    # Add control constraint circle if available
+    if hasattr(mpc.dynamics_, 'u_bar'):
+        u_max = mpc.dynamics_.u_bar
+        constraint_circle = patches.Circle((0, 0), u_max, fill=False, color='black', 
+                                         linewidth=2, linestyle='--', alpha=0.5)
+        ax6.add_patch(constraint_circle)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig("./data/mpc_controlsMixed.png", dpi=300, bbox_inches='tight')
+    
+    # Print control statistics
+    print("\n=== MPC Control Analysis ===")
+    print(f"Number of trajectories: {n_trajs}")
+    print(f"Control horizon: {actual_T} steps")
+    
+    for i in range(n_trajs):
+        ux_max = np.max(np.abs(controls_np[i, :, 0]))
+        uy_max = np.max(np.abs(controls_np[i, :, 1]))
+        tau_max = np.max(np.abs(controls_np[i, :, 2]))
+        thrust_max = np.max(np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2))
+        
+        total_effort = np.sum(np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2)) * mpc.dT
+        
+        success_str = "Success" if successful_dockings[i] else "Failed"
+        print(f"IC {i+1} ({success_str}): max_ux={ux_max:.3f}N, max_uy={uy_max:.3f}N, "
+              f"max_tau={tau_max:.3f}N⋅m, max_thrust={thrust_max:.3f}N, effort={total_effort:.3f}N⋅s")
+    
+    return fig, controls_np, successful_dockings
+
+def compute_control_from_transition(state_curr, state_next, dt, dynamics):
+    """
+    Compute the control input that would produce the given state transition
+    This is an approximation based on the dynamics model
+    """
+    # For Docking6D dynamics, we need to solve for control given state transition
+    # state = [px, py, vx, vy, theta, omega]
+    # dynamics: d/dt [px, py, vx, vy, theta, omega] = f(state, control)
+    
+    # Extract current states
+    px, py, vx, vy, theta, omega = state_curr
+    px_next, py_next, vx_next, vy_next, theta_next, omega_next = state_next
+    
+    # From Clohessy-Wiltshire dynamics:
+    # dvx/dt = 3*n^2*px + 2*n*vy + ux/mc
+    # dvy/dt = -2*n*vx + uy/mc
+    # domega/dt = tau/jc
+    
+    n = dynamics.n  # orbital rate (this should call the method)
+    mc = dynamics.mc  # chaser mass
+    jc = dynamics.jc  # chaser moment of inertia
+    
+    # Compute accelerations from state differences
+    ax = (vx_next - vx) / dt
+    ay = (vy_next - vy) / dt
+    alpha = (omega_next - omega) / dt
+    
+    # Solve for control inputs based on the Docking6D dsdt method:
+    # dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
+    # dsdt[..., 3] = -2 * self.mean_motion() * state[..., 0] + control[..., 1] / self.mc
+    # dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
+    
+    # Rearranging for controls:
+    # ux = mc * (ax - 3*n^2*px - 2*n*vy)
+    # uy = mc * (ay + 2*n*vx)
+    # tau = jc * alpha
+    
+    ux = mc * (ax - 3*n**2*px - 2*n*vy)
+    uy = mc * (ay + 2*n*vx)
+    tau = jc * alpha
+    
+    return torch.tensor([ux, uy, tau])
+
 if __name__ == "__main__":
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -470,7 +692,7 @@ if __name__ == "__main__":
     plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
     plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
         level_sets=[0.0, 0.1, 0.3], save_def=save_def)
-
+    plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
     print("Images saved successfully!") 
 
 __all__ = ['run_quadrotor_mppi']
