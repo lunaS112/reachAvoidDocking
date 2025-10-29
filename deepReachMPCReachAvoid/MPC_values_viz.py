@@ -15,11 +15,14 @@ np.random.seed(1)
 
 ROLLOUT_NUM = 100
 
-def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
+def plotBRTImages(costs, initial_condition_tensor, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
 
     ax = fig.add_subplot(1, 1, 1 )
+    reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    boundry_value = dynamics_.boundary_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     
     BRT_img = costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
@@ -47,12 +50,16 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
     level = 0.1
 
     # Add level set contours
-    contour_0 = ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
-    contour_1 = ax.contour(X, Y, BRT_img, levels=[level], colors='red', linewidths=1.5, linestyles='--')
+    #contour_0 = ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
+    #contour_1 = ax.contour(X, Y, BRT_img, levels=[level], colors='red', linewidths=1.5, linestyles='--')
+
+    contour = ax.contour(X, Y, reach_value, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
+    contour_avoid = ax.contour(X, Y, avoid_value, levels=[0.0], colors='purple', linewidths=1.5, linestyles='-.')
+    contour_boundary = ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
 
     # Add labels for the contours
-    ax.clabel(contour_0, inline=True, fontsize=10, fmt='0-level')
-    ax.clabel(contour_1, inline=True, fontsize=10, fmt=f'{level}-level')
+    #ax.clabel(contour_0, inline=True, fontsize=10, fmt='0-level')
+    #ax.clabel(contour_1, inline=True, fontsize=10, fmt=f'{level}-level')
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -637,7 +644,7 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
     T = 6
     dt = 0.1
-    save_def = "RecedingMixedMPC"
+    save_def = "RecedingMPC"
 
     x_res=101
     y_res=101
@@ -665,16 +672,16 @@ if __name__ == "__main__":
               style='receding',num_iterative_refinement=10, 
               cost_type="classic_mpc", mpc_percentage=0.8)
 
-    costs=[]
-    for i in tqdm(range(4)):
-        batch_size = len(initial_condition_tensor) // 4
-        start_idx = i * batch_size
-        end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
-        costs0, state_trajs, _, _ = mpc.get_batch_data(
-            initial_condition_tensor[start_idx:end_idx,...], T)
-        costs.append(costs0)
+    #costs=[]
+    #for i in tqdm(range(4)):
+    #    batch_size = len(initial_condition_tensor) // 4
+    ##    start_idx = i * batch_size
+     #   end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
+     #   costs0, state_trajs, _, _ = mpc.get_batch_data(
+     #       initial_condition_tensor[start_idx:end_idx,...], T)
+     #   costs.append(costs0)
     
-    costs=torch.cat(costs,dim=0)
+    #costs=torch.cat(costs,dim=0)
     
     # Select initial conditions for visualization
     interesting_ics = []
@@ -687,12 +694,12 @@ if __name__ == "__main__":
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting Images")
-    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
-    #plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
-    plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.3], save_def=save_def)
-    plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
+    #plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
+    plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+    #plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
+    #plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
+    #    level_sets=[0.0, 0.1, 0.3], save_def=save_def)
+    #plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
     print("Images saved successfully!") 
 
 __all__ = ['run_quadrotor_mppi']
