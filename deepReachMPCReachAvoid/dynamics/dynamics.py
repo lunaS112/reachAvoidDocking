@@ -521,10 +521,10 @@ class Docking6D(Dynamics):
         self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
 
         # Define docking parameters (10x) <- to make the docking region reasonably sized
-        self.eps_p = 0.5 # Position tolerance for docking (m)
-        self.eps_v = 0.5 # Velocity tolerance for docking (m/s)
-        self.eps_theta = 0.1 # Angular position tolerance for docking (rad)
-        self.eps_omega = 0.5 # Angular velocity tolerance for docking (rad/s)
+        self.eps_p = 0.05 # Position tolerance for docking (m)
+        self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
+        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
+        self.eps_omega = 0.005 # Angular velocity tolerance for docking (rad/s)
 
         # Define goal state
         if goal_state is None:
@@ -535,7 +535,7 @@ class Docking6D(Dynamics):
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
         self.h_t = 3  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = self.chaser_buffer * 1.75 # Radius of target spacecraft docking indentation (m)
+        self.dock_rad = 2 # Radius of target spacecraft docking indentation (m)
 
         # BRAT parameters
         self.reach_fn_weight = 5.0

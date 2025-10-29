@@ -15,9 +15,78 @@ np.random.seed(1)
 
 ROLLOUT_NUM = 100
 
-def plotBRTImages(costs, initial_condition_tensor, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
+def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
+
+    ax = fig.add_subplot(1, 1, 1 )
+    reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+
+    BRT_img = costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
+    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
+
+    # create coordinate grids for contour plotting
+    x_coords = np.linspace(x_min, x_max, x_resolution)
+    y_coords = np.linspace(y_min, y_max, y_resolution)
+    X, Y = np.meshgrid(x_coords, y_coords)
+
+    # We'll also create a grey background into which the pixels will fade
+    greys = np.full((*BRT_img.shape, 3), 70, dtype=np.uint8)
+    imshow_kwargs = {
+        'vmax': max_value,
+        'vmin': min_value,
+        'cmap': 'RdYlBu',
+        'extent': (x_min, x_max, y_min, y_max),
+        'origin': 'lower',
+        'aspect': 'auto'
+    }
+    ax.imshow(greys)
+    s1=ax.imshow(BRT_img, **imshow_kwargs)
+
+    # Define secondary level set 
+    level = 0.1
+
+    # Add level set contours
+    contour_0 = ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-.')
+    contour_1 = ax.contour(X, Y, BRT_img, levels=[level], colors='blue', linewidths=1.5, linestyles='--')
+
+    ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
+    ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-')
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    fig.colorbar(s1)
+    ax.set_title('BRT Heatmap with Level Sets')
+    ax.set_xlabel('px (m)')
+    ax.set_ylabel('py (m)')
+    handles = [mpatches.Patch(color='green', linestyle='-', label='Reach Set'),
+                mpatches.Patch(color='red', label='Avoid Set'),
+                mpatches.Patch(color='black', label='0 Level Set'),
+                mpatches.Patch(color='blue', label=f'{level} Level Set')]
+    ax.legend(handles=handles)
+    
+    # Second plot - binary reachability
+    ax2 = fig2.add_subplot(1, 1, 1)
+    binary_img = ax2.imshow(1*(BRT_img <= 0), cmap='bwr',
+                origin='lower', extent=(x_min, x_max, y_min, y_max),
+                aspect='auto')
+    
+    # Add 0-level contour to binary plot as well
+    ax2.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
+    ax2.set_title('Binary Reachability (BRT ≤ 0)')
+    ax2.set_xlabel('px (m)')
+    ax2.set_ylabel('py (m)')
+    
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/heatmap_{save_def}.png", dpi=300, bbox_inches='tight')
+    fig2.savefig(f"./data/BRT_{save_def}.png", dpi=300, bbox_inches='tight')
+
+def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
+    fig = plt.figure(figsize=(6, 6))
 
     ax = fig.add_subplot(1, 1, 1 )
     reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
@@ -46,20 +115,9 @@ def plotBRTImages(costs, initial_condition_tensor, x_resolution, y_resolution,x_
     ax.imshow(greys)
     s1=ax.imshow(BRT_img, **imshow_kwargs)
 
-    # Define secondary level set 
-    level = 0.1
-
-    # Add level set contours
-    #contour_0 = ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
-    #contour_1 = ax.contour(X, Y, BRT_img, levels=[level], colors='red', linewidths=1.5, linestyles='--')
-
-    contour = ax.contour(X, Y, reach_value, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
-    contour_avoid = ax.contour(X, Y, avoid_value, levels=[0.0], colors='purple', linewidths=1.5, linestyles='-.')
-    contour_boundary = ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
-
-    # Add labels for the contours
-    #ax.clabel(contour_0, inline=True, fontsize=10, fmt='0-level')
-    #ax.clabel(contour_1, inline=True, fontsize=10, fmt=f'{level}-level')
+    ax.contour(X, Y, reach_value, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
+    ax.contour(X, Y, avoid_value, levels=[0.0], colors='purple', linewidths=1.5, linestyles='-.')
+    ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -68,22 +126,14 @@ def plotBRTImages(costs, initial_condition_tensor, x_resolution, y_resolution,x_
     ax.set_title('BRT Heatmap with Level Sets')
     ax.set_xlabel('px (m)')
     ax.set_ylabel('py (m)')
-    
-    # Second plot - binary reachability
-    ax2 = fig2.add_subplot(1, 1, 1)
-    binary_img = ax2.imshow(1*(BRT_img <= 0), cmap='bwr',
-                origin='lower', extent=(x_min, x_max, y_min, y_max),
-                aspect='auto')
-    
-    # Add 0-level contour to binary plot as well
-    ax2.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
-    
-    ax2.set_title('Binary Reachability (BRT ≤ 0)')
-    ax2.set_xlabel('px (m)')
-    ax2.set_ylabel('py (m)')
+    handles = [mpatches.Patch(color='black', label='Reach Set'),
+                mpatches.Patch(color='purple', label='Avoid Set'),
+                mpatches.Patch(color='orange', label='Boundary Set')]
+    ax.legend(handles=handles)
 
-    fig.savefig(f"./data/heatmap{save_def}.png", dpi=300, bbox_inches='tight')
-    fig2.savefig(f"./data/BRT{save_def}.png", dpi=300, bbox_inches='tight')
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/ReadAvoidSet.png", dpi=300, bbox_inches='tight')
 
 def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     import matplotlib.patches as patches
@@ -114,7 +164,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f'MPC Trajectory Analysis (T={actual_T}, dt={mpc.dT})', fontsize=16)
     
-    colors = plt.cm.Set1(np.linspace(0, 1, n_trajs))
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
 
     # 1. Position trajectories (px, py)
     ax1 = axes[0, 0]
@@ -244,15 +294,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     # Save the plot
     import os
     os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/mpc_trajectories{save_def}.png", dpi=300, bbox_inches='tight')
-    
-    # Print summary statistics
-    print("\n=== MPC Trajectory Summary ===")
-    print(f"Number of trajectories: {n_trajs}")
-    print(f"Time duration: {actual_T*mpc.dT:.1f} seconds")
-    print(f"Cost range: [{costs_np.min():.3f}, {costs_np.max():.3f}]")
-    print(f"Reach value range: [{reach_values.min():.3f}, {reach_values.max():.3f}]")
-    print(f"Successful dockings (reach_fn ≤ 0): {np.sum(successful_dockings)}/{n_trajs}")
+    fig.savefig(f"./data/fullTraj_{save_def}.png", dpi=300, bbox_inches='tight')
     
     # Analyze final states in terms of each component of reach_fn
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
@@ -284,7 +326,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
 
-def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resolution, y_resolution, 
+def plotTrajectoryOverlay(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs_grid, x_resolution, y_resolution, 
                          x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6], save_def=""):
     import matplotlib.patches as patches
     
@@ -324,21 +366,32 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     im = ax.imshow(BRT_img, **imshow_kwargs)
     
     # 2. Add level set contours
-    level_colors = ['black', 'red', 'blue']  # Colors for the three level sets
-    level_styles = ['-', '--', '-.']  # Line styles for the three level sets
-    level_widths = [1.5, 1.5, 1.5]  # Line widths for the three level sets
+    n_trajs = len(interesting_ics_tensor)
+    n_level_sets = len(level_sets)
     
+    # Generate distinct colors for level sets (avoiding trajectory colors)
+    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
+    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
+    
+    # Automatically create level set handles
+    level_set_handles = []
     for i, level in enumerate(level_sets):
         color = level_colors[i % len(level_colors)]
         style = level_styles[i % len(level_styles)]
-        width = level_widths[i % len(level_widths)]
         
-        contour = ax.contour(X, Y, BRT_img, levels=[level], colors=[color], 
-                           linewidths=width, linestyles=style)
+        ax.contour(X, Y, BRT_img, levels=[level], colors=[color], 
+                   linewidths=1.5, linestyles=style)
+        
+        # Create handle for legend
+        level_set_handles.append(
+            mpatches.Patch(color=color, label=f'Level {level}')
+        )
     
     # 3. Plot MPC trajectories
     n_trajs = len(interesting_ics_tensor)
-    colors = plt.cm.Set1(np.linspace(0, 1, n_trajs))  # Use Set1 colormap for distinct colors
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))  # Use tab20 colormap for distinct colors
+
+    traj_handles = []
     
     for i in range(n_trajs):
         px = state_trajs_np[i, :, 0]  # px trajectory
@@ -347,8 +400,10 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
         success_label = "Success" if successful_dockings[i] else "Failed"
 
         # Plot trajectory line
-        ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9, 
+        line, = ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9, 
                label=f'IC {i+1} ({success_label})')
+
+        traj_handles.append(line)
         
         # Add start and end markers
         ax.scatter(px[0], py[0], color=colors[i], s=25, marker='o', 
@@ -368,13 +423,18 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
                            head_width=0.05, head_length=0.03, 
                            fc=colors[i], ec=colors[i], alpha=0.7)
     
-    # Add target region visualization based on reach_fn parameters
-    # For Docking6D, the reach function defines a region with eps_p, eps_v, eps_theta, eps_omega tolerances
-    eps_p = mpc.dynamics_.eps_p
-    target_circle = patches.Circle((0, 0), eps_p, fill=False, color='green', linewidth=1, linestyle='--')
-    ax.add_patch(target_circle)
-    
-    # Add failure region (avoid_fn) visualization if available
+    # 4. Add target region visualization based on reach_fn parameters
+    reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
+    ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-.')
+
+    reach_avoid_handles = [
+        mpatches.Patch(color='green', label='Reach Set'),
+        mpatches.Patch(color='red', label='Avoid Set')
+    ]
+
+    # Define body of target spacecraft
     if hasattr(mpc.dynamics_, 'avoid_fn'):
         # Draw target spacecraft body with docking port cutout
         w_t = mpc.dynamics_.w_t
@@ -383,7 +443,7 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
         
         # Draw the main rectangular body
         body_rect = patches.Rectangle((-w_t/2, 0), w_t, h_t, 
-                                    fill=False, color='red', linewidth=2, alpha=0.7, label='Avoid region')
+                                    fill=False, color='black', linewidth=2, alpha=0.7, label='Body of target')
         ax.add_patch(body_rect)
         
         # Draw only the upper semicircle of the docking port (cutout)
@@ -392,16 +452,11 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
         dock_y = dock_rad * np.sin(theta)
         
         # Plot the semicircular cutout
-        ax.plot(dock_x, dock_y, color='red', linewidth=2, alpha=0.7)
-        
-        # Connect the ends of the semicircle to show the opening
-        ax.plot([-dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
-        
-        # Optional: Add vertical lines connecting the rectangle to the docking port
-        # This helps visualize that it's a cutout, not separate shapes
-        if dock_rad < w_t/2:  # Only if docking port is smaller than spacecraft width
-            ax.plot([-dock_rad, -dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
-            ax.plot([dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
+        ax.plot(dock_x, dock_y, color='black', linewidth=2, alpha=0.7)
+
+        reach_avoid_handles.append(
+            mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target')
+        )
 
     # 5. Formatting and labels
     ax.set_xlim(x_min, x_max)
@@ -410,19 +465,22 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs_grid, x_resoluti
     ax.set_ylabel('py (m)', fontsize=14)
     ax.set_title('MPC Trajectories Overlaid on BRT Heatmap', fontsize=16)
     ax.grid(True, alpha=0.3)
-    
+
+    all_handles = reach_avoid_handles + level_set_handles + traj_handles
+
     # Add colorbar for BRT values
     cbar = fig.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label('BRT Value', fontsize=12)
-    
-    # Add legend
-    ax.legend(bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
 
-    fig.savefig(f"./data/trajectory_overlay{save_def}.png", dpi=300, bbox_inches='tight')
+    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
+    
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/traj_{save_def}.png", dpi=300, bbox_inches='tight')
     
     return fig, state_trajs_np, successful_dockings
 
-def plotMPCControls(mpc, initial_conditions, T, max_trajs=10):
+def plotMPCControls(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     """
     Plot control inputs for MPC trajectories
     """
@@ -464,9 +522,9 @@ def plotMPCControls(mpc, initial_conditions, T, max_trajs=10):
     # Create figure with subplots for different control components
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f'MPC Control Analysis (T={actual_T}, dt={mpc.dT})', fontsize=16)
-    
-    colors = plt.cm.Set1(np.linspace(0, 1, n_trajs))
-    
+
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
+
     # 1. X-direction thrust (ux)
     ax1 = axes[0, 0]
     for i in range(n_trajs):
@@ -571,24 +629,7 @@ def plotMPCControls(mpc, initial_conditions, T, max_trajs=10):
     # Save the plot
     import os
     os.makedirs('./data', exist_ok=True)
-    fig.savefig("./data/mpc_controlsMixed.png", dpi=300, bbox_inches='tight')
-    
-    # Print control statistics
-    print("\n=== MPC Control Analysis ===")
-    print(f"Number of trajectories: {n_trajs}")
-    print(f"Control horizon: {actual_T} steps")
-    
-    for i in range(n_trajs):
-        ux_max = np.max(np.abs(controls_np[i, :, 0]))
-        uy_max = np.max(np.abs(controls_np[i, :, 1]))
-        tau_max = np.max(np.abs(controls_np[i, :, 2]))
-        thrust_max = np.max(np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2))
-        
-        total_effort = np.sum(np.sqrt(controls_np[i, :, 0]**2 + controls_np[i, :, 1]**2)) * mpc.dT
-        
-        success_str = "Success" if successful_dockings[i] else "Failed"
-        print(f"IC {i+1} ({success_str}): max_ux={ux_max:.3f}N, max_uy={uy_max:.3f}N, "
-              f"max_tau={tau_max:.3f}N⋅m, max_thrust={thrust_max:.3f}N, effort={total_effort:.3f}N⋅s")
+    fig.savefig(f"./data/control_{save_def}.png", dpi=300, bbox_inches='tight')
     
     return fig, controls_np, successful_dockings
 
@@ -643,8 +684,8 @@ if __name__ == "__main__":
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
     T = 6
-    dt = 0.1
-    save_def = "RecedingMPC"
+    dt = 0.05
+    save_def = "MPC_R|Cost_Reach"
 
     x_res=101
     y_res=101
@@ -663,43 +704,40 @@ if __name__ == "__main__":
     initial_condition_tensor[:, :] = torch.tensor(plot_config['state_slices']).to(device)
     initial_condition_tensor[:, plot_config['x_axis_idx']] = xys[:, 0]
     initial_condition_tensor[:, plot_config['y_axis_idx']] = xys[:, 1]
-    #initial_condition_tensor[:, plot_config['z_axis_idx']] = z_max*0.5
 
-    # Try to use Receeding Syle MPC
-    # - There may be a BUG (Try direct first and we can try receeding)
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style='receding',num_iterative_refinement=10, 
-              cost_type="classic_mpc", mpc_percentage=0.8)
+              cost_type="reachability", mpc_percentage=0.8)
 
-    #costs=[]
-    #for i in tqdm(range(4)):
-    #    batch_size = len(initial_condition_tensor) // 4
-    ##    start_idx = i * batch_size
-     #   end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
-     #   costs0, state_trajs, _, _ = mpc.get_batch_data(
-     #       initial_condition_tensor[start_idx:end_idx,...], T)
-     #   costs.append(costs0)
+    costs=[]
+    for i in tqdm(range(4)):
+        batch_size = len(initial_condition_tensor) // 4
+        start_idx = i * batch_size
+        end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
+        costs0, state_trajs, _, _ = mpc.get_batch_data(
+           initial_condition_tensor[start_idx:end_idx,...], T)
+        costs.append(costs0)
     
-    #costs=torch.cat(costs,dim=0)
+    costs=torch.cat(costs,dim=0)
     
     # Select initial conditions for visualization
     interesting_ics = []
     interesting_ics.append(torch.tensor([x_min*0.8, y_min*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([x_max*0.8, y_max*0.8, 0, 0, 0, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([0, -1.5, 0, 0, 0, 0]).to(device))  
-    interesting_ics.append(torch.tensor([0, 0.75, 0, 0, np.pi/4, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([0, -1.5, 0, 0, np.pi/2, 0]).to(device))  
+    interesting_ics.append(torch.tensor([-0.75, -0.75, 0, 0, np.pi/2, 0]).to(device)) 
     interesting_ics.append(torch.tensor([4, -1.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([1.0, -2.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting Images")
-    #plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
-    plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    #plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
-    #plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-    #    level_sets=[0.0, 0.1, 0.3], save_def=save_def)
-    #plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
+    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
+    #plotGoalAvoid(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
+    plotTrajectoryOverlay(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
+        level_sets=[0.0, 0.1, 0.15], save_def=save_def)
+    plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6, save_def=save_def)
     print("Images saved successfully!") 
 
 __all__ = ['run_quadrotor_mppi']
