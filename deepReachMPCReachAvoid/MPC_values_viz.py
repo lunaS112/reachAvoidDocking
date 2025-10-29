@@ -7,6 +7,7 @@ import torch
 from tqdm import tqdm
 from dynamics import dynamics
 from utils import MPC, modules
+import trajectory_animation
 import math
 
 # mpl.use('Agg')
@@ -635,7 +636,7 @@ if __name__ == "__main__":
         device = torch.device('cpu')
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 6
+    T = 15
     dt = 0.1
     save_def = "RecedingMixedMPC"
 
@@ -665,16 +666,16 @@ if __name__ == "__main__":
               style='receding',num_iterative_refinement=10, 
               cost_type="mixed", mpc_percentage=0.8)
 
-    costs=[]
-    for i in tqdm(range(4)):
-        batch_size = len(initial_condition_tensor) // 4
-        start_idx = i * batch_size
-        end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
-        costs0, state_trajs, _, _ = mpc.get_batch_data(
-            initial_condition_tensor[start_idx:end_idx,...], T)
-        costs.append(costs0)
+    # costs=[]
+    # for i in tqdm(range(4)):
+    #     batch_size = len(initial_condition_tensor) // 4
+    #     start_idx = i * batch_size
+    #     end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
+    #     costs0, state_trajs, _, _ = mpc.get_batch_data(
+    #         initial_condition_tensor[start_idx:end_idx,...], T)
+    #     costs.append(costs0)
     
-    costs=torch.cat(costs,dim=0)
+    # costs=torch.cat(costs,dim=0)
     
     # Select initial conditions for visualization
     interesting_ics = []
@@ -687,12 +688,32 @@ if __name__ == "__main__":
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting Images")
-    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
-    #plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
-    plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.3], save_def=save_def)
-    plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
+    # plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
+    # #plotBRTImages(dynamics_.boundary_fn(initial_condition_tensor),x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+    # plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
+    # plotTrajectoryOverlay(mpc, interesting_ics_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
+    #     level_sets=[0.0, 0.1, 0.3], save_def=save_def)
+    # plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6)
+    
+    # Get one trajectory for animation
+    sample_ic = interesting_ics_tensor[2:3]  # Take third initial condition
+    _, sample_state_traj, _, _ = mpc.get_batch_data(sample_ic, T)
+    sample_state_np = sample_state_traj.detach().cpu().numpy()[0]  # Shape: (T+1, 6)
+
+    # Compute controls from state transitions (simplified approach)
+    sample_controls_np = np.zeros((len(sample_state_np)-1, 3))
+    for t in range(len(sample_state_np)-1):
+        state_curr = torch.tensor(sample_state_np[t]).to(device)
+        state_next = torch.tensor(sample_state_np[t+1]).to(device)
+        control = compute_control_from_transition(state_curr, state_next, dt, dynamics_)
+        sample_controls_np[t] = control.detach().cpu().numpy()
+
+    # Create animation
+    anim = trajectory_animation.animate_trajectory(
+        sample_state_np, sample_controls_np, dynamics_, dt=dt, 
+        window=10.0, save_path="./data/docking_animation.gif"
+    )
+    
     print("Images saved successfully!") 
 
 __all__ = ['run_quadrotor_mppi']
