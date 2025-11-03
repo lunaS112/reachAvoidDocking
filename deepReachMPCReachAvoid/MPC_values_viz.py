@@ -15,6 +15,34 @@ np.random.seed(1)
 
 ROLLOUT_NUM = 100
 
+def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
+    theta = np.linspace(0, np.pi, 100)
+    arc_x = dock_rad * np.cos(theta)
+    arc_y = dock_rad * np.sin(theta)
+
+    verts = []
+    codes = []
+
+    # Start at bottom-left corner
+    verts.append((-w_t/2, 0));             codes.append(Path.MOVETO)
+    # Left side up
+    verts.append((-w_t/2, h_t));           codes.append(Path.LINETO)
+    # Top across
+    verts.append((w_t/2, h_t));            codes.append(Path.LINETO)
+    # Right side down
+    verts.append((w_t/2, 0));              codes.append(Path.LINETO)
+    # Bottom-right segment to mouth
+    verts.append((dock_rad, 0));           codes.append(Path.LINETO)
+    # Semicircular mouth (from +R to -R)
+    for x, y in zip(arc_x, arc_y):
+        verts.append((x, y));              codes.append(Path.LINETO)
+    # Bottom-left segment back to start
+    verts.append((-w_t/2, 0));             codes.append(Path.LINETO)
+
+    path = Path(verts, codes)
+    patch = patches.PathPatch(path, fill=False, color=color, linewidth=linewidth, alpha=alpha)
+    ax.add_patch(patch)
+
 def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
@@ -40,7 +68,7 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
         'cmap': 'RdYlBu',
         'extent': (x_min, x_max, y_min, y_max),
         'origin': 'lower',
-        'aspect': 'auto'
+        'aspect': 'equal'
     }
     ax.imshow(greys)
     s1=ax.imshow(BRT_img, **imshow_kwargs)
@@ -49,8 +77,8 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
     level = 0.1
 
     # Add level set contours
-    contour_0 = ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-.')
-    contour_1 = ax.contour(X, Y, BRT_img, levels=[level], colors='blue', linewidths=1.5, linestyles='--')
+    ax.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-.')
+    ax.contour(X, Y, BRT_img, levels=[level], colors='blue', linewidths=1.5, linestyles='--')
 
     ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
     ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-')
@@ -62,6 +90,7 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
     ax.set_title('BRT Heatmap with Level Sets')
     ax.set_xlabel('px (m)')
     ax.set_ylabel('py (m)')
+    ax.grid(True, alpha=0.3)
     handles = [mpatches.Patch(color='green', linestyle='-', label='Reach Set'),
                 mpatches.Patch(color='red', label='Avoid Set'),
                 mpatches.Patch(color='black', label='0 Level Set'),
@@ -72,7 +101,7 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
     ax2 = fig2.add_subplot(1, 1, 1)
     binary_img = ax2.imshow(1*(BRT_img <= 0), cmap='bwr',
                 origin='lower', extent=(x_min, x_max, y_min, y_max),
-                aspect='auto')
+                aspect='equal')
     
     # Add 0-level contour to binary plot as well
     ax2.contour(X, Y, BRT_img, levels=[0.0], colors='black', linewidths=1.5, linestyles='-')
@@ -110,7 +139,7 @@ def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_
         'cmap': 'RdYlBu',
         'extent': (x_min, x_max, y_min, y_max),
         'origin': 'lower',
-        'aspect': 'auto'
+        'aspect': 'equal'
     }
     ax.imshow(greys)
     s1=ax.imshow(BRT_img, **imshow_kwargs)
@@ -119,6 +148,16 @@ def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_
     ax.contour(X, Y, avoid_value, levels=[0.0], colors='purple', linewidths=1.5, linestyles='-.')
     ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
 
+    # Define body of target spacecraft
+    if hasattr(mpc.dynamics_, 'avoid_fn'):
+        # Draw target spacecraft body with docking port cutout
+        w_t = mpc.dynamics_.w_t
+        h_t = mpc.dynamics_.h_t
+        dock_rad = mpc.dynamics_.dock_rad
+        
+        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+
+
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
 
@@ -126,6 +165,7 @@ def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_
     ax.set_title('BRT Heatmap with Level Sets')
     ax.set_xlabel('px (m)')
     ax.set_ylabel('py (m)')
+    ax.grid(True, alpha=0.3)
     handles = [mpatches.Patch(color='black', label='Reach Set'),
                 mpatches.Patch(color='purple', label='Avoid Set'),
                 mpatches.Patch(color='orange', label='Boundary Set')]
@@ -190,27 +230,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
         h_t = mpc.dynamics_.h_t
         dock_rad = mpc.dynamics_.dock_rad
         
-        # Draw the main rectangular body
-        body_rect = patches.Rectangle((-w_t/2, 0), w_t, h_t, 
-                                    fill=False, color='red', linewidth=2, alpha=0.7, label='Avoid region')
-        ax1.add_patch(body_rect)
-        
-        # Draw only the upper semicircle of the docking port (cutout)
-        theta = np.linspace(0, np.pi, 100)  # Upper semicircle from 0 to π
-        dock_x = dock_rad * np.cos(theta)
-        dock_y = dock_rad * np.sin(theta)
-        
-        # Plot the semicircular cutout
-        ax1.plot(dock_x, dock_y, color='red', linewidth=2, alpha=0.7)
-        
-        # Connect the ends of the semicircle to show the opening
-        ax1.plot([-dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
-        
-        # Optional: Add vertical lines connecting the rectangle to the docking port
-        # This helps visualize that it's a cutout, not separate shapes
-        if dock_rad < w_t/2:  # Only if docking port is smaller than spacecraft width
-            ax1.plot([-dock_rad, -dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
-            ax1.plot([dock_rad, dock_rad], [0, 0], color='red', linewidth=2, alpha=0.7)
+        draw_target_body(ax1, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
             
         ax1.set_xlabel('px (m)')
         ax1.set_ylabel('py (m)')
@@ -441,18 +461,7 @@ def plotTrajectoryOverlay(mpc, interesting_ics_tensor, initial_condition_tensor,
         h_t = mpc.dynamics_.h_t
         dock_rad = mpc.dynamics_.dock_rad
         
-        # Draw the main rectangular body
-        body_rect = patches.Rectangle((-w_t/2, 0), w_t, h_t, 
-                                    fill=False, color='black', linewidth=2, alpha=0.7, label='Body of target')
-        ax.add_patch(body_rect)
-        
-        # Draw only the upper semicircle of the docking port (cutout)
-        theta = np.linspace(0, np.pi, 100)  # Upper semicircle from 0 to π
-        dock_x = dock_rad * np.cos(theta)
-        dock_y = dock_rad * np.sin(theta)
-        
-        # Plot the semicircular cutout
-        ax.plot(dock_x, dock_y, color='black', linewidth=2, alpha=0.7)
+        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
 
         reach_avoid_handles.append(
             mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target')
@@ -683,8 +692,8 @@ if __name__ == "__main__":
         device = torch.device('cpu')
    
     dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 6
-    dt = 0.05
+    T = 10
+    dt = 0.5
     save_def = "MPC_R|Cost_Reach"
 
     x_res=101
@@ -725,15 +734,15 @@ if __name__ == "__main__":
     interesting_ics = []
     interesting_ics.append(torch.tensor([x_min*0.8, y_min*0.8, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([x_max*0.8, y_max*0.8, 0, 0, 0, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([0, -1.5, 0, 0, np.pi/2, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.75, -0.75, 0, 0, np.pi/2, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, np.pi/5, 0]).to(device))  
+    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/2, 0]).to(device)) 
     interesting_ics.append(torch.tensor([4, -1.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics.append(torch.tensor([1.0, -2.0, 0, 0, 0, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting Images")
     plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
-    #plotGoalAvoid(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
+    plotGoalAvoid(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
     plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
     plotTrajectoryOverlay(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
         level_sets=[0.0, 0.1, 0.15], save_def=save_def)

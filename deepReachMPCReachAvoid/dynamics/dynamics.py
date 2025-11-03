@@ -502,6 +502,7 @@ class Dubins3D(Dynamics):
             'z_axis_idx': 2,
         }
 
+
 class Docking6D(Dynamics):
     def __init__(self, set_mode: str):
         # Defineing dynamic parameters
@@ -535,7 +536,7 @@ class Docking6D(Dynamics):
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
         self.h_t = 3  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = 2 # Radius of target spacecraft docking indentation (m)
+        self.dock_rad = 1.5 # Radius of target spacecraft docking indentation (m)
 
         # BRAT parameters
         self.reach_fn_weight = 5.0
@@ -717,21 +718,29 @@ class Docking6D(Dynamics):
         """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
         px = state[..., 0]
         py = state[..., 1]
-        
-        # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
+
+        # Target Spacecraft rectangular body (Including buffer for chaser dimensions)
         s_rect = torch.maximum(
             torch.abs(px) - (self.w_t/2 + self.chaser_buffer),
             torch.maximum(-(py + self.chaser_buffer), py - (self.h_t + self.chaser_buffer))
         )
-        # Bottom semicircular indentation centered at (0,0) covering py >= 0
-        dist_semi = torch.sqrt(px**2 + (py + self.chaser_buffer)**2) - (self.dock_rad - self.chaser_buffer)
-        # For upper half of circle: ensure we only carve out if py >= 0
-        s_dock = torch.maximum(-(py + self.chaser_buffer), dist_semi)
-        # Failure region: inside rectangle but not inside semicircle
-        s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
+        
+        # Effective docking radius accounting for chaser buffer
+        effective_rad = max(self.dock_rad - self.chaser_buffer, 1e-6)
 
-        s_fail[s_fail < 0] *= 1
-        s_fail[s_fail > 0] *= 5
+        # Target Spacecraft docking indentation (semicircle)
+        dist_semi = torch.sqrt(px**2 + py**2) - effective_rad
+        s_dock = torch.maximum(-py, dist_semi)
+        s_bubble = torch.maximum(s_rect, -s_dock)
+
+        # Cutout to stop faliureset overlap
+        s_cutout = torch.maximum(torch.abs(px) - effective_rad, 
+                                 torch.maximum(-(py + self.chaser_buffer), py))
+
+        s_fail = torch.maximum(s_bubble, -s_cutout + 0.1)
+
+        s_fail[s_fail < 0] *= 1.0
+        s_fail[s_fail > 0] *= 5.0
 
         return s_fail
     
