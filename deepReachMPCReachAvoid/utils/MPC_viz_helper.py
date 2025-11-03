@@ -13,8 +13,6 @@ import math
 torch.manual_seed(1)
 np.random.seed(1)
 
-ROLLOUT_NUM = 100
-
 def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
     theta = np.linspace(0, np.pi, 100)
     arc_x = dock_rad * np.cos(theta)
@@ -43,7 +41,7 @@ def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7
     patch = patches.PathPatch(path, fill=False, color=color, linewidth=linewidth, alpha=alpha)
     ax.add_patch(patch)
 
-def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
+def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
 
@@ -114,7 +112,7 @@ def plotBRTImages(costs, x_resolution, y_resolution,x_min, x_max, y_min, y_max, 
     fig.savefig(f"./data/heatmap_{save_def}.png", dpi=300, bbox_inches='tight')
     fig2.savefig(f"./data/BRT_{save_def}.png", dpi=300, bbox_inches='tight')
 
-def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_min, x_max, y_min, y_max, save_def=""):
+def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def=""):
     fig = plt.figure(figsize=(6, 6))
 
     ax = fig.add_subplot(1, 1, 1 )
@@ -149,14 +147,12 @@ def plotGoalAvoid(costs, initial_condition_tensor, x_resolution, y_resolution,x_
     ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
 
     # Define body of target spacecraft
-    if hasattr(mpc.dynamics_, 'avoid_fn'):
+    if hasattr(dynamics_, 'avoid_fn'):
         # Draw target spacecraft body with docking port cutout
-        w_t = mpc.dynamics_.w_t
-        h_t = mpc.dynamics_.h_t
-        dock_rad = mpc.dynamics_.dock_rad
-        
+        w_t = dynamics_.w_t
+        h_t = dynamics_.h_t
+        dock_rad = dynamics_.dock_rad
         draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
-
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -345,461 +341,6 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
           f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
-
-def plotBRTPosition(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs_grid, x_resolution, y_resolution, 
-                         x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6], save_def=""):
-    import matplotlib.patches as patches
-    
-    # Get trajectories for all interesting initial conditions
-    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
-    state_trajs_np = state_trajs.detach().cpu().numpy()
-    costs_np = costs.detach().cpu().numpy()
-    
-    # Evaluate reach function for success determination
-    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
-    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
-    successful_dockings = reach_values <= 0
-    
-    # Prepare BRT data
-    BRT_img = costs_grid.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
-    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
-    
-    # Create coordinate grids for contour plotting
-    x_coords = np.linspace(x_min, x_max, x_resolution)
-    y_coords = np.linspace(y_min, y_max, y_resolution)
-    X, Y = np.meshgrid(x_coords, y_coords)
-    
-    # Create the combined plot
-    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
-    
-    # 1. Plot BRT heatmap as background
-    imshow_kwargs = {
-        'vmax': max_value,
-        'vmin': min_value,
-        'cmap': 'RdYlBu',
-        'extent': (x_min, x_max, y_min, y_max),
-        'origin': 'lower',
-        'aspect': 'equal',
-        'alpha': 0.7  # Make heatmap semi-transparent so trajectories show clearly
-    }
-    im = ax.imshow(BRT_img, **imshow_kwargs)
-    
-    # 2. Add level set contours
-    n_trajs = len(interesting_ics_tensor)
-    n_level_sets = len(level_sets)
-    
-    # Generate distinct colors for level sets (avoiding trajectory colors)
-    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
-    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
-    
-    # Automatically create level set handles
-    level_set_handles = []
-    for i, level in enumerate(level_sets):
-        color = level_colors[i % len(level_colors)]
-        style = level_styles[i % len(level_styles)]
-        
-        ax.contour(X, Y, BRT_img, levels=[level], colors=[color], 
-                   linewidths=1.5, linestyles=style)
-        
-        # Create handle for legend
-        level_set_handles.append(
-            mpatches.Patch(color=color, label=f'Level {level}')
-        )
-    
-    # 3. Plot MPC trajectories
-    n_trajs = len(interesting_ics_tensor)
-    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))  # Use tab20 colormap for distinct colors
-
-    traj_handles = []
-    
-    for i in range(n_trajs):
-        px = state_trajs_np[i, :, 0]  # px trajectory
-        py = state_trajs_np[i, :, 1]  # py trajectory
-
-        success_label = "Success" if successful_dockings[i] else "Failed"
-
-        # Plot trajectory line
-        line, = ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9, 
-               label=f'IC {i+1} ({success_label})')
-
-        traj_handles.append(line)
-        
-        # Add start and end markers
-        ax.scatter(px[0], py[0], color=colors[i], s=25, marker='o', 
-              edgecolors='black', linewidth=1, zorder=10)  # Start
-        ax.scatter(px[-1], py[-1], color=colors[i], s=25, marker='s', 
-              edgecolors='black', linewidth=1, zorder=10)  # End
-        
-        # Add trajectory direction arrows
-        if len(px) > 1:
-            # Add arrows at quarter points along trajectory
-            for frac in [0.25, 0.5, 0.75]:
-                idx = int(frac * (len(px) - 1))
-                if idx < len(px) - 1:
-                    dx = px[idx+1] - px[idx]
-                    dy = py[idx+1] - py[idx]
-                    ax.arrow(px[idx], py[idx], dx*0.3, dy*0.3, 
-                           head_width=0.05, head_length=0.03, 
-                           fc=colors[i], ec=colors[i], alpha=0.7)
-    
-    # 4. Add target region visualization based on reach_fn parameters
-    reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
-    ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-.')
-
-    reach_avoid_handles = [
-        mpatches.Patch(color='green', label='Reach Set'),
-        mpatches.Patch(color='red', label='Avoid Set')
-    ]
-
-    # Define body of target spacecraft
-    if hasattr(mpc.dynamics_, 'avoid_fn'):
-        # Draw target spacecraft body with docking port cutout
-        w_t = mpc.dynamics_.w_t
-        h_t = mpc.dynamics_.h_t
-        dock_rad = mpc.dynamics_.dock_rad
-        
-        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
-
-        reach_avoid_handles.append(
-            mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target')
-        )
-
-    # 5. Formatting and labels
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-    ax.set_xlabel('px (m)', fontsize=14)
-    ax.set_ylabel('py (m)', fontsize=14)
-    ax.set_title('MPC Trajectories Overlaid on BRT Heatmap', fontsize=16)
-    ax.grid(True, alpha=0.3)
-
-    all_handles = reach_avoid_handles + level_set_handles + traj_handles
-
-    # Add colorbar for BRT values
-    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('BRT Value', fontsize=12)
-
-    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
-    
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_position{save_def}.png", dpi=300, bbox_inches='tight')
-    
-    return fig, state_trajs_np, successful_dockings
-
-def plotBRTVelocity(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs_grid, x_resolution, y_resolution, 
-                    x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6], save_def=""):
-    import matplotlib.patches as patches
-    
-    # Get velocity bounds from dynamics
-    state_test_range = mpc.dynamics_.state_test_range()
-    vx_min, vx_max = state_test_range[2]  # vx bounds
-    vy_min, vy_max = state_test_range[3]  # vy bounds
-    
-    # Create velocity grid for BRT evaluation
-    vx_coords = torch.linspace(vx_min, vx_max, x_resolution)
-    vy_coords = torch.linspace(vy_min, vy_max, y_resolution)
-    vx_vy_grid = torch.cartesian_prod(vx_coords, vy_coords).to(mpc.device)
-    
-    # Create initial condition tensor for velocity slice
-    # Use the slice configuration from dynamics but vary vx, vy
-    plot_config = mpc.dynamics_.plot_config()
-    velocity_initial_conditions = torch.zeros(x_resolution * y_resolution, mpc.dynamics_.state_dim).to(mpc.device)
-    velocity_initial_conditions[:, :] = torch.tensor(plot_config['state_slices']).to(mpc.device)
-    velocity_initial_conditions[:, 2] = vx_vy_grid[:, 0]  # vx
-    velocity_initial_conditions[:, 3] = vx_vy_grid[:, 1]  # vy
-    
-    # Compute BRT for velocity slice
-    print("Computing BRT for velocity slice...")
-    velocity_costs = []
-    for i in tqdm(range(4)):
-        batch_size = len(velocity_initial_conditions) // 4
-        start_idx = i * batch_size
-        end_idx = (i + 1) * batch_size if i < 3 else len(velocity_initial_conditions)
-        costs_batch, _, _, _ = mpc.get_batch_data(velocity_initial_conditions[start_idx:end_idx], T)
-        velocity_costs.append(costs_batch)
-    
-    velocity_costs = torch.cat(velocity_costs, dim=0)
-    
-    # Get trajectories for interesting initial conditions
-    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
-    state_trajs_np = state_trajs.detach().cpu().numpy()
-    
-    # Evaluate reach function for success determination
-    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
-    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
-    successful_dockings = reach_values <= 0
-    
-    # Prepare BRT data for velocity slice
-    BRT_img = velocity_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
-    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
-    
-    # Create coordinate grids for contour plotting
-    vx_coords_np = np.linspace(vx_min, vx_max, x_resolution)
-    vy_coords_np = np.linspace(vy_min, vy_max, y_resolution)
-    VX, VY = np.meshgrid(vx_coords_np, vy_coords_np)
-    
-    # Create the combined plot
-    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
-    
-    # 1. Plot BRT heatmap for velocity slice
-    imshow_kwargs = {
-        'vmax': max_value,
-        'vmin': min_value,
-        'cmap': 'RdYlBu',
-        'extent': (vx_min, vx_max, vy_min, vy_max),
-        'origin': 'lower',
-        'aspect': 'equal',
-        'alpha': 0.7
-    }
-    im = ax.imshow(BRT_img, **imshow_kwargs)
-    
-    # 2. Add level set contours
-    n_trajs = len(interesting_ics_tensor)
-    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
-    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
-    
-    level_set_handles = []
-    for i, level in enumerate(level_sets):
-        color = level_colors[i % len(level_colors)]
-        style = level_styles[i % len(level_styles)]
-        
-        ax.contour(VX, VY, BRT_img, levels=[level], colors=[color], 
-                   linewidths=1.5, linestyles=style)
-        
-        level_set_handles.append(
-            mpatches.Patch(color=color, label=f'Level {level}')
-        )
-    
-    # 3. Plot MPC trajectories in velocity space
-    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
-    traj_handles = []
-    
-    for i in range(n_trajs):
-        vx = state_trajs_np[i, :, 2]  # vx trajectory
-        vy = state_trajs_np[i, :, 3]  # vy trajectory
-
-        success_label = "Success" if successful_dockings[i] else "Failed"
-
-        line, = ax.plot(vx, vy, color=colors[i], linewidth=1.5, alpha=0.9, 
-               label=f'IC {i+1} ({success_label})')
-        traj_handles.append(line)
-        
-        # Add start and end markers
-        ax.scatter(vx[0], vy[0], color=colors[i], s=25, marker='o', 
-              edgecolors='black', linewidth=1, zorder=10)
-        ax.scatter(vx[-1], vy[-1], color=colors[i], s=25, marker='s', 
-              edgecolors='black', linewidth=1, zorder=10)
-        
-        # Add trajectory direction arrows
-        if len(vx) > 1:
-            for frac in [0.25, 0.5, 0.75]:
-                idx = int(frac * (len(vx) - 1))
-                if idx < len(vx) - 1:
-                    dvx = vx[idx+1] - vx[idx]
-                    dvy = vy[idx+1] - vy[idx]
-                    arrow_scale = 0.1
-                    ax.arrow(vx[idx], vy[idx], dvx*arrow_scale, dvy*arrow_scale, 
-                           head_width=0.02, head_length=0.01, 
-                           fc=colors[i], ec=colors[i], alpha=0.7)
-    
-    # 4. Add velocity tolerance circle for target region
-    eps_v = mpc.dynamics_.eps_v
-    target_circle = patches.Circle((0, 0), eps_v, fill=False, color='green', 
-                                 linewidth=2, linestyle='--', alpha=0.8)
-    ax.add_patch(target_circle)
-
-    reach_avoid_handles = [
-        mpatches.Patch(color='green', label='Velocity Target'),
-        mpatches.Patch(facecolor='none', edgecolor='green', linestyle='--', 
-                      label=f'Vel Tolerance (±{eps_v:.3f} m/s)')
-    ]
-
-    # 5. Formatting and labels
-    ax.set_xlim(vx_min, vx_max)
-    ax.set_ylim(vy_min, vy_max)
-    ax.set_xlabel('vx (m/s)', fontsize=14)
-    ax.set_ylabel('vy (m/s)', fontsize=14)
-    ax.set_title('MPC Velocity Trajectories on Velocity BRT Slice', fontsize=16)
-    ax.grid(True, alpha=0.3)
-
-    all_handles = reach_avoid_handles + level_set_handles + traj_handles
-
-    # Add colorbar for BRT values
-    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('BRT Value', fontsize=12)
-
-    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
-    
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_velocity_{save_def}.png", dpi=300, bbox_inches='tight')
-    
-    return fig, state_trajs_np, successful_dockings
-
-def plotBRTRotation(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs_grid, x_resolution, y_resolution, 
-                    x_min, x_max, y_min, y_max, level_sets=[0.0, 0.3, 0.6], save_def=""):
-    import matplotlib.patches as patches
-    
-    # Get rotation bounds from dynamics
-    state_test_range = mpc.dynamics_.state_test_range()
-    theta_min, theta_max = state_test_range[4]  # theta bounds
-    omega_min, omega_max = state_test_range[5]  # omega bounds
-    
-    # Create rotation grid for BRT evaluation
-    theta_coords = torch.linspace(theta_min, theta_max, x_resolution)
-    omega_coords = torch.linspace(omega_min, omega_max, y_resolution)
-    theta_omega_grid = torch.cartesian_prod(theta_coords, omega_coords).to(mpc.device)
-    
-    # Create initial condition tensor for rotation slice
-    plot_config = mpc.dynamics_.plot_config()
-    rotation_initial_conditions = torch.zeros(x_resolution * y_resolution, mpc.dynamics_.state_dim).to(mpc.device)
-    rotation_initial_conditions[:, :] = torch.tensor(plot_config['state_slices']).to(mpc.device)
-    rotation_initial_conditions[:, 4] = theta_omega_grid[:, 0]  # theta
-    rotation_initial_conditions[:, 5] = theta_omega_grid[:, 1]  # omega
-    
-    # Compute BRT for rotation slice
-    print("Computing BRT for rotation slice...")
-    rotation_costs = []
-    for i in tqdm(range(4)):
-        batch_size = len(rotation_initial_conditions) // 4
-        start_idx = i * batch_size
-        end_idx = (i + 1) * batch_size if i < 3 else len(rotation_initial_conditions)
-        costs_batch, _, _, _ = mpc.get_batch_data(rotation_initial_conditions[start_idx:end_idx], T)
-        rotation_costs.append(costs_batch)
-    
-    rotation_costs = torch.cat(rotation_costs, dim=0)
-    
-    # Get trajectories for interesting initial conditions
-    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
-    state_trajs_np = state_trajs.detach().cpu().numpy()
-    
-    # Evaluate reach function for success determination
-    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
-    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
-    successful_dockings = reach_values <= 0
-    
-    # Prepare BRT data for rotation slice
-    BRT_img = rotation_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
-    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
-    
-    # Create coordinate grids for contour plotting
-    theta_coords_np = np.linspace(theta_min, theta_max, x_resolution)
-    omega_coords_np = np.linspace(omega_min, omega_max, y_resolution)
-    THETA, OMEGA = np.meshgrid(theta_coords_np, omega_coords_np)
-    
-    # Create the combined plot
-    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
-    
-    # 1. Plot BRT heatmap for rotation slice
-    imshow_kwargs = {
-        'vmax': max_value,
-        'vmin': min_value,
-        'cmap': 'RdYlBu',
-        'extent': (theta_min, theta_max, omega_min, omega_max),
-        'origin': 'lower',
-        'aspect': 'equal',
-        'alpha': 0.7
-    }
-    im = ax.imshow(BRT_img, **imshow_kwargs)
-    
-    # 2. Add level set contours
-    n_trajs = len(interesting_ics_tensor)
-    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
-    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
-    
-    level_set_handles = []
-    for i, level in enumerate(level_sets):
-        color = level_colors[i % len(level_colors)]
-        style = level_styles[i % len(level_styles)]
-        
-        ax.contour(THETA, OMEGA, BRT_img, levels=[level], colors=[color], 
-                   linewidths=1.5, linestyles=style)
-        
-        level_set_handles.append(
-            mpatches.Patch(color=color, label=f'Level {level}')
-        )
-    
-    # 3. Plot MPC trajectories in rotation space
-    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
-    traj_handles = []
-    
-    for i in range(n_trajs):
-        theta = state_trajs_np[i, :, 4]  # theta trajectory
-        omega = state_trajs_np[i, :, 5]  # omega trajectory
-
-        success_label = "Success" if successful_dockings[i] else "Failed"
-
-        line, = ax.plot(theta, omega, color=colors[i], linewidth=1.5, alpha=0.9, 
-               label=f'IC {i+1} ({success_label})')
-        traj_handles.append(line)
-        
-        # Add start and end markers
-        ax.scatter(theta[0], omega[0], color=colors[i], s=25, marker='o', 
-              edgecolors='black', linewidth=1, zorder=10)
-        ax.scatter(theta[-1], omega[-1], color=colors[i], s=25, marker='s', 
-              edgecolors='black', linewidth=1, zorder=10)
-        
-        # Add trajectory direction arrows
-        if len(theta) > 1:
-            for frac in [0.25, 0.5, 0.75]:
-                idx = int(frac * (len(theta) - 1))
-                if idx < len(theta) - 1:
-                    dtheta = theta[idx+1] - theta[idx]
-                    domega = omega[idx+1] - omega[idx]
-                    arrow_scale = 0.3
-                    ax.arrow(theta[idx], omega[idx], dtheta*arrow_scale, domega*arrow_scale, 
-                           head_width=0.1, head_length=0.05, 
-                           fc=colors[i], ec=colors[i], alpha=0.7)
-    
-    # 4. Add target attitude and angular velocity tolerances
-    eps_theta = mpc.dynamics_.eps_theta
-    eps_omega = mpc.dynamics_.eps_omega
-    goal_theta = np.pi/2  # Target attitude from dynamics
-    goal_omega = 0.0      # Target angular velocity
-    
-    # Draw tolerance rectangle centered at target attitude
-    target_rect = patches.Rectangle((goal_theta - eps_theta, goal_omega - eps_omega), 
-                                  2*eps_theta, 2*eps_omega,
-                                  fill=False, color='green', linewidth=2, 
-                                  linestyle='--', alpha=0.8)
-    ax.add_patch(target_rect)
-    
-    # Mark target point
-    ax.scatter(goal_theta, goal_omega, color='green', s=100, marker='x', 
-              linewidth=3, label='Target Attitude')
-
-    reach_avoid_handles = [
-        mpatches.Patch(color='green', label='Attitude Target'),
-        mpatches.Patch(facecolor='none', edgecolor='green', linestyle='--', 
-                      label=f'Tolerance (±{eps_theta:.3f} rad, ±{eps_omega:.3f} rad/s)')
-    ]
-
-    # 5. Formatting and labels
-    ax.set_xlim(theta_min, theta_max)
-    ax.set_ylim(omega_min, omega_max)
-    ax.set_xlabel('θ (rad)', fontsize=14)
-    ax.set_ylabel('ω (rad/s)', fontsize=14)
-    ax.set_title('MPC Rotational Trajectories on Rotation BRT Slice', fontsize=16)
-    ax.grid(True, alpha=0.3)
-
-    all_handles = reach_avoid_handles + level_set_handles + traj_handles
-
-    # Add colorbar for BRT values
-    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('BRT Value', fontsize=12)
-
-    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
-    
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_rotation_{save_def}.png", dpi=300, bbox_inches='tight')
-    
-    return fig, state_trajs_np, successful_dockings
 
 def plotMPCControls(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     """
@@ -997,76 +538,461 @@ def compute_control_from_transition(state_curr, state_next, dt, dynamics):
     
     return torch.tensor([ux, uy, tau])
 
-
-if __name__ == "__main__":
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
-   
-    dynamics_ = dynamics.Docking6D('reach_avoid')
-    T = 8
-    dt = 0.1
-    save_def = "MPC_R|Cost_Reach"
-
-    x_res=101
-    y_res=101
+def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
+    """Compute BRT for all state space slices once"""
     plot_config = dynamics_.plot_config()
     state_test_range = dynamics_.state_test_range()
+    
+    def compute_brt_batch(initial_conditions, slice_name):
+        """Helper function to compute BRT in batches"""
+        print(f"Computing {slice_name} BRT...")
+        costs = []
+        for i in tqdm(range(4)):
+            batch_size = len(initial_conditions) // 4
+            start_idx = i * batch_size
+            end_idx = (i + 1) * batch_size if i < 3 else len(initial_conditions)
+            costs_batch, _, _, _ = mpc.get_batch_data(initial_conditions[start_idx:end_idx], T)
+            costs.append(costs_batch)
+        return torch.cat(costs, dim=0)
+    
+    # Position slice (your existing computation)
     x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-    #x_min, x_max = -1, 1
-    #y_min, y_max = -1, 1
     y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-    z_min, z_max = state_test_range[plot_config['z_axis_idx']]
-
     xs = torch.linspace(x_min, x_max, x_res)
     ys = torch.linspace(y_min, y_max, y_res)
     xys = torch.cartesian_prod(xs, ys).to(device)
-    initial_condition_tensor=torch.zeros(x_res*y_res, dynamics_.state_dim).to(device)
-    initial_condition_tensor[:, :] = torch.tensor(plot_config['state_slices']).to(device)
-    initial_condition_tensor[:, plot_config['x_axis_idx']] = xys[:, 0]
-    initial_condition_tensor[:, plot_config['y_axis_idx']] = xys[:, 1]
-
-    mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
-              dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
-              style='receding',num_iterative_refinement=10, 
-              cost_type="reachability", mpc_percentage=0.8)
-
-    costs=[]
-    for i in tqdm(range(4)):
-        batch_size = len(initial_condition_tensor) // 4
-        start_idx = i * batch_size
-        end_idx = (i + 1) * batch_size if i < 3 else len(initial_condition_tensor)
-        costs0, state_trajs, _, _ = mpc.get_batch_data(
-           initial_condition_tensor[start_idx:end_idx,...], T)
-        costs.append(costs0)
     
-    costs=torch.cat(costs,dim=0)
+    position_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+    position_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
+    position_ics[:, plot_config['x_axis_idx']] = xys[:, 0]
+    position_ics[:, plot_config['y_axis_idx']] = xys[:, 1]
+    position_costs = compute_brt_batch(position_ics, "position")
     
-    # Select initial conditions for visualization
-    interesting_ics = []
-    interesting_ics.append(torch.tensor([x_min*0.8, y_min*0.8, 0, 0, 0, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([x_max*0.8, y_max*0.8, 0, 0, 0, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 0, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/2, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([4, -1.0, 0, 0, 0, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([1.0, -2.0, 0, 0, 0, 0]).to(device)) 
-    interesting_ics_tensor = torch.stack(interesting_ics)
+    # Velocity slice
+    vx_min, vx_max = state_test_range[2]  # vx is always index 2
+    vy_min, vy_max = state_test_range[3]  # vy is always index 3
+    vxs = torch.linspace(vx_min, vx_max, x_res)
+    vys = torch.linspace(vy_min, vy_max, y_res)
+    vxvys = torch.cartesian_prod(vxs, vys).to(device)
+    
+    velocity_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+    velocity_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
+    velocity_ics[:, 2] = vxvys[:, 0]  # vx
+    velocity_ics[:, 3] = vxvys[:, 1]  # vy
+    velocity_costs = compute_brt_batch(velocity_ics, "velocity")
+    
+    # Rotation slice
+    theta_min, theta_max = state_test_range[4]  # theta is always index 4
+    omega_min, omega_max = state_test_range[5]  # omega is always index 5
+    thetas = torch.linspace(theta_min, theta_max, x_res)
+    omegas = torch.linspace(omega_min, omega_max, y_res)
+    theta_omegas = torch.cartesian_prod(thetas, omegas).to(device)
+    
+    rotation_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+    rotation_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
+    rotation_ics[:, 4] = theta_omegas[:, 0]  # theta
+    rotation_ics[:, 5] = theta_omegas[:, 1]  # omega
+    rotation_costs = compute_brt_batch(rotation_ics, "rotation")
+    
+    return {
+        'position': {
+            'costs': position_costs,
+            'coords': (x_min, x_max, y_min, y_max),
+            'initial_conditions': position_ics
+        },
+        'velocity': {
+            'costs': velocity_costs,
+            'coords': (vx_min, vx_max, vy_min, vy_max),
+            'initial_conditions': velocity_ics
+        },
+        'rotation': {
+            'costs': rotation_costs,
+            'coords': (theta_min, theta_max, omega_min, omega_max),
+            'initial_conditions': rotation_ics
+        }
+    }
 
-    print("Plotting BRT and Reach Avoid sets...")
-    plotBRTImages(costs,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max, save_def=save_def)
-    plotGoalAvoid(dynamics_.boundary_fn(initial_condition_tensor),initial_condition_tensor,x_resolution=x_res,y_resolution=y_res,x_min=x_min,x_max=x_max,y_min=y_min, y_max=y_max)
-    plotMPCTrajectories(mpc, interesting_ics_tensor, T, max_trajs=5, save_def=save_def)
-    print("Generating Position BRT")
-    plotBRTPosition(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.15], save_def=save_def)
-    print("Generating Velocity BRT")
-    plotBRTVelocity(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.15], save_def=save_def)
-    print("Generating Rotation BRT")
-    plotBRTRotation(mpc, interesting_ics_tensor, initial_condition_tensor, T, costs, x_res, y_res, x_min, x_max, y_min, y_max, 
-        level_sets=[0.0, 0.1, 0.15], save_def=save_def)
-    plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6, save_def=save_def)
-    print("Images saved successfully!") 
+def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
+                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+    import matplotlib.patches as patches
+    
+    # Get pre-computed position BRT data
+    position_costs = brt_data['position']['costs']
+    x_min, x_max, y_min, y_max = brt_data['position']['coords']
+    initial_condition_tensor = brt_data['position']['initial_conditions']
+    
+    # Get trajectories for interesting initial conditions
+    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
+    state_trajs_np = state_trajs.detach().cpu().numpy()
+    
+    # Evaluate reach function for success determination
+    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
+    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
+    successful_dockings = reach_values <= 0
+    
+    # Prepare BRT data using pre-computed position costs
+    BRT_img = position_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
+    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
+    
+    # Create coordinate grids for contour plotting
+    x_coords = np.linspace(x_min, x_max, x_resolution)
+    y_coords = np.linspace(y_min, y_max, y_resolution)
+    X, Y = np.meshgrid(x_coords, y_coords)
+    
+    # Create the combined plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    
+    # 1. Plot BRT heatmap as background
+    imshow_kwargs = {
+        'vmax': max_value,
+        'vmin': min_value,
+        'cmap': 'RdYlBu',
+        'extent': (x_min, x_max, y_min, y_max),
+        'origin': 'lower',
+        'aspect': 'equal',
+        'alpha': 0.7
+    }
+    im = ax.imshow(BRT_img, **imshow_kwargs)
+    
+    # 2. Add level set contours
+    n_trajs = len(interesting_ics_tensor)
+    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
+    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
+    
+    level_set_handles = []
+    for i, level in enumerate(level_sets):
+        color = level_colors[i % len(level_colors)]
+        style = level_styles[i % len(level_styles)]
+        
+        ax.contour(X, Y, BRT_img, levels=[level], colors=[color], 
+                   linewidths=1.5, linestyles=style)
+        
+        level_set_handles.append(
+            mpatches.Patch(color=color, label=f'Level {level}')
+        )
+    
+    # 3. Plot MPC trajectories
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
+    traj_handles = []
+    
+    for i in range(n_trajs):
+        px = state_trajs_np[i, :, 0]  # px trajectory
+        py = state_trajs_np[i, :, 1]  # py trajectory
 
-__all__ = ['run_quadrotor_mppi']
+        success_label = "Success" if successful_dockings[i] else "Failed"
+
+        line, = ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9, 
+               label=f'IC {i+1} ({success_label})')
+        traj_handles.append(line)
+        
+        # Add start and end markers
+        ax.scatter(px[0], py[0], color=colors[i], s=25, marker='o', 
+              edgecolors='black', linewidth=1, zorder=10)
+        ax.scatter(px[-1], py[-1], color=colors[i], s=25, marker='s', 
+              edgecolors='black', linewidth=1, zorder=10)
+        
+        # Add trajectory direction arrows
+        if len(px) > 1:
+            for frac in [0.25, 0.5, 0.75]:
+                idx = int(frac * (len(px) - 1))
+                if idx < len(px) - 1:
+                    dx = px[idx+1] - px[idx]
+                    dy = py[idx+1] - py[idx]
+                    ax.arrow(px[idx], py[idx], dx*0.3, dy*0.3, 
+                           head_width=0.05, head_length=0.03, 
+                           fc=colors[i], ec=colors[i], alpha=0.7)
+    
+    # 4. Add target region visualization
+    reach_value = mpc.dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = mpc.dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
+    ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-.')
+
+    reach_avoid_handles = [
+        mpatches.Patch(color='green', label='Reach Set'),
+        mpatches.Patch(color='red', label='Avoid Set')
+    ]
+
+    # Define body of target spacecraft
+    if hasattr(mpc.dynamics_, 'avoid_fn'):
+        w_t = mpc.dynamics_.w_t
+        h_t = mpc.dynamics_.h_t
+        dock_rad = mpc.dynamics_.dock_rad
+        
+        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+        reach_avoid_handles.append(
+            mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target')
+        )
+
+    # 5. Formatting and labels
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xlabel('px (m)', fontsize=14)
+    ax.set_ylabel('py (m)', fontsize=14)
+    ax.set_title('MPC Trajectories Overlaid on Position BRT Heatmap', fontsize=16)
+    ax.grid(True, alpha=0.3)
+
+    all_handles = reach_avoid_handles + level_set_handles + traj_handles
+
+    # Add colorbar for BRT values
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label('BRT Value', fontsize=12)
+
+    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
+    
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/traj_position_{save_def}.png", dpi=300, bbox_inches='tight')
+    
+    return fig, state_trajs_np, successful_dockings
+
+def plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
+                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+    import matplotlib.patches as patches
+    
+    # Get pre-computed velocity BRT data
+    velocity_costs = brt_data['velocity']['costs']
+    vx_min, vx_max, vy_min, vy_max = brt_data['velocity']['coords']
+    velocity_initial_conditions = brt_data['velocity']['initial_conditions']
+    
+    # Get trajectories for interesting initial conditions
+    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
+    state_trajs_np = state_trajs.detach().cpu().numpy()
+    
+    # Evaluate reach function for success determination
+    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
+    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
+    successful_dockings = reach_values <= 0
+    
+    # Prepare BRT data for velocity slice
+    BRT_img = velocity_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
+    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
+    
+    # Create coordinate grids for contour plotting
+    vx_coords_np = np.linspace(vx_min, vx_max, x_resolution)
+    vy_coords_np = np.linspace(vy_min, vy_max, y_resolution)
+    VX, VY = np.meshgrid(vx_coords_np, vy_coords_np)
+    
+    # Create the combined plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    
+    # 1. Plot BRT heatmap for velocity slice
+    imshow_kwargs = {
+        'vmax': max_value,
+        'vmin': min_value,
+        'cmap': 'RdYlBu',
+        'extent': (vx_min, vx_max, vy_min, vy_max),
+        'origin': 'lower',
+        'aspect': 'equal',
+        'alpha': 0.7
+    }
+    im = ax.imshow(BRT_img, **imshow_kwargs)
+    
+    # 2. Add level set contours
+    n_trajs = len(interesting_ics_tensor)
+    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
+    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
+    
+    level_set_handles = []
+    for i, level in enumerate(level_sets):
+        color = level_colors[i % len(level_colors)]
+        style = level_styles[i % len(level_styles)]
+        
+        ax.contour(VX, VY, BRT_img, levels=[level], colors=[color], 
+                   linewidths=1.5, linestyles=style)
+        
+        level_set_handles.append(
+            mpatches.Patch(color=color, label=f'Level {level}')
+        )
+    
+    # 3. Plot MPC trajectories in velocity space
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
+    traj_handles = []
+    
+    for i in range(n_trajs):
+        vx = state_trajs_np[i, :, 2]  # vx trajectory
+        vy = state_trajs_np[i, :, 3]  # vy trajectory
+
+        success_label = "Success" if successful_dockings[i] else "Failed"
+
+        line, = ax.plot(vx, vy, color=colors[i], linewidth=1.5, alpha=0.9, 
+               label=f'IC {i+1} ({success_label})')
+        traj_handles.append(line)
+        
+        # Add start and end markers
+        ax.scatter(vx[0], vy[0], color=colors[i], s=25, marker='o', 
+              edgecolors='black', linewidth=1, zorder=10)
+        ax.scatter(vx[-1], vy[-1], color=colors[i], s=25, marker='s', 
+              edgecolors='black', linewidth=1, zorder=10)
+        
+        # Add trajectory direction arrows
+        if len(vx) > 1:
+            for frac in [0.25, 0.5, 0.75]:
+                idx = int(frac * (len(vx) - 1))
+                if idx < len(vx) - 1:
+                    dvx = vx[idx+1] - vx[idx]
+                    dvy = vy[idx+1] - vy[idx]
+                    arrow_scale = 0.1
+                    ax.arrow(vx[idx], vy[idx], dvx*arrow_scale, dvy*arrow_scale, 
+                           head_width=0.02, head_length=0.01, 
+                           fc=colors[i], ec=colors[i], alpha=0.7)
+    
+    # 4. Add target region visualization using actual reach_fn
+    reach_value = mpc.dynamics_.reach_fn(velocity_initial_conditions).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = mpc.dynamics_.avoid_fn(velocity_initial_conditions).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    ax.contour(VX, VY, reach_value, levels=[0.0], colors='green', linewidths=2, linestyles='-')
+    ax.contour(VX, VY, avoid_value, levels=[0.0], colors='red', linewidths=2, linestyles='-.')
+
+    reach_avoid_handles = [
+        mpatches.Patch(color='green', label='Reach Set (velocity slice)'),
+        mpatches.Patch(color='red', label='Avoid Set (velocity slice)')
+    ]
+
+    # 5. Formatting and labels
+    ax.set_xlim(vx_min, vx_max)
+    ax.set_ylim(vy_min, vy_max)
+    ax.set_xlabel('vx (m/s)', fontsize=14)
+    ax.set_ylabel('vy (m/s)', fontsize=14)
+    ax.set_title('MPC Velocity Trajectories on Velocity BRT Slice', fontsize=16)
+    ax.grid(True, alpha=0.3)
+
+    all_handles = reach_avoid_handles + level_set_handles + traj_handles
+
+    # Add colorbar for BRT values
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label('BRT Value', fontsize=12)
+
+    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
+    
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/traj_velocity_{save_def}.png", dpi=300, bbox_inches='tight')
+    
+    return fig, state_trajs_np, successful_dockings
+
+def plotBRTRotation(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
+                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+    import matplotlib.patches as patches
+    
+    # Get pre-computed rotation BRT data
+    rotation_costs = brt_data['rotation']['costs']
+    theta_min, theta_max, omega_min, omega_max = brt_data['rotation']['coords']
+    rotation_initial_conditions = brt_data['rotation']['initial_conditions']
+    
+    # Get trajectories for interesting initial conditions
+    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
+    state_trajs_np = state_trajs.detach().cpu().numpy()
+    
+    # Evaluate reach function for success determination
+    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
+    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
+    successful_dockings = reach_values <= 0
+    
+    # Prepare BRT data for rotation slice
+    BRT_img = rotation_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
+    min_value = np.amin(BRT_img[~np.isnan(BRT_img)])
+    
+    # Create coordinate grids for contour plotting
+    theta_coords_np = np.linspace(theta_min, theta_max, x_resolution)
+    omega_coords_np = np.linspace(omega_min, omega_max, y_resolution)
+    THETA, OMEGA = np.meshgrid(theta_coords_np, omega_coords_np)
+    
+    # Create the combined plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    
+    # 1. Plot BRT heatmap for rotation slice
+    imshow_kwargs = {
+        'vmax': max_value,
+        'vmin': min_value,
+        'cmap': 'RdYlBu',
+        'extent': (theta_min, theta_max, omega_min, omega_max),
+        'origin': 'lower',
+        'aspect': 'equal',
+        'alpha': 0.7
+    }
+    im = ax.imshow(BRT_img, **imshow_kwargs)
+    
+    # 2. Add level set contours
+    n_trajs = len(interesting_ics_tensor)
+    level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
+    level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
+    
+    level_set_handles = []
+    for i, level in enumerate(level_sets):
+        color = level_colors[i % len(level_colors)]
+        style = level_styles[i % len(level_styles)]
+        
+        ax.contour(THETA, OMEGA, BRT_img, levels=[level], colors=[color], 
+                   linewidths=1.5, linestyles=style)
+        
+        level_set_handles.append(
+            mpatches.Patch(color=color, label=f'Level {level}')
+        )
+    
+    # 3. Plot MPC trajectories in rotation space
+    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
+    traj_handles = []
+    
+    for i in range(n_trajs):
+        theta = state_trajs_np[i, :, 4]  # theta trajectory
+        omega = state_trajs_np[i, :, 5]  # omega trajectory
+
+        success_label = "Success" if successful_dockings[i] else "Failed"
+
+        line, = ax.plot(theta, omega, color=colors[i], linewidth=1.5, alpha=0.9, 
+               label=f'IC {i+1} ({success_label})')
+        traj_handles.append(line)
+        
+        # Add start and end markers
+        ax.scatter(theta[0], omega[0], color=colors[i], s=25, marker='o', 
+              edgecolors='black', linewidth=1, zorder=10)
+        ax.scatter(theta[-1], omega[-1], color=colors[i], s=25, marker='s', 
+              edgecolors='black', linewidth=1, zorder=10)
+        
+        # Add trajectory direction arrows
+        if len(theta) > 1:
+            for frac in [0.25, 0.5, 0.75]:
+                idx = int(frac * (len(theta) - 1))
+                if idx < len(theta) - 1:
+                    dtheta = theta[idx+1] - theta[idx]
+                    domega = omega[idx+1] - omega[idx]
+                    arrow_scale = 0.3
+                    ax.arrow(theta[idx], omega[idx], dtheta*arrow_scale, domega*arrow_scale, 
+                           head_width=0.1, head_length=0.05, 
+                           fc=colors[i], ec=colors[i], alpha=0.7)
+    
+    # 4. Add target region visualization using actual reach_fn
+    reach_value = mpc.dynamics_.reach_fn(rotation_initial_conditions).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    avoid_value = mpc.dynamics_.avoid_fn(rotation_initial_conditions).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    ax.contour(THETA, OMEGA, reach_value, levels=[0.0], colors='green', linewidths=2, linestyles='-')
+    ax.contour(THETA, OMEGA, avoid_value, levels=[0.0], colors='red', linewidths=2, linestyles='-.')
+
+    reach_avoid_handles = [
+        mpatches.Patch(color='green', label='Reach Set (rotation slice)'),
+        mpatches.Patch(color='red', label='Avoid Set (rotation slice)')
+    ]
+
+    # 5. Formatting and labels
+    ax.set_xlim(theta_min, theta_max)
+    ax.set_ylim(omega_min, omega_max)
+    ax.set_xlabel('θ (rad)', fontsize=14)
+    ax.set_ylabel('ω (rad/s)', fontsize=14)
+    ax.set_title('MPC Rotational Trajectories on Rotation BRT Slice', fontsize=16)
+    ax.grid(True, alpha=0.3)
+
+    all_handles = reach_avoid_handles + level_set_handles + traj_handles
+
+    # Add colorbar for BRT values
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label('BRT Value', fontsize=12)
+
+    ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
+    
+    import os
+    os.makedirs('./data', exist_ok=True)
+    fig.savefig(f"./data/traj_rotation_{save_def}.png", dpi=300, bbox_inches='tight')
+    
+    return fig, state_trajs_np, successful_dockings
