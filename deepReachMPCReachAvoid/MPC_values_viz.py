@@ -30,8 +30,8 @@ if __name__ == "__main__":
     save_def = "MPC_R|Cost_Reach"
 
     # Resolution for BRT computation
-    x_res = 101
-    y_res = 101
+    x_res = 201
+    y_res = 201
     
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
