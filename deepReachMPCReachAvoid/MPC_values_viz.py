@@ -17,13 +17,13 @@ if __name__ == "__main__":
     else:
         device = torch.device('cpu')
    
-    dynamics_ = dynamics.Docking6D('reach_avoid')
+    dynamics_ = dynamics.Docking6D('reach')
 
     # Required parameters
     T = 10
     dt = 0.5
     style = "receding" # Can be "direct" or "receding"
-    cost_type = "mixed" # Can be "reachability", "classic_mpc", or "mixed"
+    cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
     x_res = 101

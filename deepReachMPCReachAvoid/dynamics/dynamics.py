@@ -546,7 +546,8 @@ class Docking6D(Dynamics):
         if set_mode == 'reach_avoid':
             l_type = 'brat_hjivi'
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            #raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            l_type = 'brt_hjivi'
 
         # look into what we want to make these
         self.eps_var = torch.tensor([3]).cuda()
@@ -748,8 +749,12 @@ class Docking6D(Dynamics):
     def boundary_fn(self, state):
         if self.set_mode in ['reach_avoid']:
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+        elif self.set_mode == 'reach':
+            return self.reach_fn(state)
+        elif self.set_mode == 'avoid':
+            return self.avoid_fn(state)
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            raise NotImplementedError(f"Set mode {self.set_mode} not implemented")
 
     def sample_target_state(self, num_samples):
         raise NotImplementedError
