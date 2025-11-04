@@ -9,10 +9,14 @@ Controls (per timestep): [u1, u2, u3]
 """
 
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.patches import Polygon, Rectangle
 from matplotlib.gridspec import GridSpec
+from utils import MPC_viz_helper as viz
+from pathlib import Path as pathlib
+
 
 
 class TrajectoryAnim:
@@ -64,35 +68,28 @@ class TrajectoryAnim:
         rotated_corners = (R @ corners.T).T + chaser_center
         return rotated_corners
 
-    def target_vertices(self) -> np.ndarray:
-        """Get target satellite vertices (assumed stationary at origin)"""
-        target_width = getattr(self.dynamics_, 'w_t', 1.0)  # Default width
-        target_height = getattr(self.dynamics_, 'h_t', 1.0)  # Default height
-        
-        half_width = target_width / 2.0
-        half_height = target_height / 2.0
-        corners = np.array([
-            [-half_width, -half_height],
-            [ half_width, -half_height],
-            [ half_width,  half_height],
-            [-half_width,  half_height]
-        ])
-        return corners
-
     def setup_figure(self):
         """Setup the figure with trajectory plot and control plots"""
         fig = plt.figure(figsize=self.figsize, dpi=self.dpi)
         
         # Create grid layout
-        gs = GridSpec(3, 2, figure=fig, width_ratios=[2, 1], height_ratios=[1, 1, 1])
+        gs = GridSpec(6, 3, figure=fig, width_ratios=[1, 2, 1], height_ratios=[1, 1, 1, 1, 1, 1])
         
-        # Main trajectory plot (spans all rows of left column)
-        self.ax_traj = fig.add_subplot(gs[:, 0])
+        # Main trajectory plot (spans all rows of middle column)
+        self.ax_traj = fig.add_subplot(gs[:,1])
         
         # Control plots (right column)
-        self.ax_u1 = fig.add_subplot(gs[0, 1])
-        self.ax_u2 = fig.add_subplot(gs[1, 1])
-        self.ax_u3 = fig.add_subplot(gs[2, 1])
+        self.ax_u1 = fig.add_subplot(gs[0:2, 2])
+        self.ax_u2 = fig.add_subplot(gs[2:4, 2])
+        self.ax_u3 = fig.add_subplot(gs[4:, 2])
+
+        # State plots (left column)
+        self.ax_s1 = fig.add_subplot(gs[0, 0])
+        self.ax_s2 = fig.add_subplot(gs[1, 0])
+        self.ax_s3 = fig.add_subplot(gs[2, 0])
+        self.ax_s4 = fig.add_subplot(gs[3, 0])
+        self.ax_s5 = fig.add_subplot(gs[4, 0])
+        self.ax_s6 = fig.add_subplot(gs[5, 0])
         
         return fig
 
@@ -110,11 +107,10 @@ class TrajectoryAnim:
         self.ax_traj.add_patch(self.chaser_poly)
         
         # Create target satellite polygon (stationary)
-        target_verts = self.target_vertices()
-        self.target_poly = Polygon(target_verts, closed=True, 
-                                  facecolor='red', edgecolor='darkred', 
-                                  alpha=0.7, label='Target')
-        self.ax_traj.add_patch(self.target_poly)
+        w_t = self.dynamics_.w_t
+        h_t = self.dynamics_.h_t
+        doc_rad = self.dynamics_.docking_rad
+        viz.draw_target_body(self.ax_traj, w_t, h_t, doc_rad, color='red', linewidth=2.0, alpha=0.7)
         
         # Add recent trajectory trace
         self.trace_line, = self.ax_traj.plot([], [], 'b-', linewidth=2, alpha=0.8)
@@ -284,71 +280,45 @@ class TrajectoryAnim:
         print(f"Animation saved to {filename}")
 
 
-def animate_trajectory(state_rollouts, control_rollouts, dynamics_, dt=0.1, 
-                      window=5.0, save_path=None):
+def animate_trajectory(mpc, initial_conditions, T, dt, 
+                      save_def, window=5.0,):
     """
     Convenience function to create trajectory animation
     
     Args:
-        state_rollouts: numpy array of shape (T, 6) with states [x, y, u, v, theta, Omega]
-        control_rollouts: numpy array of shape (T, 3) with controls [u1, u2, u3]
-        dynamics_: dynamics object with satellite dimensions
-        dt: time step
+        mpc: MPC object with dynamics
+        initial_conditions: initial state array
+        T: total timesteps
+        dt: timestep duration
         window: sliding window size for control plots (seconds)
-        save_path: optional path to save animation
+        save_def: optional path to save animation
     
     Returns:
         Animation object
     """
-    animator = TrajectoryAnim(state_rollouts, control_rollouts, dynamics_, dt)
-    animator.window = window
-    
-    if save_path:
-        animator.save_animation(save_path)
-    
-    return animator.trajectory_animation()
 
+    for i in range(initial_conditions.shape[0]):
+        _, state_rollouts, _, _ = mpc.get_batch_data(initial_conditions[i].unsqueeze(0), T)
+        state_rollouts = state_rollouts[0].detach().cpu().numpy()  # Extract single trajectory
+        actual_T = state_rollouts.shape[1] - 1  # Because states include initial state
+        # Extract control inputs by computing them from state dynamics
+        control_rollouts = np.zeros((actual_T, 3))  # [ux, uy, tau] for each trajectory
 
-# Demo function
-def demo():
-    """Create demo animation with synthetic data"""
-    # Create synthetic trajectory data
-    T = 200
-    t = np.linspace(0, 20, T)
-    
-    # Spiral trajectory toward origin
-    r = 5 * np.exp(-t/10)
-    theta_traj = t
-    x = r * np.cos(theta_traj)
-    y = r * np.sin(theta_traj)
-    
-    # Velocities
-    u = np.gradient(x, t)
-    v = np.gradient(y, t)
-    
-    # Orientation (facing velocity direction)
-    theta = np.arctan2(v, u)
-    Omega = np.gradient(theta, t)
-    
-    states = np.column_stack([x, y, u, v, theta, Omega])
-    
-    # Synthetic controls
-    controls = np.random.normal(0, 0.1, (T, 3))
-    
-    # Create mock dynamics object
-    class MockDynamics:
-        def __init__(self):
-            self.w_c = 0.5  # chaser width
-            self.h_c = 0.3  # chaser height
-            self.w_t = 0.4  # target width  
-            self.h_t = 0.4  # target height
-    
-    dynamics = MockDynamics()
-    
-    # Create and show animation
-    animator = TrajectoryAnim(states, controls, dynamics, dt=0.1)
-    return animator.trajectory_animation()
+        for t in range(actual_T):
+            # Current state
+            state_curr = torch.tensor(state_rollouts[t, :]).to(mpc.device)
+            state_next = torch.tensor(state_rollouts[t+1, :]).to(mpc.device)
 
+            # Compute control that would produce this state transition
+            control = viz.compute_control_from_transition(state_curr, state_next, mpc.dT, mpc.dynamics_)
+            control_rollouts[t, :] = control.detach().cpu().numpy()
 
-if __name__ == "__main__":
-    demo()
+        animator = TrajectoryAnim(state_rollouts, control_rollouts, mpc.dynamics_, dt)
+        animator.window = window
+        
+        if save_def:
+            save_def.parent.mkdir(parents=True, exist_ok=True)
+            save_def = f"{save_def}__gif_traj_{i}.gif"
+            animator.save_animation(save_def)
+        
+        #return animator.trajectory_animation()
