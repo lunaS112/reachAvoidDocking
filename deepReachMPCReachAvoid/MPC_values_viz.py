@@ -21,6 +21,7 @@ if __name__ == "__main__":
 
     # Required parameters
     T = 10
+    T = 10
     dt = 0.5
     style = "receding" # Can be "direct" or "receding"
     cost_type = "classic_mpc" # Can be "reachability", "classic_mpc", or "mixed"
@@ -57,8 +58,9 @@ if __name__ == "__main__":
     
     # Select initial conditions for visualization
     interesting_ics = []
+    interesting_ics.append(torch.tensor([0.5, -0.5, 0, 1, np.pi/4, 0]).to(device))  
     interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/2, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting BRT and Reach Avoid sets...")
