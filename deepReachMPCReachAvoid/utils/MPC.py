@@ -50,6 +50,7 @@ class MPC:
             self.mpc_percentage = mpc_percentage
 
         self.T=T*1.0
+        self.current_refinement_iter = 0 # Reset for each batch data generation
         self.batch_size=initial_condition_tensor.shape[0]
         if self.dynamics_.set_mode in ['avoid', 'reach']:
             state_trajs, lxs, num_iters = self.get_opt_trajs(initial_condition_tensor, policy, t)
@@ -155,7 +156,7 @@ class MPC:
             self.receding_start=0
             for i in tqdm(range(int(num_iters/self.receding_horizon))):
                 best_controls,_ = self.get_control(
-                        state_trajs[:,i, :])
+                        state_trajs[:,i, :], int(num_iters/self.receding_horizon), policy, t_remaining=t)
                 for k in range(self.receding_horizon):
                     lxs[:,i*self.receding_horizon+k] = self.dynamics_.boundary_fn(
                                             state_trajs[:, i*self.receding_horizon+k, :]) 
@@ -252,7 +253,7 @@ class MPC:
             self.current_refinement_iter = 0
 
             # Main iterative refinement loop for direct style MPC
-            for i in range(num_iterative_refinement+1 - self.num_effective_horizon_refinement):
+            for _ in range(num_iterative_refinement - self.num_effective_horizon_refinement):
                 state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,start_iter=0,rollout_horizon=self.horizon)
                 self.all_state_trajs=state_trajs.detach().cpu()*1.0
 
@@ -266,12 +267,13 @@ class MPC:
             return self.control_tensors, best_traj
         elif self.style == 'receding':
             # initial_condition_tensor: A*D
-            state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,start_iter=self.receding_start,rollout_horizon=self.horizon-self.receding_start)
+            state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,
+                                                                   start_iter=self.receding_start,
+                                                                   rollout_horizon=self.horizon-self.receding_start)
 
-            current_controls, best_traj, best_costs = self.update_control_tensor(
-                state_trajs, permuted_controls, receding=True,
-                current_iter=self.current_refinement_iter, 
-                total_iters=num_iterative_refinement - self.num_effective_horizon_refinement)
+            current_controls, best_traj, best_costs = self.update_control_tensor(state_trajs, permuted_controls, receding=True,
+                                                                    current_iter=self.current_refinement_iter, 
+                                                                    total_iters=num_iterative_refinement - self.num_effective_horizon_refinement)
             self.current_refinement_iter += 1
         
             return current_controls, best_traj
@@ -334,10 +336,10 @@ class MPC:
                 use_classic_mpc = (progress < self.mpc_percentage)
 
             if use_classic_mpc:
-                print(f"Refinement Iteration {current_iter+1}/{total_iters}: Using CLASSIC MPC Cost")
+                tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using CLASSIC MPC Cost")
                 costs = self.compute_classic_mpc_cost(state_trajs) # A * N
             else:
-                print(f"Refinement Iteration {current_iter+1}/{total_iters}: Using REACHABILITY Cost")
+                tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using REACHABILITY Cost")
                 costs = self.dynamics_.cost_fn(state_trajs) # A * N
         
         else:

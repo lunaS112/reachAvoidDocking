@@ -20,8 +20,11 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 5
+    T = 10
     dt = 0.5
+    style = "receding" # Can be "direct" or "receding"
+    cost_type = "mixed" # Can be "reachability", "classic_mpc", or "mixed"
+    mpc_percentage = 0.8  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
     x_res = 101
     y_res = 101
@@ -33,15 +36,15 @@ if __name__ == "__main__":
     
     # Save definition root
     save_root = Path(__file__).parent
-    daytime = datetime.datetime.now().strftime("%m-%d_%H-%M-%S")
-    save_def = f"{daytime}__MPC_R_Cost_Reach"
-    save_def = save_root / "data" / save_def
+    daytime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    save_def = f"MPC_{style}_{cost_type}_{dt}_{T}"
+    save_def = save_root / f"data/{daytime}" / save_def
     
     
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
-              style='receding', num_iterative_refinement=10, 
-              cost_type="reachability", mpc_percentage=0.8)
+              style=style, num_iterative_refinement=10, 
+              cost_type=cost_type, mpc_percentage=mpc_percentage)
 
     # Compute all BRT slices once using centralized function
     print("Computing all BRT slices...")
