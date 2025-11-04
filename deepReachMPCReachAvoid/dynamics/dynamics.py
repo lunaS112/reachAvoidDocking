@@ -569,10 +569,10 @@ class Docking6D(Dynamics):
         self.Q = torch.eye(self.state_dim)
         self.Q[0,0] = 10.0 # High weight on x position
         self.Q[1,1] = 10.0 # High weight on y position
-        self.Q[2,2] = 1.0  # Moderate weight on velocity x
-        self.Q[3,3] = 1.0  # Moderate weight on velocity y
-        self.Q[4,4] = 5.0  # Low weight on heading angle
-        self.Q[5,5] = 1.0  # Low weight on angular velocity
+        self.Q[2,2] = 10.0  # Moderate weight on velocity x
+        self.Q[3,3] = 10.0  # Moderate weight on velocity y
+        self.Q[4,4] = 10.0  # Low weight on heading angle
+        self.Q[5,5] = 10.0  # Low weight on angular velocity
 
         super().__init__(
             name="Docking6D",
@@ -743,7 +743,6 @@ class Docking6D(Dynamics):
         s_fail[s_fail > 0] *= 5.0
 
         return s_fail
-    
 
     def boundary_fn(self, state):
         if self.set_mode in ['reach_avoid']:

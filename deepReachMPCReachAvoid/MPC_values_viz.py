@@ -25,13 +25,13 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 15
+    T = 10
     dt = 0.5
     save_def = "MPC_R|Cost_Reach"
 
     # Resolution for BRT computation
-    x_res = 201
-    y_res = 201
+    x_res = 151
+    y_res = 151
     
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
@@ -49,8 +49,9 @@ if __name__ == "__main__":
     
     # Select initial conditions for visualization
     interesting_ics = []
+    interesting_ics.append(torch.tensor([0.5, -0.5, 0, 1, np.pi/4, 0]).to(device))  
     interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/2, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting BRT and Reach Avoid sets...")
