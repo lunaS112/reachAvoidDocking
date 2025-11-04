@@ -5,9 +5,7 @@ from matplotlib.path import Path
 import matplotlib.patches as mpatches
 import torch
 from tqdm import tqdm
-from dynamics import dynamics
-from utils import MPC, modules
-import math
+from pathlib import Path as pathlib
 
 # mpl.use('Agg')
 torch.manual_seed(1)
@@ -41,7 +39,7 @@ def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7
     patch = patches.PathPatch(path, fill=False, color=color, linewidth=linewidth, alpha=alpha)
     ax.add_patch(patch)
 
-def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def=""):
+def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def:pathlib):
     fig = plt.figure(figsize=(6, 6))
     fig2 = plt.figure(figsize=(6, 6))
 
@@ -107,12 +105,11 @@ def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
     ax2.set_xlabel('px (m)')
     ax2.set_ylabel('py (m)')
     
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/heatmap_{save_def}.png", dpi=300, bbox_inches='tight')
-    fig2.savefig(f"./data/BRT_{save_def}.png", dpi=300, bbox_inches='tight')
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__heatmap_.png", dpi=300, bbox_inches='tight')
+    fig2.savefig(f"{save_def}__BRT.png", dpi=300, bbox_inches='tight')
 
-def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def=""):
+def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution, x_min, x_max, y_min, y_max, save_def:pathlib):
     fig = plt.figure(figsize=(6, 6))
 
     ax = fig.add_subplot(1, 1, 1 )
@@ -167,11 +164,10 @@ def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
                 mpatches.Patch(color='orange', label='Boundary Set')]
     ax.legend(handles=handles)
 
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/ReadAvoidSet.png", dpi=300, bbox_inches='tight')
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__ReadAvoidSet.png", dpi=300, bbox_inches='tight')
 
-def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
+def plotMPCTrajectories(mpc, initial_conditions, T, save_def:pathlib, max_trajs=10):
     import matplotlib.patches as patches
     
     # Limit number of trajectories for visualization clarity
@@ -308,9 +304,8 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     plt.tight_layout()
     
     # Save the plot
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/fullTraj_{save_def}.png", dpi=300, bbox_inches='tight')
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__fullTraj.png", dpi=300, bbox_inches='tight')
     
     # Analyze final states in terms of each component of reach_fn
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
@@ -342,7 +337,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
 
-def plotMPCControls(mpc, initial_conditions, T, max_trajs=10, save_def=""):
+def plotMPCControls(mpc, initial_conditions, T, save_def:pathlib, max_trajs=10):
     """
     Plot control inputs for MPC trajectories
     """
@@ -489,10 +484,9 @@ def plotMPCControls(mpc, initial_conditions, T, max_trajs=10, save_def=""):
     plt.tight_layout()
     
     # Save the plot
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/control_{save_def}.png", dpi=300, bbox_inches='tight')
-    
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__control.png", dpi=300, bbox_inches='tight')
+
     return fig, controls_np, successful_dockings
 
 def compute_control_from_transition(state_curr, state_next, dt, dynamics):
@@ -538,7 +532,7 @@ def compute_control_from_transition(state_curr, state_next, dt, dynamics):
     
     return torch.tensor([ux, uy, tau])
 
-def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
+def compute_all_brt_slices(mpc, dynamics_, device, T, resolution):
     """Compute BRT for all state space slices once"""
     plot_config = dynamics_.plot_config()
     state_test_range = dynamics_.state_test_range()
@@ -558,11 +552,11 @@ def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
     # Position slice (your existing computation)
     x_min, x_max = state_test_range[plot_config['x_axis_idx']]
     y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-    xs = torch.linspace(x_min, x_max, x_res)
-    ys = torch.linspace(y_min, y_max, y_res)
+    xs = torch.linspace(x_min, x_max, resolution[0])
+    ys = torch.linspace(y_min, y_max, resolution[1])
     xys = torch.cartesian_prod(xs, ys).to(device)
-    
-    position_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+
+    position_ics = torch.zeros(resolution[0] * resolution[1], dynamics_.state_dim).to(device)
     position_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
     position_ics[:, plot_config['x_axis_idx']] = xys[:, 0]
     position_ics[:, plot_config['y_axis_idx']] = xys[:, 1]
@@ -571,11 +565,11 @@ def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
     # Velocity slice
     vx_min, vx_max = state_test_range[2]  # vx is always index 2
     vy_min, vy_max = state_test_range[3]  # vy is always index 3
-    vxs = torch.linspace(vx_min, vx_max, x_res)
-    vys = torch.linspace(vy_min, vy_max, y_res)
+    vxs = torch.linspace(vx_min, vx_max, resolution[2])
+    vys = torch.linspace(vy_min, vy_max, resolution[3])
     vxvys = torch.cartesian_prod(vxs, vys).to(device)
-    
-    velocity_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+
+    velocity_ics = torch.zeros(resolution[2] * resolution[3], dynamics_.state_dim).to(device)
     velocity_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
     velocity_ics[:, 2] = vxvys[:, 0]  # vx
     velocity_ics[:, 3] = vxvys[:, 1]  # vy
@@ -584,11 +578,11 @@ def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
     # Rotation slice
     theta_min, theta_max = state_test_range[4]  # theta is always index 4
     omega_min, omega_max = state_test_range[5]  # omega is always index 5
-    thetas = torch.linspace(theta_min, theta_max, x_res)
-    omegas = torch.linspace(omega_min, omega_max, y_res)
+    thetas = torch.linspace(theta_min, theta_max, resolution[4])
+    omegas = torch.linspace(omega_min, omega_max, resolution[5])
     theta_omegas = torch.cartesian_prod(thetas, omegas).to(device)
-    
-    rotation_ics = torch.zeros(x_res * y_res, dynamics_.state_dim).to(device)
+
+    rotation_ics = torch.zeros(resolution[4] * resolution[5], dynamics_.state_dim).to(device)
     rotation_ics[:, :] = torch.tensor(plot_config['state_slices']).to(device)
     rotation_ics[:, 4] = theta_omegas[:, 0]  # theta
     rotation_ics[:, 5] = theta_omegas[:, 1]  # omega
@@ -613,7 +607,7 @@ def compute_all_brt_slices(mpc, dynamics_, device, T, x_res, y_res):
     }
 
 def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
-                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+                    T, save_def:pathlib, level_sets=[0.0, 0.3, 0.6]):
     import matplotlib.patches as patches
     
     # Get pre-computed position BRT data
@@ -741,14 +735,13 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
 
     ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
     
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_position_{save_def}.png", dpi=300, bbox_inches='tight')
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__traj_position.png", dpi=300, bbox_inches='tight')
     
     return fig, state_trajs_np, successful_dockings
 
 def plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
-                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+                    T, save_def:pathlib, level_sets=[0.0, 0.3, 0.6]):
     import matplotlib.patches as patches
     
     # Get pre-computed velocity BRT data
@@ -866,14 +859,13 @@ def plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
 
     ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
     
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_velocity_{save_def}.png", dpi=300, bbox_inches='tight')
-    
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__traj_velocity.png", dpi=300, bbox_inches='tight')
+
     return fig, state_trajs_np, successful_dockings
 
 def plotBRTRotation(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
-                    T, level_sets=[0.0, 0.3, 0.6], save_def=""):
+                    T, save_def:pathlib, level_sets=[0.0, 0.3, 0.6]):
     import matplotlib.patches as patches
     
     # Get pre-computed rotation BRT data
@@ -991,8 +983,7 @@ def plotBRTRotation(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
 
     ax.legend(handles=all_handles, bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
     
-    import os
-    os.makedirs('./data', exist_ok=True)
-    fig.savefig(f"./data/traj_rotation_{save_def}.png", dpi=300, bbox_inches='tight')
-    
+    save_def.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{save_def}__traj_rotation.png", dpi=300, bbox_inches='tight')
+
     return fig, state_trajs_np, successful_dockings
