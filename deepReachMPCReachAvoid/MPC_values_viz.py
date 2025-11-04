@@ -17,18 +17,17 @@ if __name__ == "__main__":
     else:
         device = torch.device('cpu')
    
-    dynamics_ = dynamics.Docking6D('reach')
+    dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
     T = 10
-    T = 10
-    dt = 0.5
+    dt = 0.1
     style = "receding" # Can be "direct" or "receding"
     cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
-    x_res = 101
-    y_res = 101
+    x_res = 151
+    y_res = 151
     vx_res = 101
     vy_res = 101
     theta_res = 101
@@ -58,9 +57,10 @@ if __name__ == "__main__":
     
     # Select initial conditions for visualization
     interesting_ics = []
-    interesting_ics.append(torch.tensor([0.5, -0.5, 0, 1, np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, np.pi/4, 0]).to(device))  
+    interesting_ics.append(torch.tensor([0.5, -0.5, 0, 0, np.pi/4, 0]).to(device))  
+    interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))  
     interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
+    interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting BRT and Reach Avoid sets...")

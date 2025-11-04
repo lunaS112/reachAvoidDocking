@@ -7,10 +7,6 @@ import torch
 from tqdm import tqdm
 from pathlib import Path as pathlib
 
-# mpl.use('Agg')
-torch.manual_seed(1)
-np.random.seed(1)
-
 def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
     theta = np.linspace(0, np.pi, 100)
     arc_x = dock_rad * np.cos(theta)
@@ -623,6 +619,22 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
+
+    # Print final state analysis table for position plot
+    print("\n=== Position Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_final':<9} {'py_final':<9} {'vx_final':<9} {'vy_final':<9} {'θ_final':<9} {'ω_final':<9} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<9} {'(m)':<9} {'(m/s)':<9} {'(m/s)':<9} {'(rad)':<9} {'(rad/s)':<9} {'(Y/N)':<8}")
+    print("-" * 70)
+
+    for i in range(len(interesting_ics_tensor)):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_f:<9.3f} {py_f:<9.3f} {vx_f:<9.3f} {vy_f:<9.3f} {theta_f:<9.3f} {omega_f:<9.3f} {success_str:<8}")
+
+    print("-" * 70)
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, "
+        f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     # Prepare BRT data using pre-computed position costs
     BRT_img = position_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
@@ -757,6 +769,22 @@ def plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
+
+    # Print final state analysis table for velocity plot
+    print("\n=== Velocity Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_final':<9} {'py_final':<9} {'vx_final':<9} {'vy_final':<9} {'θ_final':<9} {'ω_final':<9} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<9} {'(m)':<9} {'(m/s)':<9} {'(m/s)':<9} {'(rad)':<9} {'(rad/s)':<9} {'(Y/N)':<8}")
+    print("-" * 70)
+
+    for i in range(len(interesting_ics_tensor)):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_f:<9.3f} {py_f:<9.3f} {vx_f:<9.3f} {vy_f:<9.3f} {theta_f:<9.3f} {omega_f:<9.3f} {success_str:<8}")
+
+    print("-" * 70)
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, "
+        f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     # Prepare BRT data for velocity slice
     BRT_img = velocity_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
@@ -881,6 +909,22 @@ def plotBRTRotation(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
+
+    # Print final state analysis table for rotation plot
+    print("\n=== Rotation Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_final':<9} {'py_final':<9} {'vx_final':<9} {'vy_final':<9} {'θ_final':<9} {'ω_final':<9} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<9} {'(m)':<9} {'(m/s)':<9} {'(m/s)':<9} {'(rad)':<9} {'(rad/s)':<9} {'(Y/N)':<8}")
+    print("-" * 70)
+
+    for i in range(len(interesting_ics_tensor)):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_f:<9.3f} {py_f:<9.3f} {vx_f:<9.3f} {vy_f:<9.3f} {theta_f:<9.3f} {omega_f:<9.3f} {success_str:<8}")
+
+    print("-" * 70)
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, "
+        f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     # Prepare BRT data for rotation slice
     BRT_img = rotation_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
