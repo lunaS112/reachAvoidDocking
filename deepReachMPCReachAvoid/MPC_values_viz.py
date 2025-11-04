@@ -17,13 +17,13 @@ if __name__ == "__main__":
     else:
         device = torch.device('cpu')
    
-    dynamics_ = dynamics.Docking6D('reach')
+    dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
     T = 10
     dt = 0.5
     style = "receding" # Can be "direct" or "receding"
-    cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
+    cost_type = "classic_mpc" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
     x_res = 101
@@ -37,10 +37,10 @@ if __name__ == "__main__":
     # Save definition root
     save_root = Path(__file__).parent
     daytime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    save_def = f"MPC_{style}_{cost_type}_{dt}_{T}"
-    save_def = save_root / f"data/{daytime}" / save_def
+    save_def = f"MPC_"
+    save_def = save_root / f"data/{daytime}__{style}_{cost_type}_{dt}_{T}" / save_def
     
-    
+    # Initialize MPC controller
     mpc = MPC.MPC(horizon=None, receding_horizon=1, dT=dt, num_samples=100,
               dynamics_=dynamics_, device=device, mode="MPC", sample_mode="gaussian",
               style=style, num_iterative_refinement=10, 

@@ -658,23 +658,17 @@ class Docking6D(Dynamics):
     # L2 Norm (exact)
     def reach_fn(self, state):
         """Signed distance <= 0 if within docking position/velocity tolerances using L2 norm."""
-        px = state[..., 0]
-        py = state[..., 1]
-        vx = state[..., 2]
-        vy = state[..., 3]
-        theta = state[..., 4]
-        omega = state[..., 5]
+        px, py = state[..., 0], state[..., 1]
+        vx, vy = state[..., 2], state[..., 3]
+        theta, omega = state[..., 4], state[..., 5]
         
         goal_state = self.goal_state.to(state.device)
 
         # Extract goal state variables
-        px_goal = goal_state[0]
-        py_goal = goal_state[1]
-        vx_goal = goal_state[2]
-        vy_goal = goal_state[3]
-        theta_goal = goal_state[4]
-        omega_goal = goal_state[5]
-        
+        px_goal, py_goal = goal_state[0], goal_state[1]
+        vx_goal, vy_goal = goal_state[2], goal_state[3]
+        theta_goal, omega_goal = goal_state[4], goal_state[5]
+
         # L2 norm distances from goal for each component
         position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) - self.eps_p
         velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) - self.eps_v
