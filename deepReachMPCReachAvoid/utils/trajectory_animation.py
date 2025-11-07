@@ -21,7 +21,6 @@ from pathlib import Path as pathlib
 
 class TrajectoryAnim:
     def __init__(self, state_rollouts, control_rollouts, dynamics_, dt=0.1):
-        self.fps = 30
         self.marker_size = 1.0
         self.window = 10.0  # Changed to 10s for ±5s window
         self.pad = 0.1
@@ -32,14 +31,12 @@ class TrajectoryAnim:
         self.control_rollouts = control_rollouts
         self.dynamics_ = dynamics_
         self.dt = dt
+        self.fps = 1/dt # Frames per second for animation
         self.t = np.arange(len(state_rollouts)) * dt
         
         # Create separate time array for controls (one element shorter)
         self.t_control = np.arange(len(control_rollouts)) * dt
         
-        # Much faster animation interval - ignore dt relationship for visualization
-        # Use 50ms (20 FPS) or 33ms (30 FPS) regardless of actual dt
-        self.interval = 33  # Fast animation
 
     def chaser_vertices(self, frame_idx) -> np.ndarray:
         """Get chaser satellite vertices for given frame"""
@@ -109,7 +106,7 @@ class TrajectoryAnim:
         # Create target satellite polygon (stationary)
         w_t = self.dynamics_.w_t
         h_t = self.dynamics_.h_t
-        doc_rad = self.dynamics_.docking_rad
+        doc_rad = self.dynamics_.dock_rad
         viz.draw_target_body(self.ax_traj, w_t, h_t, doc_rad, color='red', linewidth=2.0, alpha=0.7)
         
         # Add recent trajectory trace
@@ -126,12 +123,10 @@ class TrajectoryAnim:
         self.ax_traj.legend()
         self.ax_traj.grid(True, alpha=0.3)
         
-        # Set initial axis limits
-        all_x = self.state_rollouts[:, 0]
-        all_y = self.state_rollouts[:, 1]
-        margin = 0.5
-        self.ax_traj.set_xlim(np.min(all_x) - margin, np.max(all_x) + margin)
-        self.ax_traj.set_ylim(np.min(all_y) - margin, np.max(all_y) + margin)
+        # Set axis limits
+        margin = 7.5
+        self.ax_traj.set_xlim(0 - margin, 0 + margin)
+        self.ax_traj.set_ylim(0 - margin, 0 + margin)
 
     def setup_control_plots(self):
         """Setup the control visualization plots"""
@@ -139,7 +134,7 @@ class TrajectoryAnim:
         self.control_axes = [self.ax_u1, self.ax_u2, self.ax_u3]
         self.control_lines = []
         self.control_markers = []
-        self.time_cursors = []
+        self.control_time_cursors = []
         
         for i, (ax, label) in enumerate(zip(self.control_axes, control_labels)):
             # Plot full control history as faded line using control time array
@@ -155,7 +150,7 @@ class TrajectoryAnim:
             
             # Create time cursor (vertical line)
             cursor = ax.axvline(x=0, color='red', linestyle='--', alpha=0.7)
-            self.time_cursors.append(cursor)
+            self.control_time_cursors.append(cursor)
             
             ax.set_ylabel(label)
             ax.grid(True, alpha=0.3)
@@ -169,6 +164,122 @@ class TrajectoryAnim:
         
         # Only show x-label on bottom plot
         self.ax_u3.set_xlabel('Time (s)')
+
+
+    def setup_state_plots(self):
+        """Setup the state visualization plots with reach/avoid background colors"""
+        state_labels = ['x', 'y', 'Vx', 'Vy', 'theta', 'omega']
+        self.state_axes = [self.ax_s1, self.ax_s2, self.ax_s3, self.ax_s4, self.ax_s5, self.ax_s6]
+        self.state_lines = []
+        self.state_markers = []
+        self.state_time_cursors = []
+        
+        for i, (ax, label) in enumerate(zip(self.state_axes, state_labels)):
+            # Add background colors based on reach/avoid sets
+            self.add_state_background_colors(ax, i)
+            
+            # Plot full state history as faded line using state time array
+            ax.plot(self.t, self.state_rollouts[:, i], 'g-', alpha=0.3, linewidth=1)
+            
+            # Create sliding window line
+            line, = ax.plot([], [], 'g-', linewidth=2)
+            self.state_lines.append(line)
+
+            # Create current value marker
+            marker, = ax.plot([], [], 'ro', markersize=6)
+            self.state_markers.append(marker)
+
+            # Create time cursor (vertical line)
+            cursor = ax.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+            self.state_time_cursors.append(cursor)
+            
+            ax.set_ylabel(label)
+            ax.grid(True, alpha=0.3)
+
+            # Set y-limits based on state range
+            state_range = self.state_rollouts[:, i]
+            margin = 0.1 * (np.max(state_range) - np.min(state_range))
+            if margin == 0:  # Handle case where all states are the same
+                margin = 0.1
+            ax.set_ylim(np.min(state_range) - margin, np.max(state_range) + margin)
+
+        # Only show x-label on bottom plot
+        self.ax_s6.set_xlabel('Time (s)')
+
+    def add_state_background_colors(self, ax, state_idx):
+        """Add background colors to state plots based on reach/avoid sets"""
+        # Get the y-limits for this state dimension
+        state_values = self.state_rollouts[:, state_idx]
+        y_min = np.min(state_values) - 0.1 * (np.max(state_values) - np.min(state_values))
+        y_max = np.max(state_values) + 0.1 * (np.max(state_values) - np.min(state_values))
+        
+        # Get time limits
+        t_min, t_max = self.t[0], self.t[-1]
+        
+        # Create a simpler grid - fewer points for efficiency
+        n_time_points = 50
+        n_state_points = 50
+        time_points = np.linspace(t_min, t_max, n_time_points)
+        state_points = np.linspace(y_min, y_max, n_state_points)
+        
+        # Use the goal state as reference for other dimensions
+        ref_state = self.dynamics_.goal_state.cpu().numpy()
+        
+        # Create background color array
+        background_colors = np.zeros((n_state_points, n_time_points, 4))  # RGBA
+        
+        #print(f"Computing background for state {state_idx}...")  # Debug
+        
+        # Vectorized evaluation - create all test states at once
+        test_states = np.zeros((n_state_points, self.dynamics_.state_dim))
+        test_states[:, :] = ref_state  # Start with reference state
+        
+        for j, state_val in enumerate(state_points):
+            test_states[j, state_idx] = state_val
+        
+        # Convert to tensor and evaluate
+        test_states_tensor = torch.tensor(test_states, dtype=torch.float32).to(
+            self.dynamics_.goal_state.device if hasattr(self.dynamics_.goal_state, 'device') else 'cpu')
+        
+        try:
+            with torch.no_grad():
+                reach_vals = self.dynamics_.reach_fn(test_states_tensor).cpu().numpy()
+                avoid_vals = self.dynamics_.avoid_fn(test_states_tensor).cpu().numpy()
+            
+            #print(f"Reach values range: [{np.min(reach_vals):.3f}, {np.max(reach_vals):.3f}]")
+            #print(f"Avoid values range: [{np.min(avoid_vals):.3f}, {np.max(avoid_vals):.3f}]")
+            
+            for j in range(n_state_points):
+                for i in range(n_time_points):
+                    # Check if in reach set (≤ 0) and not in avoid set (> 0)
+                    in_reach = reach_vals[j] <= 0
+                    in_avoid = avoid_vals[j] <= 0
+                    
+                    if in_avoid:
+                        background_colors[j, i] = [1, 0, 0, 0.3]  # Red for avoid
+                    elif in_reach:
+                        background_colors[j, i] = [0, 1, 0, 0.3]  # Green for reach
+                    # else: transparent (no color)
+            
+            # Plot the background
+            extent = [t_min, t_max, y_min, y_max]
+            ax.imshow(background_colors, extent=extent, aspect='auto', origin='lower', alpha=0.5)
+            
+            #print(f"Background colors applied for state {state_idx}")
+            
+        except Exception as e:
+            print(f"Error computing background colors for state {state_idx}: {e}")
+            # Skip background colors if there's an error
+            pass
+        
+        # Add legend only for the first subplot
+        if state_idx == 0:
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='green', alpha=0.3, label='Reach Set'),
+                Patch(facecolor='red', alpha=0.3, label='Avoid Set')
+            ]
+            ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
 
     def get_window_indices(self, frame_idx):
         """Get indices for sliding window centered around current frame"""
@@ -212,9 +323,10 @@ class TrajectoryAnim:
         control_frame_idx = min(frame_idx, len(self.control_rollouts) - 1)
         start_idx, end_idx = self.get_window_indices(frame_idx)
         
-        for i, (line, marker, cursor) in enumerate(zip(self.control_lines, 
+        for i, (line, marker, cursor, ax) in enumerate(zip(self.control_lines, 
                                                       self.control_markers, 
-                                                      self.time_cursors)):
+                                                      self.control_time_cursors,
+                                                      self.control_axes)):
             # Update sliding window - clamp indices for control array
             control_start_idx = max(0, min(start_idx, len(self.control_rollouts) - 1))
             control_end_idx = max(1, min(end_idx, len(self.control_rollouts)))
@@ -231,24 +343,60 @@ class TrajectoryAnim:
             # Update time cursor
             cursor.set_xdata([current_time])
             
-            # Set x-axis limits centered on current time with ±5s window
+            # Set x-axis limits centered on current time with ±window/2 window
             left_time = current_time - self.window / 2
             right_time = current_time + self.window / 2
-            self.control_axes[i].set_xlim(left_time, right_time)
+            ax.set_xlim(left_time, right_time)
+        
+        # Update state subplots (sliding window and markers)
+        # clamp indices for state arrays
+        state_start_idx = max(0, start_idx)
+        state_end_idx = min(len(self.state_rollouts), end_idx)
+        window_t_state = self.t[state_start_idx:state_end_idx]
+        
+        for i, (line, marker, cursor, ax) in enumerate(zip(self.state_lines,
+                                                           self.state_markers,
+                                                           self.state_time_cursors,
+                                                           self.state_axes)):
+            window_s = self.state_rollouts[state_start_idx:state_end_idx, i]
+            line.set_data(window_t_state, window_s)
+            
+            # Current state value (clamp index)
+            current_state_val = self.state_rollouts[min(frame_idx, len(self.state_rollouts)-1), i]
+            marker.set_data([current_time], [current_state_val])
+            
+            # Update time cursor
+            cursor.set_xdata([current_time])
+            
+            # Set x-axis limits centered on current time
+            left_time = current_time - self.window / 2
+            right_time = current_time + self.window / 2
+            ax.set_xlim(left_time, right_time)
+
+            # Dynamic y-axis based on current window data
+            if len(window_s) > 0:
+                y_margin = 0.1 * (np.max(window_s) - np.min(window_s))
+                if y_margin == 0:
+                    y_margin = 0.1
+                ax.set_ylim(np.min(window_s) - y_margin, np.max(window_s) + y_margin)
         
         # Return all artists that need to be redrawn
         artists = [self.chaser_poly, self.trace_line, self.pos_marker]
         artists.extend(self.control_lines)
         artists.extend(self.control_markers)
-        artists.extend(self.time_cursors)
+        artists.extend(self.control_time_cursors)
+        artists.extend(self.state_lines)
+        artists.extend(self.state_markers)
+        artists.extend(self.state_time_cursors)
         
         return artists
 
-    def animation(self, states, controls):
+    def animation(self, states, controls,):
         """Create and return the animation object"""
         # Setup figure and plots
         fig = self.setup_figure()
         self.setup_trajectory_plot()
+        self.setup_state_plots()
         self.setup_control_plots()
         
         plt.tight_layout()
@@ -258,7 +406,7 @@ class TrajectoryAnim:
             fig, 
             self.update_animation,
             frames=len(states),
-            interval=self.interval,
+            interval=self.dt * 1000,  # Convert to milliseconds
             blit=self.blit,
             repeat=True
         )
@@ -300,7 +448,7 @@ def animate_trajectory(mpc, initial_conditions, T, dt,
     for i in range(initial_conditions.shape[0]):
         _, state_rollouts, _, _ = mpc.get_batch_data(initial_conditions[i].unsqueeze(0), T)
         state_rollouts = state_rollouts[0].detach().cpu().numpy()  # Extract single trajectory
-        actual_T = state_rollouts.shape[1] - 1  # Because states include initial state
+        actual_T = state_rollouts.shape[0] - 1  # Because states include initial state
         # Extract control inputs by computing them from state dynamics
         control_rollouts = np.zeros((actual_T, 3))  # [ux, uy, tau] for each trajectory
 
@@ -318,7 +466,7 @@ def animate_trajectory(mpc, initial_conditions, T, dt,
         
         if save_def:
             save_def.parent.mkdir(parents=True, exist_ok=True)
-            save_def = f"{save_def}__gif_traj_{i}.gif"
-            animator.save_animation(save_def)
+            save_def_str = f"{save_def}__gif_traj_{i}.gif"
+            animator.save_animation(save_def_str)
         
         #return animator.trajectory_animation()
