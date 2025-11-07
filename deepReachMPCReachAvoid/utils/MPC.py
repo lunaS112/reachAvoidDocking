@@ -164,6 +164,12 @@ class MPC:
                         state_trajs[:,i*self.receding_horizon+k,:], best_controls[:, k, :])
                     self.receding_start+=1
             lxs[:,-1] = self.dynamics_.boundary_fn(state_trajs[:, -1, :]) 
+            # determine MPC effective horizon: int((T-t)/dt)
+            # init lxs: lxs=torch.zeros(self.batch_size, num_iters+1).to(self.device)
+            # for i in range(MPC_effective_horizon):
+            #     get_control #rewrite it to use terminal cost function
+            #     rollout self.receding_horizon steps, and update self.receding_start
+            #     
 
             if self.dynamics_.set_mode in ['avoid', 'reach']:
                 return state_trajs, lxs, num_iters
@@ -269,7 +275,7 @@ class MPC:
             # initial_condition_tensor: A*D
             state_trajs, permuted_controls = self.rollout_dynamics(initial_condition_tensor,
                                                                    start_iter=self.receding_start,
-                                                                   rollout_horizon=self.horizon-self.receding_start)
+                                                                   rollout_horizon=self.horizon-self.receding_start) #TODO: use effective horizon
 
             current_controls, best_traj, best_costs = self.update_control_tensor(state_trajs, permuted_controls, receding=True,
                                                                     current_iter=self.current_refinement_iter, 
@@ -344,7 +350,7 @@ class MPC:
         
         else:
             raise NotImplementedError
-            
+        # TODO: if receding_FLAG: cost=min(cost, terminal_value_fn)
         
         if self.mode=="MPC":
             # just use the best control
