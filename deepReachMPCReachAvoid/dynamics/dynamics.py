@@ -568,12 +568,12 @@ class Docking6D(Dynamics):
         # MPC cost: sum of stage costs + terminal cost
         # MPC weight matrix
         self.Q = torch.eye(self.state_dim)
-        self.Q[0,0] = 10.0 # High weight on x position
-        self.Q[1,1] = 10.0 # High weight on y position
-        self.Q[2,2] = 10.0  # Moderate weight on velocity x
-        self.Q[3,3] = 10.0  # Moderate weight on velocity y
-        self.Q[4,4] = 10.0  # Low weight on heading angle
-        self.Q[5,5] = 10.0  # Low weight on angular velocity
+        self.Q[0,0] = 3.0
+        self.Q[1,1] = 3.0
+        self.Q[2,2] = 10.0 
+        self.Q[3,3] = 10.0 
+        self.Q[4,4] = 5.0 
+        self.Q[5,5] = 5.0 
 
         super().__init__(
             name="Docking6D",
@@ -681,19 +681,13 @@ class Docking6D(Dynamics):
         theta_dist_normalized = theta_dist / self.eps_theta - 1.0
         omega_dist_normalized = omega_dist / self.eps_omega - 1.0
 
-        # Weights
-        w_pos = 1.0
-        w_vel = 1.0
-        w_theta = 1.0
-        w_omega = 1.0
-
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([
-            position_dist_normalized * w_pos,
-            velocity_dist_normalized * w_vel,
-            theta_dist_normalized * w_theta,
-            omega_dist_normalized * w_omega], dim=-1)
-    
+            position_dist_normalized,
+            velocity_dist_normalized,
+            theta_dist_normalized,
+            omega_dist_normalized], dim=-1)
+
         goal = torch.max(goal, axis=-1).values 
 
         goal = torch.where(goal < 0, goal * 150.0, goal * 0.05)
