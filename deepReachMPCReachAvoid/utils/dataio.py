@@ -40,7 +40,7 @@ class ReachabilityDataset(Dataset):
     def __init__(self, dynamics, numpoints, pretrain, pretrain_iters, tMin, tMax, counter_start, counter_end, num_src_samples, num_target_samples,
                  use_MPC, time_curr, MPC_data_path, num_MPC_perturbation_samples, MPC_dt, MPC_mode, MPC_sample_mode, MPC_style,
                  MPC_lambda_, MPC_batch_size, MPC_receding_horizon, num_MPC_data_samples, num_iterative_refinement, time_till_refinement, num_MPC_batches=1,
-                 aug_with_MPC_data=0, policy=None, refine_dataset=True):
+                 aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100):
         self.dynamics = dynamics
         self.numpoints = numpoints
         self.pretrain = pretrain
@@ -74,6 +74,12 @@ class ReachabilityDataset(Dataset):
         self.MPC_lambda_ = MPC_lambda_
         self.MPC_style = MPC_style
         self.num_iterative_refinement = num_iterative_refinement
+
+        # PAUSE Parameters: Pause training to refine dataset
+        self.pause_epochs = pause_epochs  # How many epochs to pause at each horizon
+        self.pause_counter = 0  # Counter for current pause
+        self.is_paused = False  # Whether curriculum is currently paused
+        self.paused_horizon = 0.0  # The horizon we're pausing at
 
         if use_MPC:
             if MPC_data_path == 'none':
@@ -198,10 +204,14 @@ class ReachabilityDataset(Dataset):
             # only sample in time around the initial condition
             times = torch.full((model_states_normed.shape[0], 1), self.tMin)
         else:
-            # slowly grow time values from start time
-            # make the curriculum slightly (1.1 times) longer to avoid innaccuracy on the boundary
-            times = self.tMin + torch.zeros(model_states_normed.shape[0], 1).uniform_(
-                0, (self.tMax*1.1-self.tMin) * min((self.counter+1) / self.counter_end, 1.0))
+            if self.is_paused:  # PAUSE Curriculum advancement
+                times = self.tMin + torch.zeros(model_states_normed.shape[0], 1).uniform_(
+                    0, (self.paused_horizon - self.tMin))
+            else: # Normal Curriculum advancement
+                # slowly grow time values from start time
+                # make the curriculum slightly (1.1 times) longer to avoid innaccuracy on the boundary
+                times = self.tMin + torch.zeros(model_states_normed.shape[0], 1).uniform_(
+                    0, (self.tMax*1.1-self.tMin) * min((self.counter+1) / self.counter_end, 1.0))
 
             # make sure we always have training samples at the initial time
             if self.dynamics.deepReach_model in ['vanilla', 'diff']:

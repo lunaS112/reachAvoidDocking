@@ -295,7 +295,14 @@ class MPC:
         state_trajs = torch.zeros((self.batch_size, policy_horizon+1, self.dynamics_.state_dim))  # A * H * D
         state_trajs = state_trajs.to(self.device, non_blocking=True)  # Move to GPU only when needed
         state_trajs[:, 0, :] = initial_condition_tensor*1.0
-        state_trajs_clamped=state_trajs*1.0
+
+        # For reach-avoid, don't clamp states (policy is trustworthy)
+        # For avoid-only, clamp to prevent out-of-bounds queries
+        if self.dynamics_.set_mode == 'reach_avoid':
+            state_trajs_clamped = state_trajs  # Use actual states (no clamping)
+        else:
+            state_trajs_clamped = state_trajs*1.0  # Will be clamped in loop
+
         traj_times=torch.ones(self.batch_size,1).to(self.device)*policy_horizon*self.dT
         # update control from policy_start_iter to policy_start_iter+ policy horizon
         for k in range(policy_horizon):
@@ -313,9 +320,14 @@ class MPC:
             state_trajs[:, k+1,:] = self.get_next_step_state(
                 state_trajs[:, k, :], self.control_tensors[:, k+policy_start_iter, :])
 
-            state_trajs_clamped[:, k+1,:] = torch.clamp(state_trajs[:, k+1,:], torch.tensor(self.dynamics_.state_test_range(
-                    )).to(self.device)[..., 0], torch.tensor(self.dynamics_.state_test_range()).to(self.device)[..., 1])
+            if self.dynamics_.set_mode != 'reach_avoid':
+                state_trajs_clamped[:, k+1,:] = torch.clamp(
+                    state_trajs[:, k+1,:], 
+                    torch.tensor(self.dynamics_.state_test_range()).to(self.device)[..., 0], 
+                    torch.tensor(self.dynamics_.state_test_range()).to(self.device)[..., 1])
+            
             traj_times=traj_times-self.dT
+            
         return state_trajs
         
     def update_control_tensor(self, state_trajs, permuted_controls, receding=True, current_iter=None, total_iters=None):   

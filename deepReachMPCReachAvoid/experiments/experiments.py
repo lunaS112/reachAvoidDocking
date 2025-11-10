@@ -44,6 +44,128 @@ class Experiment(ABC):
                 self.experiment_dir, 'training', 'checkpoints', 'model_epoch_%04d.pth' % epoch)
             self.model.load_state_dict(torch.load(model_path)['model'])
 
+    def test_value_convergence(self, num_test_samples=500, threshold=0.05, success_rate=0.85):
+        """
+        Compare learned DeepReach values V(x,t) against ground-truth MPC rollout
+        costs to determine if the value function has converged at the current paused horizon
+        
+        Args:
+        num_test_samples: Number of initial conditions to test
+        threshold: Maximum acceptable L1 difference between value and cost
+        success_rate: Fraction of samples that must pass threshold
+    
+        Returns:
+            converged: Boolean indicating if convergence criteria met
+            metrics: Dict with detailed metrics
+        """
+        was_training = self.model.training
+        self.model.eval()
+        self.model.requires_grad_(False)
+
+        # Determine current horizon to test
+        if self.dataset.is_paused:
+            T = self.dataset.paused_horizon
+        else:
+            # Not paused - use current curriculum time
+            T = self.dataset.tMax * min(self.dataset.counter/self.dataset.counter_end, 1.0)
+        
+        with torch.no_grad():
+            # Filter MPC dataset to only samples at the current test horizon T
+            # MPC_inputs: [num_samples, state_dim + 1] where first colum is time
+            time_mask = torch.abs(self.dataset.MPC_inputs[:,0] - T) < 1e-6 # Samples at time T
+
+            if time_mask.sum() == 0:
+                print(f"No MPC samples found at time {T:.4f} for convergence test.")
+                converged = False
+                metrics = {
+                    'mean_diff': float('inf'),
+                    'max_diff': float('inf'),
+                    'median_diff': float('inf'),
+                    'std_diff': float('inf'),
+                    'convergence_rate': 0.0,
+                    'converged': False,
+                    'classification_accuracy': None,
+                    'false_positives': None,
+                    'false_negatives': None,
+                    'num_samples': 0,
+                    'threshold': threshold,
+                    'success_rate': success_rate,
+                    'T': T
+                }
+                return converged, metrics
+
+        # Get MPC sample at horizon T
+        mpc_coords_at_T = self.dataset.MPC_inputs[time_mask] # Normalized Coords
+        mpc_costs_at_T = self.dataset.MPC_values[time_mask] # MPC costs (Ground truth)
+
+        # Sample Random subset if too many samples
+        available_samples_at_T = mpc_coords_at_T.shape[0]
+        if available_samples_at_T > num_test_samples:
+            sample_idxs = torch.randperm(available_samples_at_T)[:num_test_samples]
+            test_coords = mpc_coords_at_T[sample_idxs]
+            mpc_costs = mpc_costs_at_T[sample_idxs]
+        else:
+            test_coords = mpc_coords_at_T
+            mpc_costs = mpc_costs_at_T
+            num_test_samples = available_samples_at_T
+            tqdm.write(f"Only {available_samples_at_T} samples available at time {T:.2f} for convergence test.")
+
+        # Query learned value function at relevant coords
+        # test_coords are alreay nomalized (model input format)
+        model_results = self.model({'coords': test_coords.cuda()})
+        learned_values = self.dataset.dynamics.io_to_value(
+            model_results['model_in'].detach(), 
+            model_results['model_out'].squeeze(dim=-1).detach()
+        ).cpu()
+
+        mpc_costs = mpc_costs.cpu()
+
+        # Define comparison metrics
+        value_diff = torch.abs(learned_values - mpc_costs)
+        mean_diff = value_diff.mean().item()
+        max_diff = value_diff.max().item()
+        median_diff = value_diff.median().item()
+        std_diff = value_diff.std().item()
+
+        # Check for convergence
+        converged_samples = (value_diff < threshold).sum().item()
+        convergence_rate = converged_samples / num_test_samples
+        converged = convergence_rate >= success_rate
+
+        # Compute learned value function accuracy for reach_avoid
+        if self.dataset.dynamics.set_mode == 'reach_avoid':
+            safe_mpc = (mpc_costs <= 0)
+            safe_learned = (learned_values <= 0)
+            classification_accuracy = (safe_mpc == safe_learned).float().mean().item()
+            false_positives = torch.logical_and(safe_learned, ~safe_mpc).mean().item()
+            false_negatives = torch.logical_and(~safe_learned, safe_mpc).mean().item()
+        else:
+            classification_accuracy = None
+            false_positives = None
+            false_negatives = None
+
+        metrics = {
+            'mean_diff': mean_diff,
+            'max_diff': max_diff,
+            'median_diff': median_diff,
+            'std_diff': std_diff,
+            'convergence_rate': convergence_rate,
+            'converged': converged,
+            'classification_accuracy': classification_accuracy,
+            'false_positives': false_positives,
+            'false_negatives': false_negatives,
+            'num_samples': num_test_samples,
+            'threshold': threshold,
+            'success_rate': success_rate,
+            'T': T
+        }
+
+        if was_training:
+            self.model.train()
+            self.model.requires_grad_(True)
+
+        return converged, metrics
+    
     def train(
         self, batch_size, epochs, lr, steps_til_summary, epochs_til_checkpoint, loss_fn, clip_grad, use_lbfgs, adjust_relative_grads,
         val_x_resolution, val_y_resolution, val_z_resolution, val_time_resolution, MPC_importance_init, MPC_importance_final, MPC_decay_scheme
@@ -1185,28 +1307,113 @@ class Experiment(ABC):
                 0.9*self.loss_weights['mpc_loss'] + 0.1*self.mpc_importance_coef*num/(den+1e-16), 1e5)
 
     def dataset_refinement(self, time_interval_length, epoch):
-        if time_interval_length >= (self.last_refine_time+self.dataset.time_till_refinement) and self.dataset.use_MPC:
-            # If we reach H_R (time_till_refinement), then we generate a new dataset
-            # with an extra H_R horizon by leveraging the learned value function
-            self.last_refine_time += self.dataset.time_till_refinement
-            # update deepreach model
-            self.dataset.policy = self.model
-            # update data
-            if time_interval_length < self.dataset.tMax:
-                # new total horizon, note that MPC effective horizon = H_R
-                refine_till_t = time_interval_length+self.dataset.time_till_refinement
-                self.dataset.generate_MPC_dataset(
-                    refine_till_t, time_interval_length, style="random")
+        if self.dataset.is_paused:
+            self.dataset.pause_counter += 1
+            # Regenerate MPC data at the same paused horizon each epoch
+            if self.dataset.use_MPC:
+                tqdm.write(f"Paused at horizon {self.dataset.paused_horizon:.2f}s - Epoch {self.dataset.pause_counter}/{self.dataset.pause_epochs}")
+                self.dataset.policy = self.model  # Update with latest model
 
-            else:  # take extra care when time curriculum end, and transition to finetuning phase
+                 # Use time_interval_length but clamp to paused_horizon
+                # This tells MPC how far DeepReach has learned, but not beyond the pause point        
+                t_learned = min(time_interval_length, self.dataset.paused_horizon)
+                self.dataset.generate_MPC_dataset(
+                    self.dataset.paused_horizon,  # T = paused horizon
+                    t_learned,  # t = how far we've learned
+                    style="random"
+                )
+
+            # Check convergence every 10 epochs (after minimum 20)
+            if self.dataset.pause_counter % 10 == 0 and self.dataset.pause_counter >= 20:
+                tqdm.write(f"Testing value convergence at horizon {self.dataset.paused_horizon:.2f}s (pause epoch {self.dataset.pause_counter})")
+
+                converged, metrics = self.test_value_convergence(
+                    num_test_samples = 500,
+                    threshold = 0.05,
+                    success_rate = 0.85)
+                
+                # Log metrics
+                tqdm.write(f"  Mean diff: {metrics['mean_diff']:.4f}, Max diff: {metrics['max_diff']:.4f}, Std: {metrics['std_diff']:.4f}")
+                tqdm.write(f"  Convergence rate: {metrics['convergence_rate']:.2%}")
+                if metrics['classification_accuracy'] is not None:
+                    tqdm.write(f"  Classification accuracy: {metrics['classification_accuracy']:.2%}")
+                    tqdm.write(f"  False positives (dangerous): {metrics['false_positives']:.2%}")
+                    tqdm.write(f"  False negatives (conservative): {metrics['false_negatives']:.2%}")
+                
+                if self.use_wandb:
+                    wandb.log({
+                        'convergence/mean_diff': metrics['mean_diff'],
+                        'convergence/max_diff': metrics['max_diff'],
+                        'convergence/median_diff': metrics['median_diff'],
+                        'convergence/std_diff': metrics['std_diff'],
+                        'convergence/convergence_rate': metrics['convergence_rate'],
+                        'convergence/classification_accuracy': metrics['classification_accuracy'],
+                        'convergence/false_positives': metrics['false_positives'],
+                        'convergence/false_negatives': metrics['false_negatives'],
+                        'convergence/pause_epoch': self.dataset.pause_counter,
+                        'convergence/horizon': self.dataset.paused_horizon,
+                        'step': epoch
+                    })
+
+            # Exit pause if converged
+            if converged:
+                tqdm.write(f"✓ Value function CONVERGED at horizon {self.dataset.paused_horizon:.2f}s after {self.dataset.pause_counter} pause epochs!")
+                self.dataset.is_paused = False
+                self.dataset.pause_counter = 0
+                self.last_refine_time = self.dataset.paused_horizon
+                return
+
+            # Check if pause is complete
+            if self.dataset.pause_counter >= self.dataset.pause_epochs:
+                converged, metrics = self.test_value_convergence(
+                    num_test_samples=500,
+                    threshold=0.05,
+                    success_rate=0.85
+                )
+                
+                if converged:
+                    tqdm.write(f"✓ Value function converged at max pause epochs")
+                else:
+                    tqdm.write(f"⚠ Max pause epochs reached without full convergence")
+                    tqdm.write(f"  Final convergence rate: {metrics['convergence_rate']:.2%}")
+                    tqdm.write(f"  Final mean diff: {metrics['mean_diff']:.4f}")
+                
+                self.dataset.is_paused = False
+                self.dataset.pause_counter = 0
+                self.last_refine_time = self.dataset.paused_horizon
+            return
+        
+        # Check if we have reached the new refinement horizon
+        if time_interval_length >= (self.last_refine_time + self.dataset.time_till_refinement) and self.dataset.use_MPC:
+            # Reached a new horizon (H_R) for refinement
+            new_horizon = self.last_refine_time + self.dataset.time_till_refinement
+
+            if self.dataset.refine_dataset and new_horizon < self.dataset.tMax:
+                # Enter Pause
+                tqdm.write(f"\n=== Reached horizon {new_horizon:.2f}s - PAUSING curriculum for {self.dataset.pause_epochs} epochs ===")
+                self.dataset.is_paused = True
+                self.dataset.pause_counter = 0
+                self.dataset.paused_horizon = new_horizon
+
+                # Generate data at the new horizon before pausing
+                self.dataset.policy = self.model
+                self.dataset.generate_MPC_dataset(
+                    new_horizon,  # T = new horizon
+                    time_interval_length,  # t = how far we've learned 
+                    style="random"
+                )
+            elif new_horizon >= self.dataset.tMax:
+                # reached final horizon - switch to terminal refinement
+                self.last_refine_time = self.dataset.tMax
                 self.dataset.use_terminal_MPC()
                 for g in self.optim.param_groups:
                     g['lr'] = 1e-6  # TODO: make it a hyperparam
                 self.use_MPC_terminal_loss = True
                 self.MPC_importance_final = 1.0  # TODO: make it a hyperparam
-                self.MPC_importance_init = 1.0
+                # self.MPC_importance_init = 1.0
                 self.dataset.policy = self.model
 
+                tqdm.write(f"\n=== Reached final horizon {self.dataset.tMax:.2f}s - Entering terminal refinement ===")
                 refine_till_t = self.dataset.tMax
                 self.dataset.generate_MPC_dataset(
                     refine_till_t, refine_till_t, style="terminal")

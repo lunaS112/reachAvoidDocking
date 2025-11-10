@@ -116,6 +116,8 @@ if (mode == 'all') or (mode == 'train'):
                    help='generate MPC data with N init states in a parallel manner') # working fine but tunable when GPU memory is limited
     p.add_argument('--num_MPC_batches', type=int, default=30,
                    help='total number of MPC batches generated. Dataset size=MPC batch size * num_batches before bootstrapping')
+    p.add_argument('--pause_epochs', type=int, default=100, # Added armument for pausing curriculum 
+                   help='Number of epochs to pause curriculum at each horizon milestone for value function stabilization')
     p.add_argument('--num_MPC_perturbation_samples', type=int, default=100,
                    help='Number of MPC samples') # working fine but tunable
     p.add_argument('--num_iterative_refinement', type=int, default=20,
@@ -330,7 +332,8 @@ dataset = dataio.ReachabilityDataset(
     MPC_lambda_ = orig_opt.MPC_lambda_, MPC_batch_size = orig_opt.MPC_batch_size, MPC_receding_horizon= orig_opt.MPC_receding_horizon, 
     num_MPC_data_samples = orig_opt.num_MPC_data_samples, num_iterative_refinement=orig_opt.num_iterative_refinement,
     time_till_refinement=orig_opt.time_till_refinement,num_MPC_batches=orig_opt.num_MPC_batches, 
-    aug_with_MPC_data= orig_opt.aug_with_MPC_data, policy=policy, refine_dataset=(not orig_opt.not_refine_dataset))
+    aug_with_MPC_data= orig_opt.aug_with_MPC_data, policy=policy, refine_dataset=(not orig_opt.not_refine_dataset),
+    pause_epochs=orig_opt.pause_epochs)
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
 experiment = experiment_class(
