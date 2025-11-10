@@ -152,6 +152,10 @@ class MPC:
                 self.num_effective_horizon_refinement=int(self.num_iterative_refinement*0.4)
                 for i in range(self.num_effective_horizon_refinement):
                     self.warm_start_with_policy(initial_condition_tensor, policy, t)
+            effective_refinement = self.num_effective_horizon_refinement
+            self.num_effective_horizon_refinement = 0  # Reset so receding steps use full iterations
+            
+
             lxs=torch.zeros(self.batch_size, num_iters+1).to(self.device)
             self.receding_start=0
             for i in tqdm(range(int(num_iters/self.receding_horizon))):
@@ -170,6 +174,7 @@ class MPC:
             #     get_control #rewrite it to use terminal cost function
             #     rollout self.receding_horizon steps, and update self.receding_start
             #     
+            self.num_effective_horizon_refinement = effective_refinement
 
             if self.dynamics_.set_mode in ['avoid', 'reach']:
                 return state_trajs, lxs, num_iters
@@ -354,10 +359,10 @@ class MPC:
                 use_classic_mpc = (progress < self.mpc_percentage)
 
             if use_classic_mpc:
-                tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using CLASSIC MPC Cost")
+                #tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using CLASSIC MPC Cost")
                 costs = self.compute_classic_mpc_cost(state_trajs) # A * N
             else:
-                tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using REACHABILITY Cost")
+                #tqdm.write(f"Refinement Iteration {current_iter+1}/{total_iters}: Using REACHABILITY Cost")
                 costs = self.dynamics_.cost_fn(state_trajs) # A * N
         
         else:

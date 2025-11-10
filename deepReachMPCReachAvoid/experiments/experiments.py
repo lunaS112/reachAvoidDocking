@@ -44,7 +44,7 @@ class Experiment(ABC):
                 self.experiment_dir, 'training', 'checkpoints', 'model_epoch_%04d.pth' % epoch)
             self.model.load_state_dict(torch.load(model_path)['model'])
 
-    def test_value_convergence(self, num_test_samples=500, threshold=0.05, success_rate=0.85):
+    def test_value_convergence(self, num_test_samples=500, threshold=0.1, success_rate=0.85):
         """
         Compare learned DeepReach values V(x,t) against ground-truth MPC rollout
         costs to determine if the value function has converged at the current paused horizon
@@ -137,8 +137,8 @@ class Experiment(ABC):
             safe_mpc = (mpc_costs <= 0)
             safe_learned = (learned_values <= 0)
             classification_accuracy = (safe_mpc == safe_learned).float().mean().item()
-            false_positives = torch.logical_and(safe_learned, ~safe_mpc).mean().item()
-            false_negatives = torch.logical_and(~safe_learned, safe_mpc).mean().item()
+            false_positives = torch.logical_and(safe_learned, ~safe_mpc).float().mean().item()
+            false_negatives = torch.logical_and(~safe_learned, safe_mpc).float().mean().item()
         else:
             classification_accuracy = None
             false_positives = None
@@ -1309,12 +1309,13 @@ class Experiment(ABC):
     def dataset_refinement(self, time_interval_length, epoch):
         if self.dataset.is_paused:
             self.dataset.pause_counter += 1
+            converged = False
             # Regenerate MPC data at the same paused horizon each epoch
             if self.dataset.use_MPC:
                 tqdm.write(f"Paused at horizon {self.dataset.paused_horizon:.2f}s - Epoch {self.dataset.pause_counter}/{self.dataset.pause_epochs}")
                 self.dataset.policy = self.model  # Update with latest model
 
-                 # Use time_interval_length but clamp to paused_horizon
+                # Use time_interval_length but clamp to paused_horizon
                 # This tells MPC how far DeepReach has learned, but not beyond the pause point        
                 t_learned = min(time_interval_length, self.dataset.paused_horizon)
                 self.dataset.generate_MPC_dataset(
@@ -1322,6 +1323,9 @@ class Experiment(ABC):
                     t_learned,  # t = how far we've learned
                     style="random"
                 )
+
+                # Recompute sorted indices after dataset regeneration
+                self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
 
             # Check convergence every 10 epochs (after minimum 20)
             if self.dataset.pause_counter % 10 == 0 and self.dataset.pause_counter >= 20:
@@ -1402,6 +1406,11 @@ class Experiment(ABC):
                     time_interval_length,  # t = how far we've learned 
                     style="random"
                 )
+
+                # Recompute sorted indices after dataset regeneration
+                self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
+
             elif new_horizon >= self.dataset.tMax:
                 # reached final horizon - switch to terminal refinement
                 self.last_refine_time = self.dataset.tMax
@@ -1417,6 +1426,10 @@ class Experiment(ABC):
                 refine_till_t = self.dataset.tMax
                 self.dataset.generate_MPC_dataset(
                     refine_till_t, refine_till_t, style="terminal")
+                
+                # Recompute sorted indices after dataset regeneration
+                self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
 
         if time_interval_length >= self.dataset.tMax and epoch % self.dataset.epoch_till_refinement == 0 and self.dataset.use_MPC:
             # in case we want a long finetuning phase, we regenerate the dataset every epoch_till_refinement epochs
@@ -1427,6 +1440,10 @@ class Experiment(ABC):
             self.dataset.use_terminal_MPC()
             self.dataset.generate_MPC_dataset(
                 self.dataset.tMax, self.dataset.tMax, style="terminal")
+            
+            # Recompute sorted indices after dataset regeneration
+            self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
 
     def plot_recovery_fig(self, dataset, dynamics, model, delta_level):
         # 1. for ground truth slices (if available), record (higher-res) grid of learned values

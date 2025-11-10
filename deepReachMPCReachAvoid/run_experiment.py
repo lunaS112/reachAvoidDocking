@@ -118,6 +118,11 @@ if (mode == 'all') or (mode == 'train'):
                    help='total number of MPC batches generated. Dataset size=MPC batch size * num_batches before bootstrapping')
     p.add_argument('--pause_epochs', type=int, default=100, # Added armument for pausing curriculum 
                    help='Number of epochs to pause curriculum at each horizon milestone for value function stabilization')
+    p.add_argument('--cost_type', type=str, default='reachability', required=False,
+                   choices=['reachability', 'classic_mpc', 'mixed'],
+                   help='Cost function type for MPC: reachability (use reach/avoid set), classic_mpc (quadratic tracking), or mixed (blend both)')
+    p.add_argument('--mpc_percentage', type=float, default=0.8, required=False,
+                   help='For mixed cost type: fraction of iterations using classic MPC cost (rest use reachability). Range: [0,1]')
     p.add_argument('--num_MPC_perturbation_samples', type=int, default=100,
                    help='Number of MPC samples') # working fine but tunable
     p.add_argument('--num_iterative_refinement', type=int, default=20,
@@ -333,7 +338,7 @@ dataset = dataio.ReachabilityDataset(
     num_MPC_data_samples = orig_opt.num_MPC_data_samples, num_iterative_refinement=orig_opt.num_iterative_refinement,
     time_till_refinement=orig_opt.time_till_refinement,num_MPC_batches=orig_opt.num_MPC_batches, 
     aug_with_MPC_data= orig_opt.aug_with_MPC_data, policy=policy, refine_dataset=(not orig_opt.not_refine_dataset),
-    pause_epochs=orig_opt.pause_epochs)
+    pause_epochs=orig_opt.pause_epochs, cost_type=orig_opt.cost_type, mpc_percentage=orig_opt.mpc_percentage)
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
 experiment = experiment_class(

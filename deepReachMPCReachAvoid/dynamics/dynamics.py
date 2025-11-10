@@ -704,7 +704,7 @@ class Docking6D(Dynamics):
 
         goal = torch.max(goal, axis=-1).values 
 
-        goal = torch.where(goal < 0, goal * 150.0, goal * 0.05)
+        goal = torch.where(goal < 0, goal * 200.0, goal * 0.05)
         return goal
     
     """ L inf norm for reach-avoid

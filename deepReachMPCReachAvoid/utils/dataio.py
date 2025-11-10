@@ -40,7 +40,7 @@ class ReachabilityDataset(Dataset):
     def __init__(self, dynamics, numpoints, pretrain, pretrain_iters, tMin, tMax, counter_start, counter_end, num_src_samples, num_target_samples,
                  use_MPC, time_curr, MPC_data_path, num_MPC_perturbation_samples, MPC_dt, MPC_mode, MPC_sample_mode, MPC_style,
                  MPC_lambda_, MPC_batch_size, MPC_receding_horizon, num_MPC_data_samples, num_iterative_refinement, time_till_refinement, num_MPC_batches=1,
-                 aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100):
+                 aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100, cost_type='reachability', mpc_percentage=0.8):
         self.dynamics = dynamics
         self.numpoints = numpoints
         self.pretrain = pretrain
@@ -74,6 +74,10 @@ class ReachabilityDataset(Dataset):
         self.MPC_lambda_ = MPC_lambda_
         self.MPC_style = MPC_style
         self.num_iterative_refinement = num_iterative_refinement
+
+        # MPC Cost function parameters
+        self.mpc_percentage = mpc_percentage
+        self.cost_type = cost_type
 
         # PAUSE Parameters: Pause training to refine dataset
         self.pause_epochs = pause_epochs  # How many epochs to pause at each horizon
@@ -132,7 +136,8 @@ class ReachabilityDataset(Dataset):
         print("Generating MPC dataset")
         self.mpc = MPC.MPC(horizon=None, receding_horizon=self.MPC_receding_horizon, dT=self.MPC_dt, num_samples=self.num_MPC_perturbation_samples,
                            dynamics_=self.dynamics, device='cuda', mode=self.MPC_mode,
-                           sample_mode=self.MPC_sample_mode, lambda_=self.MPC_lambda_, style=self.MPC_style, num_iterative_refinement=self.num_iterative_refinement)
+                           sample_mode=self.MPC_sample_mode, lambda_=self.MPC_lambda_, style=self.MPC_style, num_iterative_refinement=self.num_iterative_refinement,
+                           cost_type=self.cost_type, mpc_percentage=self.mpc_percentage)
         device = 'cuda'
         MPC_states = self.sample_init_state()
 
@@ -230,11 +235,18 @@ class ReachabilityDataset(Dataset):
                 min((self.counter) / self.counter_end, 1.0)
             if self.time_curr and not self.pretrain:
                 if current_t > self.MPC_dt:
+                    if not hasattr(self, 'mpc_time_sorted_indices') or \
+                       len(self.mpc_time_sorted_indices) != len(self.MPC_inputs):
+                        print(f"WARNING: Recomputing sorted indices (had {len(self.mpc_time_sorted_indices) if hasattr(self, 'mpc_time_sorted_indices') else 0}, need {len(self.MPC_inputs)})")
+                        self.mpc_time_sorted_indices = torch.argsort(self.MPC_inputs[:, 0])
+                    
                     # Find upper bound index using precomputed sorted indices
-                    max_idx = bisect_right(
-                        self.MPC_inputs[self.mpc_time_sorted_indices][:, 0].cpu().numpy(), current_t)
+                    sorted_times = self.MPC_inputs[self.mpc_time_sorted_indices][:, 0].cpu().numpy()
+                    max_idx = bisect_right(sorted_times, current_t)
 
                     if max_idx >= self.num_MPC_data_samples:
+                        # Ensure we don't sample beyond dataset size
+                        max_idx = min(max_idx, len(self.MPC_inputs))
                         idxs = torch.randint(
                             0, max_idx, (self.num_MPC_data_samples,))
                         MPC_inputs_ = self.MPC_inputs[self.mpc_time_sorted_indices[idxs]]
@@ -246,13 +258,14 @@ class ReachabilityDataset(Dataset):
                     # Augment with MPC data (around MPC datapoints)
                     if self.aug_with_MPC_data > 0:
                         num_available = min(max_idx, self.aug_with_MPC_data)
-                        idxs = torch.randint(
-                            0, num_available, (num_available,))
-                        state_around_MPC_inputs = self.MPC_inputs[self.mpc_time_sorted_indices[idxs]]*1.0
-                        state_around_MPC_inputs = torch.clip(
-                            state_around_MPC_inputs*(torch.randn_like(state_around_MPC_inputs)*0.01+1.0), min=-1.0, max=1.0)
-                        # state_around_MPC_inputs[...,1:]=self.dynamics.clamp_state_input(state_around_MPC_inputs[...,1:])
-                        model_inputs[-num_available:, ...] = state_around_MPC_inputs
+                        if num_available > 0:  # Only augment if we have samples
+                            idxs = torch.randint(0, num_available, (num_available,))
+                            state_around_MPC_inputs = self.MPC_inputs[self.mpc_time_sorted_indices[idxs]]*1.0
+                            state_around_MPC_inputs = torch.clip(
+                                state_around_MPC_inputs*(torch.randn_like(state_around_MPC_inputs)*0.01+1.0), 
+                                min=-1.0, max=1.0)
+                            model_inputs[-num_available:, ...] = state_around_MPC_inputs
+
 
                 else:
                     MPC_inputs_ = torch.Tensor([0])
