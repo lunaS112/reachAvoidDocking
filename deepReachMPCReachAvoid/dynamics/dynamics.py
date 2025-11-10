@@ -527,6 +527,7 @@ class Docking6D(Dynamics):
         self.eps_v = 0.1 # Velocity tolerance for docking (m/s)
         self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
         self.eps_omega = 0.05 # Angular velocity tolerance for docking (rad/s)
+        self.v_max = 2.0 # Used to clamp velocity in ds/dt
 
         # Define goal state
         if goal_state is None:
@@ -556,7 +557,7 @@ class Docking6D(Dynamics):
         # Define state/control space
         self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-4, 4], [-4, 4], [-0.2, 0.2], [-0.2, 0.2], [-math.pi, math.pi], [-2.0, 2.0]]).cuda()
+            [[-4, 4], [-4, 4], [-2.0 , 2.0], [-2.0, 2.0], [-math.pi, math.pi], [-2.0, 2.0]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
@@ -649,11 +650,24 @@ class Docking6D(Dynamics):
         dsdt[..., 1] = state[..., 3]
         dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
         dsdt[..., 3] = -2 * self.mean_motion() * state[..., 0] + control[..., 1] / self.mc
+
+        current_vx = state[..., 2]
+        current_vy = state[..., 3]
+
+        # Clamp velocities to v_max
+        dsdt[..., 2] = torch.where((current_vx >= self.v_max) & (dsdt[..., 2] > 0),
+            torch.zeros_like(dsdt[..., 2]), dsdt[..., 2])
+        dsdt[..., 2] = torch.where((current_vx <= -self.v_max) & (dsdt[..., 2] < 0),
+            torch.zeros_like(dsdt[..., 2]), dsdt[..., 2])
+        
+        dsdt[..., 3] = torch.where((current_vy >= self.v_max) & (dsdt[..., 3] > 0),
+            torch.zeros_like(dsdt[..., 3]), dsdt[..., 3])
+        dsdt[..., 3] = torch.where((current_vy <= -self.v_max) & (dsdt[..., 3] < 0),
+            torch.zeros_like(dsdt[..., 3]),dsdt[..., 3])
+
         dsdt[..., 4] = state[..., 5]
         dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
         return dsdt
-
-    # Try L1 for Vanilla Deep Reach
 
     # L2 Norm (exact)
     def reach_fn(self, state):
@@ -755,7 +769,6 @@ class Docking6D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    # Update with F1 Tenth
     def hamiltonian(self, state, dvds):
         if self.set_mode == 'reach_avoid':
             opt_control = self.optimal_control(state, dvds)
