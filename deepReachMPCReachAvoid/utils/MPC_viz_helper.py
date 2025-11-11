@@ -7,10 +7,6 @@ import torch
 from tqdm import tqdm
 from pathlib import Path as pathlib
 
-# mpl.use('Agg')
-torch.manual_seed(1)
-np.random.seed(1)
-
 def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
     theta = np.linspace(0, np.pi, 100)
     arc_x = dock_rad * np.cos(theta)
@@ -190,8 +186,6 @@ def plotMPCTrajectories(mpc, initial_conditions, T, save_def:pathlib, max_trajs=
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0  # reach_fn <= 0 means within target region
     
-    print(f"State trajectories shape: {state_trajs_np.shape}")
-    
     # Create figure with subplots
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f'MPC Trajectory Analysis (T={actual_T}, dt={mpc.dT})', fontsize=16)
@@ -307,33 +301,38 @@ def plotMPCTrajectories(mpc, initial_conditions, T, save_def:pathlib, max_trajs=
     save_def.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(f"{save_def}__fullTraj.png", dpi=300, bbox_inches='tight')
     
-    # Analyze final states in terms of each component of reach_fn
-    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
-    px = final_states_tensor[:, 0].cpu().numpy()
-    py = final_states_tensor[:, 1].cpu().numpy()
-    vx = final_states_tensor[:, 2].cpu().numpy()
-    vy = final_states_tensor[:, 3].cpu().numpy()
-    theta = final_states_tensor[:, 4].cpu().numpy()
-    omega = final_states_tensor[:, 5].cpu().numpy()
-    
-    position_dist = np.sqrt(px**2 + py**2)
-    velocity_dist = np.sqrt(vx**2 + vy**2)
-    theta_dist = np.abs(theta - np.pi/2)  # Assuming target attitude is π/2
-    omega_dist = np.abs(omega)
-    
-    print("\n=== Final State Analysis for Each Trajectory ===")
-    print(f"{'IC':<3} {'Pos Dist':<9} {'Vel Mag':<8} {'Theta Err':<10} {'Omega Mag':<9} {'Success':<7}")
-    print(f"{'#':<3} {'(m)':<9} {'(m/s)':<8} {'(rad)':<10} {'(rad/s)':<9} {'(Y/N)':<7}")
-    print("-" * 55)
-    
+    print("\n=== MPC Trajectories: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
+    print("-" * 105)
+
+    goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+
     for i in range(n_trajs):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        
+        # Compute errors from goal state
+        px_error = px_f - goal_state[0].item()
+        py_error = py_f - goal_state[1].item()
+        vx_error = vx_f - goal_state[2].item()
+        vy_error = vy_f - goal_state[3].item()
+        theta_error = theta_f - goal_state[4].item()
+        omega_error = omega_f - goal_state[5].item()
+        
+        # Compute distances (magnitudes)
+        pos_dist = np.sqrt(px_error**2 + py_error**2)
+        vel_dist = np.sqrt(vx_error**2 + vy_error**2)
+        theta_dist = abs(theta_error)
+        omega_dist = abs(omega_error)
+        
         success_str = "Y" if successful_dockings[i] else "N"
-        print(f"{i+1:<3} {position_dist[i]:<9.3f} {velocity_dist[i]:<8.3f} "
-              f"{theta_dist[i]:<10.3f} {omega_dist[i]:<9.3f} {success_str:<7}")
-    
-    print("-" * 55)
-    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, "
-          f"theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
+        print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
+            f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+
+    print("-" * 105)
+    print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
     
     return fig, state_trajs_np, costs_np, successful_dockings, reach_values
 
@@ -623,7 +622,41 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
-    
+
+    print("\n=== Position Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
+    print("-" * 105)
+
+    n_trajs = len(interesting_ics_tensor)
+    goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+
+    for i in range(n_trajs):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        
+        # Compute errors from goal state
+        px_error = px_f - goal_state[0].item()
+        py_error = py_f - goal_state[1].item()
+        vx_error = vx_f - goal_state[2].item()
+        vy_error = vy_f - goal_state[3].item()
+        theta_error = theta_f - goal_state[4].item()
+        omega_error = omega_f - goal_state[5].item()
+        
+        # Compute distances (magnitudes)
+        pos_dist = np.sqrt(px_error**2 + py_error**2)
+        vel_dist = np.sqrt(vx_error**2 + vy_error**2)
+        theta_dist = abs(theta_error)
+        omega_dist = abs(omega_error)
+        
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
+            f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+
+    print("-" * 105)
+    print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
+
     # Prepare BRT data using pre-computed position costs
     BRT_img = position_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
@@ -757,7 +790,42 @@ def plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
-    
+
+    # Print final state analysis table for velocity plot
+    print("\n=== Velocity Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
+    print("-" * 105)
+
+    n_trajs = len(interesting_ics_tensor)
+    goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+
+    for i in range(n_trajs):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        
+        # Compute errors from goal state
+        px_error = px_f - goal_state[0].item()
+        py_error = py_f - goal_state[1].item()
+        vx_error = vx_f - goal_state[2].item()
+        vy_error = vy_f - goal_state[3].item()
+        theta_error = theta_f - goal_state[4].item()
+        omega_error = omega_f - goal_state[5].item()
+        
+        # Compute distances (magnitudes)
+        pos_dist = np.sqrt(px_error**2 + py_error**2)
+        vel_dist = np.sqrt(vx_error**2 + vy_error**2)
+        theta_dist = abs(theta_error)
+        omega_dist = abs(omega_error)
+        
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
+            f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+
+    print("-" * 105)
+    print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
+
     # Prepare BRT data for velocity slice
     BRT_img = velocity_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
@@ -881,7 +949,42 @@ def plotBRTRotation(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
     reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
     successful_dockings = reach_values <= 0
-    
+
+    # Print final state analysis table for rotation plot
+    print("\n=== Rotation Plot: Final State Analysis ===")
+    print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
+    print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
+    print("-" * 105)
+
+    n_trajs = len(interesting_ics_tensor)
+    goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+
+    for i in range(n_trajs):
+        final_state = state_trajs_np[i, -1, :]
+        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+        
+        # Compute errors from goal state
+        px_error = px_f - goal_state[0].item()
+        py_error = py_f - goal_state[1].item()
+        vx_error = vx_f - goal_state[2].item()
+        vy_error = vy_f - goal_state[3].item()
+        theta_error = theta_f - goal_state[4].item()
+        omega_error = omega_f - goal_state[5].item()
+        
+        # Compute distances (magnitudes)
+        pos_dist = np.sqrt(px_error**2 + py_error**2)
+        vel_dist = np.sqrt(vx_error**2 + vy_error**2)
+        theta_dist = abs(theta_error)
+        omega_dist = abs(omega_error)
+        
+        success_str = "Y" if successful_dockings[i] else "N"
+        print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
+            f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+
+    print("-" * 105)
+    print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
+    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
+
     # Prepare BRT data for rotation slice
     BRT_img = rotation_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
