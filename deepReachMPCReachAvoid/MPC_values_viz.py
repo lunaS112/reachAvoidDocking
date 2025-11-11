@@ -22,17 +22,17 @@ if __name__ == "__main__":
 
     # Required parameters
     T = 10
-    dt = 0.2
+    dt = 0.5
     style = "receding" # Can be "direct" or "receding"
-    cost_type = "mixed" # Can be "reachability", "classic_mpc", or "mixed"
+    cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.7  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
-    x_res = 151
-    y_res = 151
-    vx_res = 151
-    vy_res = 151
-    theta_res = 151
-    omega_res = 151
+    x_res = 101
+    y_res = 101
+    vx_res = 101
+    vy_res = 101
+    theta_res = 101
+    omega_res = 101
     resolutions = [x_res, y_res, vx_res, vy_res, theta_res, omega_res]
     
     # Save definition root
@@ -60,9 +60,9 @@ if __name__ == "__main__":
     interesting_ics = []
     interesting_ics.append(torch.tensor([0.5, -0.5, 0, 0, np.pi/4, 0]).to(device))  
     interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
-    interesting_ics.append(torch.tensor([-1.0, -1.0, 0, 0, np.pi/3, 0]).to(device))
+    #interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
+    #interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
+    #interesting_ics.append(torch.tensor([-1.0, -1.0, 0, 0, np.pi/3, 0]).to(device))
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting BRT and Reach Avoid sets...")
@@ -85,5 +85,5 @@ if __name__ == "__main__":
     print("Images saved successfully!")
 
     print("Animating MPC trajectory")
-    animation = traj_anim.animate_trajectory(mpc, interesting_ics_tensor, T, dt, save_def=save_def)
+    #animation = traj_anim.animate_trajectory(mpc, interesting_ics_tensor, T, dt, save_def=save_def)
 
