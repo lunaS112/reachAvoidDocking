@@ -738,8 +738,8 @@ class Docking6D(Dynamics):
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.1)
 
-        s_fail[s_fail < 0] *= 1.0
-        s_fail[s_fail > 0] *= 5.0
+        s_fail[s_fail < 0] *= 5.0
+        s_fail[s_fail > 0] *= 1.0
 
         return s_fail
 
