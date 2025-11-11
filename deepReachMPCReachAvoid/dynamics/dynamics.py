@@ -502,9 +502,11 @@ class Dubins3D(Dynamics):
             'z_axis_idx': 2,
         }
 
+
 class Docking6D(Dynamics):
     def __init__(self, set_mode: str):
         # Defineing dynamic parameters
+        goal_state = None
         self.orbit_alt = 400  # Orbital altitude (km)
         self.u_bar = 20.0  # Maximum control input
         self.u_theta_bar = 1.5  # Maximum control input for angular velocity
@@ -520,15 +522,21 @@ class Docking6D(Dynamics):
         self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
 
         # Define docking parameters (10x) <- to make the docking region reasonably sized
-        self.eps_p = 0.5 # Position tolerance for docking (m)
-        self.eps_v = 0.5 # Velocity tolerance for docking (m/s)
-        self.eps_theta = 0.1 # Angular position tolerance for docking (rad)
-        self.eps_omega = 0.5 # Angular velocity tolerance for docking (rad/s)
+        self.eps_p = 0.05 # Position tolerance for docking (m)
+        self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
+        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
+        self.eps_omega = 0.005 # Angular velocity tolerance for docking (rad/s)
+
+        # Define goal state
+        if goal_state is None:
+            self.goal_state = torch.tensor([0.0, 0.0, 0.0, 0.0, np.pi/2, 0.0])
+        else:
+            self.goal_state = torch.tensor(goal_state)
 
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
         self.h_t = 3  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = self.chaser_buffer * 1.75 # Radius of target spacecraft docking indentation (m)
+        self.dock_rad = 1.5 # Radius of target spacecraft docking indentation (m)
 
         # BRAT parameters
         self.reach_fn_weight = 5.0
@@ -538,21 +546,34 @@ class Docking6D(Dynamics):
         if set_mode == 'reach_avoid':
             l_type = 'brat_hjivi'
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            #raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            l_type = 'brt_hjivi'
 
         # look into what we want to make these
         self.eps_var = torch.tensor([3]).cuda()
         self.control_init = torch.zeros(3).cuda()
         
         # Define state/control space
+        self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-15, 15], [-15, 15], [-2.5, 2.5], [-2.5, 2.5], [-math.pi, math.pi], [-5.0, 5.0]]).cuda()
+            [[-7.5, 7.5], [-7.5, 7.5], [-0.2, 0.2], [-0.2, 0.2], [-math.pi, math.pi], [-2.0, 2.0]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
         # Calculate state mean/var for normalization
         state_mean_ = (self.state_range_[:, 0]+self.state_range_[:, 1])/2.0
         state_var_ = (self.state_range_[:, 1]-self.state_range_[:, 0])/2.0
+
+        # Define an MPC cost weight matrix for these dynamics
+        # MPC cost: sum of stage costs + terminal cost
+        # MPC weight matrix
+        self.Q = torch.eye(self.state_dim)
+        self.Q[0,0] = 10.0 # High weight on x position
+        self.Q[1,1] = 10.0 # High weight on y position
+        self.Q[2,2] = 10.0  # Moderate weight on velocity x
+        self.Q[3,3] = 10.0  # Moderate weight on velocity y
+        self.Q[4,4] = 10.0  # Low weight on heading angle
+        self.Q[5,5] = 10.0  # Low weight on angular velocity
 
         super().__init__(
             name="Docking6D",
@@ -637,18 +658,22 @@ class Docking6D(Dynamics):
     # L2 Norm (exact)
     def reach_fn(self, state):
         """Signed distance <= 0 if within docking position/velocity tolerances using L2 norm."""
-        px = state[..., 0]
-        py = state[..., 1]
-        vx = state[..., 2]
-        vy = state[..., 3]
-        theta = state[..., 4]
-        omega = state[..., 5]
+        px, py = state[..., 0], state[..., 1]
+        vx, vy = state[..., 2], state[..., 3]
+        theta, omega = state[..., 4], state[..., 5]
         
-        # L2 norm distances from origin for each component
-        position_dist = torch.sqrt(px**2 + py**2) - self.eps_p
-        velocity_dist = torch.sqrt(vx**2 + vy**2) - self.eps_v
-        theta_dist = torch.abs(theta - np.pi/2) - self.eps_theta  # Angular position (scalar)
-        omega_dist = torch.abs(omega) - self.eps_omega  # Angular velocity (scalar)
+        goal_state = self.goal_state.to(state.device)
+
+        # Extract goal state variables
+        px_goal, py_goal = goal_state[0], goal_state[1]
+        vx_goal, vy_goal = goal_state[2], goal_state[3]
+        theta_goal, omega_goal = goal_state[4], goal_state[5]
+
+        # L2 norm distances from goal for each component
+        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) - self.eps_p
+        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) - self.eps_v
+        theta_dist = torch.abs(theta - theta_goal) - self.eps_theta  # Angular position (scalar)
+        omega_dist = torch.abs(omega - omega_goal) - self.eps_omega  # Angular velocity (scalar)
         
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([
@@ -688,30 +713,41 @@ class Docking6D(Dynamics):
         """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
         px = state[..., 0]
         py = state[..., 1]
-        
-        # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
+
+        # Target Spacecraft rectangular body (Including buffer for chaser dimensions)
         s_rect = torch.maximum(
             torch.abs(px) - (self.w_t/2 + self.chaser_buffer),
             torch.maximum(-(py + self.chaser_buffer), py - (self.h_t + self.chaser_buffer))
         )
-        # Bottom semicircular indentation centered at (0,0) covering py >= 0
-        dist_semi = torch.sqrt(px**2 + (py + self.chaser_buffer)**2) - (self.dock_rad - self.chaser_buffer)
-        # For upper half of circle: ensure we only carve out if py >= 0
-        s_dock = torch.maximum(-(py + self.chaser_buffer), dist_semi)
-        # Failure region: inside rectangle but not inside semicircle
-        s_fail = torch.maximum(s_rect, -s_dock + 1e-6)
+        
+        # Effective docking radius accounting for chaser buffer
+        effective_rad = max(self.dock_rad - self.chaser_buffer, 1e-6)
 
-        s_fail[s_fail < 0] *= 1
-        s_fail[s_fail > 0] *= 5
+        # Target Spacecraft docking indentation (semicircle)
+        dist_semi = torch.sqrt(px**2 + py**2) - effective_rad
+        s_dock = torch.maximum(-py, dist_semi)
+        s_bubble = torch.maximum(s_rect, -s_dock)
+
+        # Cutout to stop faliureset overlap
+        s_cutout = torch.maximum(torch.abs(px) - effective_rad, 
+                                 torch.maximum(-(py + self.chaser_buffer), py))
+
+        s_fail = torch.maximum(s_bubble, -s_cutout + 0.1)
+
+        s_fail[s_fail < 0] *= 1.0
+        s_fail[s_fail > 0] *= 5.0
 
         return s_fail
-    
 
     def boundary_fn(self, state):
         if self.set_mode in ['reach_avoid']:
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+        elif self.set_mode == 'reach':
+            return self.reach_fn(state)
+        elif self.set_mode == 'avoid':
+            return self.avoid_fn(state)
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            raise NotImplementedError(f"Set mode {self.set_mode} not implemented")
 
     def sample_target_state(self, num_samples):
         raise NotImplementedError
