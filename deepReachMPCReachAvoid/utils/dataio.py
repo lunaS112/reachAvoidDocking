@@ -311,7 +311,7 @@ class ReachabilityDataset(Dataset):
 
         if self.pretrain:
             self.pretrain_counter += 1
-        else:
+        elif not self.is_paused:
             self.counter += 1
 
         if self.pretrain and self.pretrain_counter == self.pretrain_iters:

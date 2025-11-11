@@ -1312,23 +1312,11 @@ class Experiment(ABC):
             converged = False
             # Regenerate MPC data at the same paused horizon each epoch
             if self.dataset.use_MPC:
-                tqdm.write(f"Paused at horizon {self.dataset.paused_horizon:.2f}s - Epoch {self.dataset.pause_counter}/{self.dataset.pause_epochs}")
+                #tqdm.write(f"Paused at horizon {self.dataset.paused_horizon:.2f}s - Epoch {self.dataset.pause_counter}/{self.dataset.pause_epochs}")
                 self.dataset.policy = self.model  # Update with latest model
 
-                # Use time_interval_length but clamp to paused_horizon
-                # This tells MPC how far DeepReach has learned, but not beyond the pause point        
-                t_learned = min(time_interval_length, self.dataset.paused_horizon)
-                self.dataset.generate_MPC_dataset(
-                    self.dataset.paused_horizon,  # T = paused horizon
-                    t_learned,  # t = how far we've learned
-                    style="random"
-                )
-
-                # Recompute sorted indices after dataset regeneration
-                self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
-
-            # Check convergence every 10 epochs (after minimum 20)
-            if self.dataset.pause_counter % 10 == 0 and self.dataset.pause_counter >= 20:
+            # Check convergence every 50 epochs (after minimum 100)
+            if self.dataset.pause_counter % 50 == 0 and self.dataset.pause_counter >= 100:
                 tqdm.write(f"Testing value convergence at horizon {self.dataset.paused_horizon:.2f}s (pause epoch {self.dataset.pause_counter})")
 
                 converged, metrics = self.test_value_convergence(
@@ -1343,21 +1331,6 @@ class Experiment(ABC):
                     tqdm.write(f"  Classification accuracy: {metrics['classification_accuracy']:.2%}")
                     tqdm.write(f"  False positives (dangerous): {metrics['false_positives']:.2%}")
                     tqdm.write(f"  False negatives (conservative): {metrics['false_negatives']:.2%}")
-                
-                if self.use_wandb:
-                    wandb.log({
-                        'convergence/mean_diff': metrics['mean_diff'],
-                        'convergence/max_diff': metrics['max_diff'],
-                        'convergence/median_diff': metrics['median_diff'],
-                        'convergence/std_diff': metrics['std_diff'],
-                        'convergence/convergence_rate': metrics['convergence_rate'],
-                        'convergence/classification_accuracy': metrics['classification_accuracy'],
-                        'convergence/false_positives': metrics['false_positives'],
-                        'convergence/false_negatives': metrics['false_negatives'],
-                        'convergence/pause_epoch': self.dataset.pause_counter,
-                        'convergence/horizon': self.dataset.paused_horizon,
-                        'step': epoch
-                    })
 
             # Exit pause if converged
             if converged:
@@ -1365,44 +1338,68 @@ class Experiment(ABC):
                 self.dataset.is_paused = False
                 self.dataset.pause_counter = 0
                 self.last_refine_time = self.dataset.paused_horizon
+
+                # GENERATE LOOK-AHEAD MPC DATA when exiting pause early
+                next_horizon = self.last_refine_time + self.dataset.time_till_refinement
+                if next_horizon < self.dataset.tMax:
+                    tqdm.write(f"  Generating look-ahead MPC data at T={next_horizon:.2f}s")
+                    self.dataset.policy = self.model
+                    self.dataset.generate_MPC_dataset(
+                        next_horizon,              # T = NEXT milestone (look-ahead)
+                        time_interval_length,      # t = current curriculum
+                        style="random"
+                    )
+                    self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
                 return
 
             # Check if pause is complete
             if self.dataset.pause_counter >= self.dataset.pause_epochs:
                 converged, metrics = self.test_value_convergence(
                     num_test_samples=500,
-                    threshold=0.05,
+                    threshold=0.1,
                     success_rate=0.85
                 )
                 
                 if converged:
-                    tqdm.write(f"✓ Value function converged at max pause epochs")
+                    tqdm.write(f"Value function converged at max pause epochs")
                 else:
-                    tqdm.write(f"⚠ Max pause epochs reached without full convergence")
-                    tqdm.write(f"  Final convergence rate: {metrics['convergence_rate']:.2%}")
-                    tqdm.write(f"  Final mean diff: {metrics['mean_diff']:.4f}")
+                    tqdm.write(f"Max pause epochs reached without full convergence")
+                    tqdm.write(f"Final convergence rate: {metrics['convergence_rate']:.2%}")
+                    tqdm.write(f"Final mean diff: {metrics['mean_diff']:.4f}")
                 
                 self.dataset.is_paused = False
                 self.dataset.pause_counter = 0
                 self.last_refine_time = self.dataset.paused_horizon
+
+                # GENERATE LOOK-AHEAD MPC DATA when exiting pause early
+                next_horizon = self.last_refine_time + self.dataset.time_till_refinement
+                if next_horizon < self.dataset.tMax:
+                    tqdm.write(f"  Generating look-ahead MPC data at T={next_horizon:.2f}s")
+                    self.dataset.policy = self.model
+                    self.dataset.generate_MPC_dataset(
+                        next_horizon,              # T = NEXT milestone (look-ahead)
+                        time_interval_length,      # t = current curriculum
+                        style="random"
+                    )
+                    self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
             return
         
-        # Check if we have reached the new refinement horizon
+        # Check if we have reached the new refinement horizon - ENTER PAUSE
         if time_interval_length >= (self.last_refine_time + self.dataset.time_till_refinement) and self.dataset.use_MPC:
             # Reached a new horizon (H_R) for refinement
-            new_horizon = self.last_refine_time + self.dataset.time_till_refinement
+            current_horizon = self.last_refine_time + self.dataset.time_till_refinement
 
-            if self.dataset.refine_dataset and new_horizon < self.dataset.tMax:
+            if self.dataset.refine_dataset and current_horizon < self.dataset.tMax:
                 # Enter Pause
-                tqdm.write(f"\n=== Reached horizon {new_horizon:.2f}s - PAUSING curriculum for {self.dataset.pause_epochs} epochs ===")
+                tqdm.write(f"\n=== Reached horizon {current_horizon:.2f}s - PAUSING curriculum for {self.dataset.pause_epochs} epochs ===")
                 self.dataset.is_paused = True
                 self.dataset.pause_counter = 0
-                self.dataset.paused_horizon = new_horizon
+                self.dataset.paused_horizon = current_horizon
 
                 # Generate data at the new horizon before pausing
                 self.dataset.policy = self.model
                 self.dataset.generate_MPC_dataset(
-                    new_horizon,  # T = new horizon
+                    current_horizon,  # T = new horizon
                     time_interval_length,  # t = how far we've learned 
                     style="random"
                 )
@@ -1411,7 +1408,7 @@ class Experiment(ABC):
                 self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
 
 
-            elif new_horizon >= self.dataset.tMax:
+            elif current_horizon >= self.dataset.tMax:
                 # reached final horizon - switch to terminal refinement
                 self.last_refine_time = self.dataset.tMax
                 self.dataset.use_terminal_MPC()
@@ -1421,8 +1418,6 @@ class Experiment(ABC):
                 self.MPC_importance_final = 1.0  # TODO: make it a hyperparam
                 # self.MPC_importance_init = 1.0
                 self.dataset.policy = self.model
-
-                tqdm.write(f"\n=== Reached final horizon {self.dataset.tMax:.2f}s - Entering terminal refinement ===")
                 refine_till_t = self.dataset.tMax
                 self.dataset.generate_MPC_dataset(
                     refine_till_t, refine_till_t, style="terminal")
