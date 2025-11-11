@@ -704,7 +704,7 @@ class Docking6D(Dynamics):
 
         goal = torch.max(goal, axis=-1).values 
 
-        goal = torch.where(goal < 0, goal * 200.0, goal * 0.05)
+        goal = torch.where(goal < 0, goal * 200.0, goal * 0.02)
         return goal
     
     """ L inf norm for reach-avoid
@@ -750,10 +750,10 @@ class Docking6D(Dynamics):
         s_cutout = torch.maximum(torch.abs(px) - effective_rad, 
                                  torch.maximum(-(py + self.chaser_buffer), py))
 
-        s_fail = torch.maximum(s_bubble, -s_cutout + 0.1)
+        s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
         s_fail[s_fail < 0] *= 1.0
-        s_fail[s_fail > 0] *= 5.0
+        s_fail[s_fail > 0] *= 10.0
 
         return s_fail
 

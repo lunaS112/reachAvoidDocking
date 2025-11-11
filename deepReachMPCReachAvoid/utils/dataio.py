@@ -231,8 +231,16 @@ class ReachabilityDataset(Dataset):
 
         # generating MPC inputs
         if self.use_MPC:
-            current_t = (self.tMax*1.0 - self.tMin) * \
-                min((self.counter) / self.counter_end, 1.0)
+            # Clamp current_t to paused_horizon during pause
+            if self.is_paused:
+                # During pause, only use MPC data up to the paused horizon
+                current_t = min(
+                    (self.tMax*1.0 - self.tMin) * min((self.counter) / self.counter_end, 1.0),
+                    self.paused_horizon
+                )
+            else:
+                # Normal curriculum advancement
+                current_t = (self.tMax*1.0 - self.tMin) * min((self.counter) / self.counter_end, 1.0)
             if self.time_curr and not self.pretrain:
                 if current_t > self.MPC_dt:
                     if not hasattr(self, 'mpc_time_sorted_indices') or \

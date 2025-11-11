@@ -1333,7 +1333,7 @@ class Experiment(ABC):
 
                 converged, metrics = self.test_value_convergence(
                     num_test_samples = 500,
-                    threshold = 0.05,
+                    threshold = 0.1,
                     success_rate = 0.85)
                 
                 # Log metrics
