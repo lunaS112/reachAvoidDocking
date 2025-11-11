@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 from dynamics import dynamics
 from utils import MPC, MPC_viz_helper as viz
+from utils import trajectory_animation as traj_anim
 
 # mpl.use('Agg')
 torch.manual_seed(1)
@@ -50,7 +51,7 @@ if __name__ == "__main__":
     print("Computing all BRT slices...")
     brt_data = viz.compute_all_brt_slices(mpc, dynamics_, device, T, resolutions)
     
-    # Get position data for backward compatibility with existing functions
+    # # Get position data for backward compatibility with existing functions
     costs = brt_data['position']['costs']
     x_min, x_max, y_min, y_max = brt_data['position']['coords']
     initial_condition_tensor = brt_data['position']['initial_conditions']
@@ -82,3 +83,7 @@ if __name__ == "__main__":
     print("Generating MPC Controls Histograms")
     viz.plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6, save_def=save_def)
     print("Images saved successfully!")
+
+    print("Animating MPC trajectory")
+    animation = traj_anim.animate_trajectory(mpc, interesting_ics_tensor, T, dt, save_def=save_def)
+
