@@ -551,7 +551,8 @@ class Docking6D(Dynamics):
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
         # look into what we want to make these
-        self.eps_var = torch.tensor([3]).cuda()
+        #self.eps_var = torch.tensor([3]).cuda() 
+        self.eps_var = torch.tensor([20, 20, 1.5]).cuda()
         self.control_init = torch.zeros(3).cuda()
         
         # Define state/control space
