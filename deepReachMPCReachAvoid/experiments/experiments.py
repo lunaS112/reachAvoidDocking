@@ -1321,8 +1321,9 @@ class Experiment(ABC):
 
                 converged, metrics = self.test_value_convergence(
                     num_test_samples = 500,
-                    threshold = 0.1,
-                    success_rate = 0.85)
+                    threshold = 0.08,
+                    success_rate = 0.80
+                    )
                 
                 # Log metrics
                 tqdm.write(f"  Mean diff: {metrics['mean_diff']:.4f}, Max diff: {metrics['max_diff']:.4f}, Std: {metrics['std_diff']:.4f}")
@@ -1356,8 +1357,8 @@ class Experiment(ABC):
             if self.dataset.pause_counter >= self.dataset.pause_epochs:
                 converged, metrics = self.test_value_convergence(
                     num_test_samples=500,
-                    threshold=0.1,
-                    success_rate=0.85
+                    threshold=0.05,
+                    success_rate=0.80
                 )
                 
                 if converged:
