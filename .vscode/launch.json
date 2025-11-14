@@ -28,7 +28,7 @@
                 "--MPC_dt", "0.2",
                 "--deepReach_model", "exact",
                 "--pause_epochs", "100",
-                "--val_z_resolution", "10",
+                "--val_z_resolution", "5",
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}/deepReachMPCReachAvoid"

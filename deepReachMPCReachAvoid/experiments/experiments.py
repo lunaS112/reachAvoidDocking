@@ -405,7 +405,7 @@ class Experiment(ABC):
 
                     total_steps += 1
 
-                if not (epoch+1) % epochs_til_checkpoint:
+                if not (epoch+1) % epochs_til_checkpoint or epoch == 0:
                     # Saving the optimizer state is important to produce consistent results
                     checkpoint = {
                         'epoch': epoch+1,
