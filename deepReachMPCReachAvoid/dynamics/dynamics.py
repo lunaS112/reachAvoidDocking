@@ -527,7 +527,7 @@ class Docking6D(Dynamics):
         self.eps_v = 0.1 # Velocity tolerance for docking (m/s)
         self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
         self.eps_omega = 0.05 # Angular velocity tolerance for docking (rad/s)
-        self.v_max = 2.0 # Used to clamp velocity in ds/dt
+        self.v_max = 2.5 # Used to clamp velocity in ds/dt
 
         # Define goal state
         if goal_state is None:
@@ -551,13 +551,14 @@ class Docking6D(Dynamics):
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
         # look into what we want to make these
-        self.eps_var = torch.tensor([3]).cuda()
+        #self.eps_var = torch.tensor([3]).cuda() 
+        self.eps_var = torch.tensor([20, 20, 1.5]).cuda()
         self.control_init = torch.zeros(3).cuda()
         
         # Define state/control space
         self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-4, 4], [-4, 4], [-2.0 , 2.0], [-2.0, 2.0], [-math.pi, math.pi], [-2.0, 2.0]]).cuda()
+            [[-4, 4], [-4, 4], [-0.2 , 0.2], [-0.2 , 0.2], [-math.pi, math.pi], [-0.5, 0.5]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
@@ -684,27 +685,31 @@ class Docking6D(Dynamics):
         theta_goal, omega_goal = goal_state[4], goal_state[5]
 
         # L2 norm distances from goal for each component
-        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) 
-        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) 
-        theta_dist = torch.abs(torch.atan2(torch.sin(theta - theta_goal), torch.cos(theta - theta_goal)))
-        omega_dist = torch.abs(omega - omega_goal)
-        
-        # Normalize each distance by its tolerance to make them comparable
-        position_dist_normalized = position_dist / self.eps_p - 1.0
-        velocity_dist_normalized = velocity_dist / self.eps_v - 1.0
-        theta_dist_normalized = theta_dist / self.eps_theta - 1.0
-        omega_dist_normalized = omega_dist / self.eps_omega - 1.0
+        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) - self.eps_p
+        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) - self.eps_v
+        theta_dist = torch.abs(torch.atan2(torch.sin(theta - theta_goal), torch.cos(theta - theta_goal))) - self.eps_theta
+        omega_dist = torch.abs(omega - omega_goal) - self.eps_omega
+
+        position_dist = torch.where(position_dist < 0, position_dist * 15, position_dist * 0.2/2)
+        velocity_dist = torch.where(velocity_dist < 0, velocity_dist * 15, velocity_dist * 2/2)
+        theta_dist = torch.where(theta_dist < 0, theta_dist * 150, theta_dist * 0.2/2)
+        omega_dist = torch.where(omega_dist < 0, omega_dist * 30, omega_dist * 2/2)
+
+        # print("Position Max, Min:", position_dist.max(), ",", position_dist.min())
+        # print("Velocity Max, Min:", velocity_dist.max(), ",", velocity_dist.min())
+        # print("Theta    Max, Min:", theta_dist.max(), ",", theta_dist.min())
+        # print("Omega    Max, Min:", omega_dist.max(), ",", omega_dist.min())
 
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([
-            position_dist_normalized,
-            velocity_dist_normalized,
-            theta_dist_normalized,
-            omega_dist_normalized], dim=-1)
+            position_dist,
+            velocity_dist,
+            theta_dist,
+            omega_dist], dim=-1)
 
         goal = torch.max(goal, axis=-1).values 
 
-        goal = torch.where(goal < 0, goal * 200.0, goal * 0.02)
+        #goal = torch.where(goal < 0, goal * 1000.0, goal * 0.02)
         return goal
     
     """ L inf norm for reach-avoid
@@ -752,8 +757,8 @@ class Docking6D(Dynamics):
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
-        s_fail[s_fail < 0] *= 1.0
-        s_fail[s_fail > 0] *= 10.0
+        s_fail[s_fail < 0] *= 0.750
+        s_fail[s_fail > 0] *= 50.0
 
         return s_fail
 
@@ -764,7 +769,28 @@ class Docking6D(Dynamics):
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
     def sample_target_state(self, num_samples):
-        raise NotImplementedError
+        target_state_range = self.state_test_range()
+        target_state_range[0] = [-2.0, 2.0]
+        target_state_range[1] = [-2.0, 2.0]
+        
+        # Velocity: keep small velocities near docking
+        target_state_range[2] = [-0.5, 0.5] 
+        target_state_range[3] = [-0.5, 0.5]
+        
+        # Angular position: focus around desired docking angle (π/2)
+        target_state_range[4] = [np.pi/2 - np.pi/4, np.pi/2 + np.pi/4] 
+        
+        # Angular velocity: keep small
+        target_state_range[5] = [-1.0, 1.0] 
+        
+        # Convert to tensor
+        target_state_range = torch.tensor(target_state_range)
+        
+        # Sample uniformly within the target ranges
+        sampled_states = target_state_range[:, 0] + torch.rand(num_samples, self.state_dim) * (
+            target_state_range[:, 1] - target_state_range[:, 0]
+        )
+        return sampled_states
 
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
