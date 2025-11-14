@@ -698,10 +698,10 @@ class Docking6D(Dynamics):
 
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([
-            position_dist_normalized,
-            velocity_dist_normalized,
-            theta_dist_normalized,
-            omega_dist_normalized], dim=-1)
+            position_dist,
+            velocity_dist,
+            theta_dist,
+            omega_dist], dim=-1)
 
         goal = torch.max(goal, axis=-1).values 
 
