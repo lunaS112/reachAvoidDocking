@@ -85,6 +85,11 @@ class ReachabilityDataset(Dataset):
         self.is_paused = False  # Whether curriculum is currently paused
         self.paused_horizon = 0.0  # The horizon we're pausing at
 
+        # Verification MPC Dataset parameters
+        self.MPC_verification_inputs = None # Coords for verification 
+        self.MPC_verification_values = None # Values for verification
+        self.verification_horizon = None # Horizon for verification MPC dataset
+
         if use_MPC:
             if MPC_data_path == 'none':
                 # initialize MPC dataset
@@ -143,6 +148,7 @@ class ReachabilityDataset(Dataset):
 
         _, _, MPC_inputs, MPC_values = self.mpc.get_batch_data(
             MPC_states.cuda(), T, self.policy, t=t)  # Make sure to generate at least one batch of data at T, so we have "look-ahead" MPC labels for deepreach
+        \
         for i in tqdm(range(self.num_MPC_batches-1)):
             MPC_states = self.sample_init_state()
 
@@ -161,8 +167,10 @@ class ReachabilityDataset(Dataset):
             # t_max=self.tMax
             _, _, MPC_inputs_, MPC_values_ = self.mpc.get_batch_data(
                 MPC_states.to(device), t_max, self.policy, t=t)
+            
             MPC_inputs = torch.cat([MPC_inputs, MPC_inputs_], dim=0)
             MPC_values = torch.cat([MPC_values, MPC_values_], dim=0)
+
         # print("Generated %d labels"%MPC_inputs.shape[0])
         if style == "terminal":
             # with more coords and values being at the terminal time
@@ -192,6 +200,53 @@ class ReachabilityDataset(Dataset):
         print("Generated %d labels" % MPC_inputs.shape[0])
 
         del self.mpc  # free it to get some memory
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def generate_verification_dataset(self, T, t, num_samples=1000):
+        """
+        Generate a separate MPC dataset for convergence testing only.
+        This dataset is NEVER used for training - only for validation.
+        
+        Args:
+            T: Time horizon for verification
+            t: Initial time for verification
+            num_samples: Number of verification samples to generate
+        """
+        tqdm.write(f"\nGenerating verification MPC dataset at T={T:.2f}s with {num_samples} samples")
+        
+        # Initialize MPC with same parameters as training dataset
+        verification_mpc = MPC.MPC(
+            horizon=None, 
+            receding_horizon=self.MPC_receding_horizon, 
+            dT=self.MPC_dt, 
+            num_samples=self.num_MPC_perturbation_samples,
+            dynamics_=self.dynamics, 
+            device='cuda', 
+            mode=self.MPC_mode,
+            sample_mode=self.MPC_sample_mode, 
+            lambda_=self.MPC_lambda_, 
+            style=self.MPC_style, 
+            num_iterative_refinement=self.num_iterative_refinement,
+            cost_type=self.cost_type, 
+            mpc_percentage=self.mpc_percentage
+        )
+        
+        # Sample fresh initial states (independent from training dataset)
+        verification_states = self.sample_init_state()[:num_samples]
+        
+        # Generate MPC rollouts at horizon T
+        _, _, verification_inputs, verification_values = verification_mpc.get_batch_data(
+            verification_states.cuda(), T, self.policy, t=t
+        )
+        
+        # Store verification dataset (keep on CPU to save GPU memory)
+        self.MPC_verification_inputs = verification_inputs.detach().cpu()
+        self.MPC_verification_values = verification_values.detach().cpu()
+        self.verification_horizon = T
+        
+        # Clean up MPC object
+        del verification_mpc
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -231,8 +286,16 @@ class ReachabilityDataset(Dataset):
 
         # generating MPC inputs
         if self.use_MPC:
-            current_t = (self.tMax*1.0 - self.tMin) * \
-                min((self.counter) / self.counter_end, 1.0)
+            # Clamp current_t to paused_horizon during pause
+            if self.is_paused:
+                # During pause, only use MPC data up to the paused horizon
+                current_t = min(
+                    (self.tMax*1.0 - self.tMin) * min((self.counter) / self.counter_end, 1.0),
+                    self.paused_horizon
+                )
+            else:
+                # Normal curriculum advancement
+                current_t = (self.tMax*1.0 - self.tMin) * min((self.counter) / self.counter_end, 1.0)
             if self.time_curr and not self.pretrain:
                 if current_t > self.MPC_dt:
                     if not hasattr(self, 'mpc_time_sorted_indices') or \
@@ -303,7 +366,7 @@ class ReachabilityDataset(Dataset):
 
         if self.pretrain:
             self.pretrain_counter += 1
-        else:
+        elif not self.is_paused:
             self.counter += 1
 
         if self.pretrain and self.pretrain_counter == self.pretrain_iters:
