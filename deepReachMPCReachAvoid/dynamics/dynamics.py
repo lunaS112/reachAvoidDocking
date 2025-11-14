@@ -558,7 +558,7 @@ class Docking6D(Dynamics):
         # Define state/control space
         self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-15, 15], [-15, 15], [-2.5 , 2.5], [-2.0, 2.0], [-math.pi, math.pi], [-5.0, 5.0]]).cuda()
+            [[-4, 4], [-4, 4], [-0.2 , 0.2], [-0.2 , 0.2], [-math.pi, math.pi], [-0.5, 0.5]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
@@ -685,27 +685,31 @@ class Docking6D(Dynamics):
         theta_goal, omega_goal = goal_state[4], goal_state[5]
 
         # L2 norm distances from goal for each component
-        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) 
-        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) 
-        theta_dist = torch.abs(torch.atan2(torch.sin(theta - theta_goal), torch.cos(theta - theta_goal)))
-        omega_dist = torch.abs(omega - omega_goal)
-        
-        # Normalize each distance by its tolerance to make them comparable
-        position_dist_normalized = position_dist / self.eps_p - 1.0
-        velocity_dist_normalized = velocity_dist / self.eps_v - 1.0
-        theta_dist_normalized = theta_dist / self.eps_theta - 1.0
-        omega_dist_normalized = omega_dist / self.eps_omega - 1.0
+        position_dist = torch.sqrt((px - px_goal)**2 + (py - py_goal)**2) - self.eps_p
+        velocity_dist = torch.sqrt((vx - vx_goal)**2 + (vy - vy_goal)**2) - self.eps_v
+        theta_dist = torch.abs(torch.atan2(torch.sin(theta - theta_goal), torch.cos(theta - theta_goal))) - self.eps_theta
+        omega_dist = torch.abs(omega - omega_goal) - self.eps_omega
+
+        position_dist = torch.where(position_dist < 0, position_dist * 15, position_dist * 0.2/2)
+        velocity_dist = torch.where(velocity_dist < 0, velocity_dist * 15, velocity_dist * 2/2)
+        theta_dist = torch.where(theta_dist < 0, theta_dist * 150, theta_dist * 0.2/2)
+        omega_dist = torch.where(omega_dist < 0, omega_dist * 30, omega_dist * 2/2)
+
+        # print("Position Max, Min:", position_dist.max(), ",", position_dist.min())
+        # print("Velocity Max, Min:", velocity_dist.max(), ",", velocity_dist.min())
+        # print("Theta    Max, Min:", theta_dist.max(), ",", theta_dist.min())
+        # print("Omega    Max, Min:", omega_dist.max(), ",", omega_dist.min())
 
         # Maximum of all constraint violations (signed distance)
         goal = torch.stack([
-            position_dist_normalized,
-            velocity_dist_normalized,
-            theta_dist_normalized,
-            omega_dist_normalized], dim=-1)
+            position_dist,
+            velocity_dist,
+            theta_dist,
+            omega_dist], dim=-1)
 
         goal = torch.max(goal, axis=-1).values 
 
-        goal = torch.where(goal < 0, goal * 200.0, goal * 0.02)
+        #goal = torch.where(goal < 0, goal * 1000.0, goal * 0.02)
         return goal
     
     """ L inf norm for reach-avoid
@@ -753,8 +757,8 @@ class Docking6D(Dynamics):
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
-        s_fail[s_fail < 0] *= 1.0
-        s_fail[s_fail > 0] *= 10.0
+        s_fail[s_fail < 0] *= 0.750
+        s_fail[s_fail > 0] *= 50.0
 
         return s_fail
 
