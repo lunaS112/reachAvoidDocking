@@ -38,11 +38,11 @@ class Experiment(ABC):
         # Refinment Horizon tracking
         self.horizon_epoch_map = {}     # Epoch when horizon was reached
         self.horizon_counter_map = {}   # dataset.counter when horizon was reached
-        self.horizon_checkpint_map = {} # Path to checkpoint
+        self.horizon_checkpoint_map = {} # Path to checkpoint
 
         # Convergance threshold param
-        self.min_cov_threshold = 0.30
-        self.max_cov_threshold = 0.7
+        self.min_cov_threshold = 0.5
+        self.max_cov_threshold = 0.95
 
     @abstractmethod
     def init_special(self):
@@ -89,15 +89,20 @@ class Experiment(ABC):
                 self.dataset.MPC_verification_inputs is not None and \
                 self.dataset.verification_horizon is not None and \
                 abs(self.dataset.verification_horizon - T) < 1e-6:
-                # Filter to samples exactly at horizon T
-                time_mask = torch.abs(self.dataset.MPC_verification_inputs[:,0] - T) < 1e-6
-                mpc_coords_at_T = self.dataset.MPC_verification_inputs[time_mask]
-                mpc_costs_at_T = self.dataset.MPC_verification_values[time_mask]
+                
+                #time_mask = torch.abs(self.dataset.MPC_verification_inputs[:,0] - T) < 1e-6
+                #mpc_coords_at_T = self.dataset.MPC_verification_inputs[time_mask]
+                #mpc_costs_at_T = self.dataset.MPC_verification_values[time_mask]
+                mpc_coords_at_T = self.dataset.MPC_verification_inputs
+                mpc_costs_at_T = self.dataset.MPC_verification_values
             else: # use training MPC dataset
-                time_mask = torch.abs(self.dataset.MPC_inputs[:,0] - T) < 1e-6 # Samples at time T
-                mpc_coords_at_T = self.dataset.MPC_inputs[time_mask]
-                mpc_costs_at_T = self.dataset.MPC_values[time_mask]
-
+                #time_mask = torch.abs(self.dataset.MPC_inputs[:,0] - T) < 1e-6 # Samples at time T
+                #mpc_coords_at_T = self.dataset.MPC_inputs[time_mask]
+                #mpc_costs_at_T = self.dataset.MPC_values[time_mask]
+                mpc_coords_at_T = self.dataset.MPC_inputs
+                mpc_costs_at_T = self.dataset.MPC_values
+            
+            """
             if time_mask.sum() == 0:
                 print(f"No MPC samples found at time {T:.4f} for convergence test.")
                 converged = False
@@ -117,6 +122,7 @@ class Experiment(ABC):
                     'T': T
                 }
                 return converged, metrics
+            """
 
         # Sample Random subset if too many samples
         available_samples_at_T = mpc_coords_at_T.shape[0]
@@ -227,13 +233,13 @@ class Experiment(ABC):
         """
         if previous_horizon not in self.horizon_checkpoint_map:
             tqdm.write(f"ERROR: No checkpoint found for horizon {previous_horizon:.2f}s")
-            return None
+            return None, None
         
         checkpoint_path = self.horizon_checkpoint_map[previous_horizon]
         
         if not os.path.exists(checkpoint_path):
             tqdm.write(f"ERROR: Checkpoint file not found: {checkpoint_path}")
-            return None
+            return None, None
         
         checkpoint = torch.load(checkpoint_path)
         
@@ -291,15 +297,34 @@ class Experiment(ABC):
                                            (self.dataset.tMax-self.dataset.tMin)/self.dataset.time_till_refinement)*self.dataset.time_till_refinement
         self.use_MPC_terminal_loss = False
 
+        self.num_epochs = epochs
+        actual_epoch = 0
+
         with tqdm(total=len(train_dataloader) * epochs) as pbar:
             train_losses = []
-            for epoch in range(0, epochs):
-                # if current epochs exceed the counter end, then we train with t \in [tMin,tMax]
-                time_interval_length = min(1.0,
-                                           self.dataset.counter/self.dataset.counter_end)*(self.dataset.tMax-self.dataset.tMin)
+            
+            while actual_epoch < epochs:
+                epoch = actual_epoch
 
+                #calculate time interval
+                time_interval_length = min(1.0, self.dataset.counter/self.dataset.counter_end) * \
+                              (self.dataset.tMax - self.dataset.tMin)
+            
                 if self.dataset.refine_dataset:
-                    self.dataset_refinement(time_interval_length, epoch)
+                    returned_epoch = self.dataset_refinement(time_interval_length, epoch)
+                    
+                    # Check if epoch was reset (rollback occurred)
+                    if returned_epoch != epoch:
+                        tqdm.write(f"Epoch rollback detected: {epoch} → {returned_epoch}")
+                        epoch_delta = returned_epoch - epoch  # Negative value
+                        actual_epoch = returned_epoch
+                        
+                        # Adjust progress bar backwards
+                        if epoch_delta < 0:
+                            pbar.n = returned_epoch * len(train_dataloader)
+                            pbar.refresh()
+                        
+                        continue
 
                 # semi-supervised learning
                 for step, (model_input, gt) in enumerate(train_dataloader):
@@ -418,7 +443,7 @@ class Experiment(ABC):
                     self.validate(
                         epoch=epoch+1, save_path=os.path.join(checkpoints_dir, 'BRS_validation_plot_epoch_%04d.png' % (epoch+1)),
                         x_resolution=val_x_resolution, y_resolution=val_y_resolution, z_resolution=val_z_resolution, time_resolution=val_time_resolution)
-
+                actual_epoch += 1
         torch.save(checkpoint, os.path.join(
             checkpoints_dir, 'model_final.pth'))  # save final model
 
@@ -1399,9 +1424,9 @@ class Experiment(ABC):
             # Check convergence every 50 epochs (after minimum 100)
             if self.dataset.pause_counter % 50 == 0 and self.dataset.pause_counter >= 100:
                 converged, metrics = self.test_value_convergence(
-                    num_test_samples = 500,
-                    threshold = 0.1,
-                    success_rate = 0.85)
+                    num_test_samples = 1000,
+                    threshold = 0.05,
+                    success_rate = 0.95)
                 
                 # Log metrics
                 tqdm.write(f"Pause epoch {self.dataset.pause_counter}/{self.dataset.pause_epochs}: "
@@ -1421,7 +1446,7 @@ class Experiment(ABC):
                 # Generate look ahead MPC data when exiting pause (uses current learned policy to generate MPC rollout)
                 next_horizon = self.last_refine_time + self.dataset.time_till_refinement
                 if next_horizon < self.dataset.tMax:
-                    tqdm.write(f"  Generating look-ahead MPC data at T={next_horizon:.2f}s")
+                    tqdm.write(f"Generating look-ahead MPC data from t={time_interval_length:.2f} to T={next_horizon:.2f}s")
                     self.dataset.policy = self.model
                     self.dataset.generate_MPC_dataset(
                         next_horizon,              # T = NEXT milestone (look-ahead)
@@ -1443,9 +1468,9 @@ class Experiment(ABC):
             
                 # Get final convergence metrics
                 converged, metrics = self.test_value_convergence(
-                    num_test_samples=500,
-                    threshold=0.1,
-                    success_rate=0.85
+                    num_test_samples=1000,
+                    threshold=0.05,
+                    success_rate=0.95
                 )
                 convergence_rate = metrics['convergence_rate']
                 current_horizon = self.dataset.paused_horizon
@@ -1468,36 +1493,170 @@ class Experiment(ABC):
                 ##### Convergence acceptable - advance curriculm ####
                 if convergence_rate >= dynamic_threshold:
                     tqdm.write(f"Convergence acceptable - advancing horizon {current_horizon:.2f}s")
-                else:
-                    tqdm.write(f"Max pause epochs reached without full convergence")
-                    tqdm.write(f"Final convergence rate: {metrics['convergence_rate']:.2%}")
-                    tqdm.write(f"Final mean diff: {metrics['mean_diff']:.4f}")
-                
-                self.dataset.is_paused = False
-                self.dataset.pause_counter = 0
-                self.last_refine_time = self.dataset.paused_horizon
 
-                # GENERATE LOOK-AHEAD MPC DATA when exiting pause early (uses current learned policy to generate MPC rollout)
-                next_horizon = self.last_refine_time + self.dataset.time_till_refinement
-                if next_horizon < self.dataset.tMax:
-                    tqdm.write(f"  Generating look-ahead MPC data at T={next_horizon:.2f}s")
+                    # Exit Pause
+                    self.dataset.is_paused = False
+                    self.dataset.pause_counter = 0
+                    self.last_refine_time = self.dataset.paused_horizon
+
+                    # Generate look ahead MPC data when exiting pause (uses current learned policy to generate MPC rollout)
+                    next_horizon = self.last_refine_time + self.dataset.time_till_refinement
+                    if next_horizon < self.dataset.tMax:
+                        tqdm.write(f"Generating look-ahead MPC data from t={time_interval_length:.2f} to T={next_horizon:.2f}s")
+                        self.dataset.policy = self.model
+                        self.dataset.generate_MPC_dataset(
+                            next_horizon,              # T = NEXT milestone (look-ahead)
+                            time_interval_length,      # t = current time
+                            style="random"
+                        )
+                        self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
+                    # Clear verification dataset
+                    self.dataset.MPC_verification_inputs = None
+                    self.dataset.MPC_verification_values = None
+                    self.dataset.verification_horizon = None
+                    return epoch
+
+                #### Convergence test failed -> do partial rollback ####
+                elif rollback_counts['last_type'] != 'partial' and rollback_counts['partial'] < self.max_partial_rollbacks:
+                    tqdm.write(f"Low convergence: {convergence_rate:.2%} < {dynamic_threshold:.2%}")
+                    tqdm.write(f"PARTIAL ROLLBACK #{rollback_counts['partial']+1}/{self.max_partial_rollbacks}")
+
+                    # increment partial rollback counter
+                    rollback_counts['partial'] += 1
+                    rollback_counts['last_type'] = 'partial'
+
+                    # Generate new MPC data [last_horizon, current_horizon] with current policy
+                    tqdm.write(f"Regenerating MPC data from t={previous_horizon:.2f} to T={current_horizon:.2f}s using CURRENT policy")
                     self.dataset.policy = self.model
                     self.dataset.generate_MPC_dataset(
-                        next_horizon,              # T = NEXT milestone (look-ahead)
-                        time_interval_length,      # t = current time
+                        current_horizon,        # T = current_horizon   
+                        previous_horizon,       # t = previous_horizon
                         style="random"
                     )
                     self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
-                # Clear verification dataset
-                self.dataset.MPC_verification_inputs = None
-                self.dataset.MPC_verification_values = None
-                self.dataset.verification_horizon = None
-                return
-        
+
+                    # Rollback epoch and counter to previous horizon
+                    if previous_horizon in self.horizon_epoch_map:
+                        previous_horizon_epoch = self.horizon_epoch_map[previous_horizon]
+                        previous_horizon_counter = self.horizon_counter_map[previous_horizon]
+                    else:
+                        # Fallback if no tracking (shouldn't happen)
+                        tqdm.write(f"WARNING: No epoch/counter mapping for H={previous_horizon:.2f}s, using estimates")
+                        previous_horizon_epoch = max(0, epoch - self.dataset.pause_epochs)
+                        previous_horizon_counter = int(previous_horizon / (self.dataset.tMax - self.dataset.tMin) * self.dataset.counter_end)
+
+                    # Reset curriculum state
+                    self.dataset.counter = previous_horizon_counter
+                    self.dataset.is_paused = False  # Exit pause, resume curriculum
+                    
+                    # Clear stale verification dataset
+                    self.dataset.MPC_verification_inputs = None
+                    self.dataset.MPC_verification_values = None
+                    self.dataset.verification_horizon = None
+                    
+                    tqdm.write(f"Epoch rollback: {epoch} → {previous_horizon_epoch}")
+                    tqdm.write(f"Counter reset: {self.dataset.counter} (curriculum will resume from H={previous_horizon:.2f}s)")
+                    
+                    return previous_horizon_epoch  # Signal epoch rollback
+
+                #### Second Convergance check failed -> do full rollback ####
+                elif rollback_counts['last_type'] == 'partial' and rollback_counts['full'] < self.max_full_rollbacks:
+                    tqdm.write(f"Partial rollback failed, convergence {convergence_rate:.2%} < {dynamic_threshold:.2%}")
+                    tqdm.write(f"FULL ROLLBACK #{rollback_counts['full']+1}/{self.max_full_rollbacks}")
+
+                     # Increment full rollback counter
+                    rollback_counts['full'] += 1
+                    rollback_counts['last_type'] = 'full'
+                    
+                    # Load checkpoint from previous horizon
+                    restored_epoch, restored_counter = self.load_horizon_checkpoint(previous_horizon)
+
+                    # If checkpoint load fails, skip rollback and advance learning
+                    if restored_epoch is None: 
+                        tqdm.write(f"Checkpoint load failed, advancing anyway")
+                        
+                        # Exit Pause
+                        self.dataset.is_paused = False
+                        self.dataset.pause_counter = 0
+                        self.last_refine_time = self.dataset.paused_horizon
+                        
+                        # Generate look ahead MPC data when exiting pause (uses current learned policy to generate MPC rollout)
+                        next_horizon = self.last_refine_time + self.dataset.time_till_refinement
+                        tqdm.write(f"Generating look-ahead MPC data from t={time_interval_length:.2f} to T={next_horizon:.2f}s")
+                        if next_horizon < self.dataset.tMax:
+                            self.dataset.policy = self.model
+                            self.dataset.generate_MPC_dataset(
+                                next_horizon, 
+                                time_interval_length, 
+                                style="random"
+                            )
+                            self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+                        
+                        # Clear stale erification dataset
+                        self.dataset.MPC_verification_inputs = None
+                        self.dataset.MPC_verification_values = None
+                        self.dataset.verification_horizon = None
+                        
+                        return epoch
+                    
+                    # Generate new MPC data [last_horizon, current_horizon] with current policy
+                    tqdm.write(f"Regenerating MPC data from t={previous_horizon:.2f} to T={current_horizon:.2f}s using old policy")
+                    self.dataset.policy = self.model
+                    self.dataset.generate_MPC_dataset(
+                        current_horizon,              # T = NEXT milestone (look-ahead)
+                        previous_horizon,      # t = current time
+                        style="random"
+                    )
+                    self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
+                     # Reset curriculum state
+                    self.dataset.counter = restored_counter
+                    self.dataset.is_paused = False
+                    
+                    # Clear verification dataset
+                    self.dataset.MPC_verification_inputs = None
+                    self.dataset.MPC_verification_values = None
+                    self.dataset.verification_horizon = None
+                    
+                    tqdm.write(f"Full rollback: epoch {epoch} → {restored_epoch}, counter → {restored_counter}")
+                    
+                    return restored_epoch  # Signal epoch reset to previous horizon
+
+                #### Force Advance (Rollbacks failed to improve convergance) ####
+                else:
+                    tqdm.write(f"Max rollbacks reached at {current_horizon:.2f}s")
+                    
+                    # Exit Pause
+                    self.dataset.is_paused = False
+                    self.dataset.pause_counter = 0
+                    self.last_refine_time = self.dataset.paused_horizon
+                    
+                    
+                    next_horizon = self.last_refine_time + self.dataset.time_till_refinement
+                    tqdm.write(f"Generating look-ahead MPC data from t={time_interval_length:.2f} to T={next_horizon:.2f}s")
+                    if next_horizon < self.dataset.tMax:
+                        self.dataset.policy = self.model
+                        self.dataset.generate_MPC_dataset(
+                            next_horizon, 
+                            time_interval_length, 
+                            style="random"
+                        )
+                        self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+                    
+                    self.dataset.MPC_verification_inputs = None
+                    self.dataset.MPC_verification_values = None
+                    self.dataset.verification_horizon = None
+                    
+                    return epoch  # Continue with current epoch
+
         # Check if we have reached the new refinement horizon - ENTER PAUSE
         elif time_interval_length >= (self.last_refine_time + self.dataset.time_till_refinement) and self.dataset.use_MPC:
             # Reached a new horizon (H_R) for refinement
             current_horizon = self.last_refine_time + self.dataset.time_till_refinement
+
+            checkpoints_dir = os.path.join(self.experiment_dir, 'training','checkpoints')
+            self.save_horizon_checkpoint(epoch, current_horizon, checkpoints_dir)
 
             # Enter Pause
             tqdm.write(f"\n=== Reached horizon {current_horizon:.2f}s - PAUSING curriculum for {self.dataset.pause_epochs} epochs ===")
@@ -1512,6 +1671,7 @@ class Experiment(ABC):
                 num_samples = 1000
             )
 
+            # Terminal refinement setup
             if current_horizon >= self.dataset.tMax:
                 # reached final horizon - switch to terminal refinement
                 self.last_refine_time = self.dataset.tMax
@@ -1524,12 +1684,15 @@ class Experiment(ABC):
                 self.dataset.policy = self.model
                 refine_till_t = self.dataset.tMax
                 self.dataset.generate_MPC_dataset(
-                    refine_till_t, refine_till_t, style="terminal")
-                
+                    refine_till_t, 
+                    refine_till_t, 
+                    style="terminal"
+                    )
                 # Recompute sorted indices after dataset regeneration
                 self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0]) 
-            return 
+            return epoch
         
+        # Terminal Refinment regeneration
         if time_interval_length >= self.dataset.tMax and epoch % self.dataset.epoch_till_refinement == 0 and self.dataset.use_MPC:
             # in case we want a long finetuning phase, we regenerate the dataset every epoch_till_refinement epochs
             for g in self.optim.param_groups:
@@ -1542,7 +1705,8 @@ class Experiment(ABC):
             
             # Recompute sorted indices after dataset regeneration
             self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
-            return 
+            return epoch
+        return epoch
 
     def plot_recovery_fig(self, dataset, dynamics, model, delta_level):
         # 1. for ground truth slices (if available), record (higher-res) grid of learned values
