@@ -879,7 +879,7 @@ class Docking13D(Dynamics):
         self.mc = 200.0
         self.w_c = 1.0  # x-dim (m)
         self.h_c = 1.0  # y-dim (m)
-        self.d_c = 1.0  # z-dim (m)  (ASSUMPTION: was planar before, I add thickness)
+        self.d_c = 1.0  # z-dim (m)
         self.chaser_buffer_xy = math.sqrt(self.w_c**2 + self.h_c**2) / 2.0
         self.chaser_buffer_z = self.d_c / 2.0
 
@@ -890,17 +890,17 @@ class Docking13D(Dynamics):
         # Docking tolerances
         self.eps_p = 0.1
         self.eps_v = 0.1
-        self.eps_q = 0.02       # radians, attitude error tolerance (ASSUMPTION: new)
+        self.eps_q = 0.02       # radians, attitude error tolerance #TODO Validate this tolerance
         self.eps_omega = 0.05
         self.v_max = 2.5
 
         # Target geometry (still mainly planar in your code)
         self.w_t = 6.0
         self.h_t = 3.0
-        self.d_t = 3.0          # target "thickness" in z (m) (ASSUMPTION: needed for 3D avoid)
+        self.d_t = 3.0          # target "thickness" in z (m) #TODO Validate this dimension
         self.dock_rad = 1.5
 
-        # Goal: position/velocity zero, attitude = yaw(pi/2), omega=0
+        # Goal: position/velocity zero, attitude = yaw(pi/2), omega=0 #TODO Validate goal attitude - currently 90 deg yaw and 0 roll/pitch
         self.q_goal = self.quat_from_axis_angle(
             torch.tensor([0.0, 0.0, 1.0]), math.pi / 2.0
         )
@@ -917,8 +917,8 @@ class Docking13D(Dynamics):
             self.goal_state = torch.tensor(goal_state)
 
         # BRAT parameters
-        self.reach_fn_weight = 5.0
-        self.avoid_fn_weight = 10.0
+        self.reach_fn_weight = 5.0 #TODO Tune
+        self.avoid_fn_weight = 10.0 #TODO Tune
         self.set_mode = set_mode
 
         if set_mode == 'reach_avoid':
@@ -1010,7 +1010,7 @@ class Docking13D(Dynamics):
         Izz = (m / 12.0) * (wx**2 + hy**2)
         return torch.diag(torch.tensor([Ixx, Iyy, Izz], dtype=torch.float32))
 
-    # ---------- Quaternion utilities (scalar-first) ----------
+    # ---------- Quaternion utilities (scalar-first) ---------- #TODO: Move these into quaternion.py
     def quat_from_axis_angle(self, axis, angle):
         axis = axis / (torch.norm(axis) + 1e-12)
         half = 0.5 * angle
