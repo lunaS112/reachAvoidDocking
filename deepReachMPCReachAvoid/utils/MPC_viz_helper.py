@@ -41,7 +41,7 @@ def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
 
     ax = fig.add_subplot(1, 1, 1 )
     reach_value = dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-    avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+    #avoid_value = dynamics_.avoid_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
 
     BRT_img = costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
     max_value = np.amax(BRT_img[~np.isnan(BRT_img)])
@@ -73,7 +73,7 @@ def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
     ax.contour(X, Y, BRT_img, levels=[level], colors='blue', linewidths=1.5, linestyles='--')
 
     ax.contour(X, Y, reach_value, levels=[0.0], colors='green', linewidths=1.5, linestyles='-')
-    ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-')
+    #ax.contour(X, Y, avoid_value, levels=[0.0], colors='red', linewidths=1.5, linestyles='-')
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -84,7 +84,7 @@ def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
     ax.set_ylabel('py (m)')
     ax.grid(True, alpha=0.3)
     handles = [mpatches.Patch(color='green', linestyle='-', label='Reach Set'),
-                mpatches.Patch(color='red', label='Avoid Set'),
+                #mpatches.Patch(color='red', label='Avoid Set'),
                 mpatches.Patch(color='black', label='0 Level Set'),
                 mpatches.Patch(color='blue', label=f'{level} Level Set')]
     ax.legend(handles=handles)

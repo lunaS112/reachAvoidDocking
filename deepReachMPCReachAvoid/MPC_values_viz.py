@@ -21,18 +21,18 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 10
-    dt = 0.2
+    T = 6
+    dt = 0.5
     style = "receding" # Can be "direct" or "receding"
-    cost_type = "mixed" # Can be "reachability", "classic_mpc", or "mixed"
-    mpc_percentage = 0.7  # Used only if cost_type is "mixed"
+    cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
+    mpc_percentage = 0.8  # Used only if cost_type is "mixed"
         # Resolution for BRT computation
-    x_res = 151
-    y_res = 151
-    vx_res = 151
-    vy_res = 151
-    theta_res = 151
-    omega_res = 151
+    x_res = 101
+    y_res = 101
+    vx_res = 101
+    vy_res = 101
+    theta_res = 101
+    omega_res = 101
     resolutions = [x_res, y_res, vx_res, vy_res, theta_res, omega_res]
     
     # Save definition root
@@ -60,30 +60,30 @@ if __name__ == "__main__":
     interesting_ics = []
     interesting_ics.append(torch.tensor([0.5, -0.5, 0, 0, np.pi/4, 0]).to(device))  
     interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
-    interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
-    interesting_ics.append(torch.tensor([-1.0, -1.0, 0, 0, np.pi/3, 0]).to(device))
+    #interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
+    #interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
+    #interesting_ics.append(torch.tensor([-1.0, -1.0, 0, 0, np.pi/3, 0]).to(device))
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     print("Plotting BRT and Reach Avoid sets...")
     viz.plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution=x_res, y_resolution=y_res, x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, save_def=save_def)
     viz.plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution=x_res, y_resolution=y_res, x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, save_def=save_def)
-    viz.plotMPCTrajectories(mpc, interesting_ics_tensor, T, save_def=save_def, max_trajs=5)
+    #viz.plotMPCTrajectories(mpc, interesting_ics_tensor, T, save_def=save_def, max_trajs=5)
 
     print("Generating BRT slice plots...")
     print("Generating Position BRT")
-    viz.plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_res, y_res, T,
-        save_def=save_def,level_sets=[0.0, 0.1, 0.15])
+    #viz.plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_res, y_res, T,
+    #    save_def=save_def,level_sets=[0.0, 0.1, 0.15])
     print("Generating Velocity BRT")
-    viz.plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, vx_res, vy_res, T,
-        save_def=save_def,level_sets=[0.0, 0.1, 0.15])
+    #viz.plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, vx_res, vy_res, T,
+    #    save_def=save_def,level_sets=[0.0, 0.1, 0.15])
     print("Generating Rotation BRT")
-    viz.plotBRTRotation(mpc, interesting_ics_tensor, brt_data, theta_res, omega_res, T,
-        save_def=save_def,level_sets=[0.0, 0.1, 0.15])
-    print("Generating MPC Controls Histograms")
-    viz.plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6, save_def=save_def)
+    #viz.plotBRTRotation(mpc, interesting_ics_tensor, brt_data, theta_res, omega_res, T,
+    #    save_def=save_def,level_sets=[0.0, 0.1, 0.15])
+    #print("Generating MPC Controls Histograms")
+    #viz.plotMPCControls(mpc, interesting_ics_tensor, T, max_trajs=6, save_def=save_def)
     print("Images saved successfully!")
 
     print("Animating MPC trajectory")
-    animation = traj_anim.animate_trajectory(mpc, interesting_ics_tensor, T, dt, save_def=save_def)
+    #animation = traj_anim.animate_trajectory(mpc, interesting_ics_tensor, T, dt, save_def=save_def)
 
