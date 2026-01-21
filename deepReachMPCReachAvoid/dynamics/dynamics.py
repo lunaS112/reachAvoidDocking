@@ -955,6 +955,11 @@ class Docking13D(Dynamics):
             [-self.tau_bar, self.tau_bar],  # tz
         ]).cuda()
 
+        # MPC initialization parameters
+        self.eps_var = torch.tensor([self.F_bar, self.F_bar, self.F_bar, 
+                                     self.tau_bar, self.tau_bar, self.tau_bar]).cuda()
+        self.control_init = torch.zeros(6).cuda()  # Initial control guess for MPC
+
         # Normalization
         state_mean_ = (self.state_range_[:, 0] + self.state_range_[:, 1]) / 2.0
         state_var_  = (self.state_range_[:, 1] - self.state_range_[:, 0]) / 2.0
@@ -1077,6 +1082,47 @@ class Docking13D(Dynamics):
         # Identity transform (no periodic theta anymore)
         return input.cuda()
 
+    def sample_target_state(self, num_samples):
+        """Sample states near the docking region for training/testing."""
+        target_state_range = self.state_test_range()
+        
+        # Position: focus near docking region
+        target_state_range[0] = [-2.0, 2.0]  # x
+        target_state_range[1] = [-2.0, 2.0]  # y
+        target_state_range[2] = [-1.0, 1.0]  # z
+        
+        # Velocity: keep small velocities near docking
+        target_state_range[3] = [-0.5, 0.5]  # vx
+        target_state_range[4] = [-0.5, 0.5]  # vy
+        target_state_range[5] = [-0.5, 0.5]  # vz
+        
+        # Quaternion: sample near goal quaternion
+        # For simplicity, we'll set to goal and add small perturbations after
+        target_state_range[6] = [0.5, 1.0]   # q0 (keep positive for consistency)
+        target_state_range[7] = [-0.5, 0.5]  # q1
+        target_state_range[8] = [-0.5, 0.5]  # q2
+        target_state_range[9] = [-0.5, 0.5]  # q3
+        
+        # Angular velocity: keep small
+        target_state_range[10] = [-0.3, 0.3]  # wx
+        target_state_range[11] = [-0.3, 0.3]  # wy
+        target_state_range[12] = [-0.3, 0.3]  # wz
+        
+        # Convert to tensor
+        target_state_range = torch.tensor(target_state_range)
+        
+        # Sample uniformly within the target ranges
+        sampled_states = target_state_range[:, 0] + torch.rand(num_samples, self.state_dim) * (
+            target_state_range[:, 1] - target_state_range[:, 0]
+        )
+        
+        # Normalize quaternions
+        q = sampled_states[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        sampled_states[:, 6:10] = q
+        
+        return sampled_states
+    
     # ---------- 13D dynamics ----------
     def dsdt(self, state, control, disturbance):
         """
