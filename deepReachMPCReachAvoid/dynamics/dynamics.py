@@ -558,7 +558,7 @@ class Docking6D(Dynamics):
         # Define state/control space
         self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-4, 4], [-4, 4], [-0.2 , 0.2], [-0.2 , 0.2], [-math.pi, math.pi], [-0.5, 0.5]]).cuda()
+            [[-15, 15], [-15, 15], [-2.5 , 2.5], [-2.5 , 2.5], [-math.pi, math.pi], [-0.5, 0.5]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
