@@ -465,52 +465,59 @@ class DockingGame:
             p2, _ = self.renderer.project_point([grid_size, i, 0])
             pygame.draw.line(self.screen, self.GRID_COLOR, p1, p2, 1)
     
-    def draw_docking_arrow(self, position, quaternion, direction, arrow_color, length=0.8):
+    def draw_docking_arrow(self, position, quaternion, face_normal_body, arrow_color, size, length=0.4):
         """
-        Draw an arrow on the docking face to indicate required orientation.
+        Draw an arrow ON the docking face to indicate required orientation.
+        The arrow is drawn flat on the face surface.
         
         Args:
             position: center position of the spacecraft
             quaternion: orientation quaternion
-            direction: direction the arrow points (in body frame)
+            face_normal_body: normal direction of the face in body frame (+X or -X)
             arrow_color: color of the arrow
-            length: arrow length
+            size: half-size of the spacecraft (to position arrow on face)
+            length: arrow length on the face
         """
         R = self.dynamics.quat_to_rotation_matrix(quaternion)
         
-        # Arrow starts at face center offset, points in the 'up' direction on that face
-        # For +X face (chaser), arrow points in +Z body direction
-        # For -X face (target), arrow also points in +Z body direction
+        # Face normal in world frame
+        face_normal = R @ face_normal_body
         
-        # Face normal direction
-        face_normal = R @ direction
+        # Arrow points in +Z direction in body frame ("up" on the face)
+        # This ensures both arrows point the same way when spacecraft are aligned
+        arrow_dir_body = np.array([0, 0, 1])
+        arrow_dir = R @ arrow_dir_body
         
-        # Arrow 'up' direction on the face (use Z-axis of body frame)
-        arrow_up = R @ np.array([0, 0, 1])
+        # Arrow perpendicular direction (for arrowhead) - use Y axis
+        arrow_perp_body = np.array([0, 1, 0])
+        arrow_perp = R @ arrow_perp_body
         
-        # Arrow base position (slightly offset from face)
-        face_offset = 0.55 if np.linalg.norm(position) < 0.1 else 0.55  # Adjust for target vs chaser
-        arrow_base = position + face_normal * face_offset
+        # Position arrow on the face (offset by face size)
+        face_center = position + face_normal * (size + 0.01)  # Slightly above face
         
-        # Arrow tip
-        arrow_tip = arrow_base + arrow_up * length
+        # Arrow geometry
+        arrow_base = face_center - arrow_dir * (length * 0.5)
+        arrow_tip = face_center + arrow_dir * (length * 0.5)
         
-        # Arrow head (two small lines)
-        arrow_head_len = length * 0.3
-        head_right = R @ np.array([0, 0.3, -0.3])
-        head_left = R @ np.array([0, -0.3, -0.3])
-        head_right = arrow_tip + head_right * arrow_head_len
-        head_left = arrow_tip + head_left * arrow_head_len
+        # Arrowhead
+        head_size = length * 0.35
+        head_right = arrow_tip - arrow_dir * head_size + arrow_perp * (head_size * 0.5)
+        head_left = arrow_tip - arrow_dir * head_size - arrow_perp * (head_size * 0.5)
         
         # Project and draw
-        base_2d, _ = self.renderer.project_point(arrow_base)
-        tip_2d, _ = self.renderer.project_point(arrow_tip)
+        base_2d, depth_base = self.renderer.project_point(arrow_base)
+        tip_2d, depth_tip = self.renderer.project_point(arrow_tip)
         hr_2d, _ = self.renderer.project_point(head_right)
         hl_2d, _ = self.renderer.project_point(head_left)
+        
+        # Return depth for sorting
+        avg_depth = (depth_base + depth_tip) / 2
         
         pygame.draw.line(self.screen, arrow_color, base_2d, tip_2d, 4)
         pygame.draw.line(self.screen, arrow_color, tip_2d, hr_2d, 4)
         pygame.draw.line(self.screen, arrow_color, tip_2d, hl_2d, 4)
+        
+        return avg_depth
     
     def draw_target_satellite(self):
         """Draw the target satellite at origin with docking side highlighted."""
@@ -554,8 +561,12 @@ class DockingGame:
             pygame.draw.polygon(self.screen, self.TARGET_EDGE, points, 2)
         
         # Draw red arrow on target docking face (-X direction)
+        # Arrow points in +Z body direction so it aligns with chaser's arrow when docked
         self.draw_docking_arrow(self.target_position, self.target_quaternion, 
-                                np.array([-1, 0, 0]), self.AXIS_X, length=0.6)
+                                np.array([-1, 0, 0]), self.AXIS_X, size=s, length=0.5)
+        
+        # Return average depth for draw ordering
+        return sum(depths) / len(depths)
     
     def draw_cube(self, position, quaternion, color, edge_color, dock_color=None, draw_dock_arrow=False):
         """Draw the spacecraft cube with optional docking face highlight."""
@@ -591,8 +602,12 @@ class DockingGame:
             pygame.draw.polygon(self.screen, edge_color, points, 2)
         
         # Draw red arrow on chaser docking face (+X direction)
+        # Arrow points in +Z body direction so it aligns with target's arrow when docked
         if draw_dock_arrow:
-            self.draw_docking_arrow(position, quaternion, np.array([1, 0, 0]), self.AXIS_X, length=0.5)
+            self.draw_docking_arrow(position, quaternion, np.array([1, 0, 0]), self.AXIS_X, size=0.5, length=0.4)
+        
+        # Return average depth for draw ordering
+        return sum(depths) / len(depths)
     
     def draw_body_axes(self, position, quaternion, length=1.5):
         """Draw body frame axes."""
@@ -860,9 +875,6 @@ class DockingGame:
             
             self.draw_grid()
             
-            # Draw target satellite first (may be behind chaser)
-            self.draw_target_satellite()
-            
             pos = self.state[0:3]
             quat = self.state[6:10]
             
@@ -870,8 +882,23 @@ class DockingGame:
             edge_color = (30, 180, 70) if self.success else self.CHASER_EDGE
             dock_color = self.CHASER_DOCK_COLOR if not self.success else self.SUCCESS_COLOR
             
-            self.draw_cube(pos, quat, color, edge_color, dock_color, draw_dock_arrow=True)
-            self.draw_body_axes(pos, quat)
+            # Calculate depths for proper draw ordering (painter's algorithm)
+            # Get depth of each spacecraft center from camera
+            _, target_depth = self.renderer.project_point(self.target_position)
+            _, chaser_depth = self.renderer.project_point(pos)
+            
+            # Draw farther object first (higher depth value = farther from camera)
+            if target_depth > chaser_depth:
+                # Target is farther, draw it first
+                self.draw_target_satellite()
+                self.draw_cube(pos, quat, color, edge_color, dock_color, draw_dock_arrow=True)
+                self.draw_body_axes(pos, quat)
+            else:
+                # Chaser is farther, draw it first
+                self.draw_cube(pos, quat, color, edge_color, dock_color, draw_dock_arrow=True)
+                self.draw_body_axes(pos, quat)
+                self.draw_target_satellite()
+            
             self.draw_hud()
             
             pygame.display.flip()
