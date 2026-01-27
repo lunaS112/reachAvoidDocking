@@ -198,6 +198,26 @@ class Simple3DRenderer:
         
         return Rx @ Rz
     
+    def get_camera_position(self):
+        """Get camera position in world coordinates.
+        
+        With azimuth=0, elevation=0: camera at (0, +Y, 0) looking at origin.
+        Azimuth rotates around Z: positive azimuth rotates camera position CCW when viewed from +Z.
+        Elevation tilts: positive elevation moves camera up (+Z).
+        """
+        elev = math.radians(self.camera_elevation)
+        azim = math.radians(self.camera_azimuth)
+        
+        # Spherical coordinates
+        # azimuth=0 → camera on +Y axis
+        # azimuth=90 → camera on -X axis (CCW rotation in XY plane)
+        # azimuth=-90 → camera on +X axis
+        x = -self.camera_distance * math.sin(azim) * math.cos(elev)
+        y = self.camera_distance * math.cos(azim) * math.cos(elev)
+        z = self.camera_distance * math.sin(elev)
+        
+        return np.array([x, y, z])
+    
     def project_point(self, point_3d):
         """Project 3D point to 2D screen coordinates."""
         R = self.get_camera_matrix()
@@ -282,18 +302,31 @@ class DockingGame:
         ]
         
         # Cube faces (for filled rendering)
-        # Face indices: 0=back(-X), 1=front(+X), 2=bottom(-Y), 3=top(+Y), 4=left(-Z), 5=right(+Z)
+        # Vertices 0-3 have z=-s, vertices 4-7 have z=+s
+        # Face indices: 0=back(-Z), 1=front(+Z), 2=bottom(-Y), 3=top(+Y), 4=left(-X), 5=right(+X)
         self.cube_faces = [
-            (0, 1, 2, 3),  # back  (-X face)
-            (4, 5, 6, 7),  # front (+X face) - DOCKING SIDE
+            (0, 1, 2, 3),  # back  (-Z face) - TARGET DOCKING SIDE (yellow)
+            (4, 5, 6, 7),  # front (+Z face) - CHASER DOCKING SIDE (green)
             (0, 1, 5, 4),  # bottom (-Y)
             (2, 3, 7, 6),  # top (+Y)
-            (0, 3, 7, 4),  # left (-Z)
-            (1, 2, 6, 5),  # right (+Z)
+            (0, 3, 7, 4),  # left (-X)
+            (1, 2, 6, 5),  # right (+X)
         ]
         
-        # Docking face index (front face = +X direction)
+        # Face normals in body frame (for backface culling)
+        self.face_normals = [
+            np.array([0, 0, -1]),  # face 0: -Z
+            np.array([0, 0, 1]),   # face 1: +Z
+            np.array([0, -1, 0]),  # face 2: -Y
+            np.array([0, 1, 0]),   # face 3: +Y
+            np.array([-1, 0, 0]),  # face 4: -X
+            np.array([1, 0, 0]),   # face 5: +X
+        ]
+        
+        # Docking face index (front face = +Z direction for chaser)
         self.docking_face_idx = 1
+        # Target docking face index (-Z direction)
+        self.target_docking_face_idx = 0
         
         # Target satellite (static at origin)
         self.target_position = np.array([0.0, 0.0, 0.0])
@@ -484,9 +517,14 @@ class DockingGame:
         # Face normal in world/LVLH frame
         face_normal = R @ face_normal_body
         
-        # Get camera direction (from target to camera)
+        # Get camera position in world coordinates
+        # Camera matrix rotates world->camera, so transpose gives camera->world
         cam_matrix = self.renderer.get_camera_matrix()
-        camera_pos = cam_matrix @ np.array([0, 0, self.renderer.camera_distance])
+        cam_matrix_inv = cam_matrix.T  # Inverse of rotation = transpose
+        # Camera is at [0, 0, distance] in camera space, transform to world
+        camera_pos = cam_matrix_inv @ np.array([0, 0, self.renderer.camera_distance])
+        
+        # Vector from face center to camera
         face_center_world = position + face_normal * size
         view_dir = camera_pos - face_center_world
         view_dir = view_dir / (np.linalg.norm(view_dir) + 1e-8)
@@ -541,6 +579,7 @@ class DockingGame:
             [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]
         ])
         
+        R = self.dynamics.quat_to_rotation_matrix(self.target_quaternion)
         vertices = self.transform_vertices(target_vertices, self.target_position, self.target_quaternion)
         
         # Project all vertices
@@ -548,23 +587,20 @@ class DockingGame:
         pts_2d = [p[0] for p in projected]
         depths = [p[1] for p in projected]
         
-        # Draw faces with painter's algorithm
+        # Draw faces with painter's algorithm (depth sorting)
         face_depths = []
         for i, face in enumerate(self.cube_faces):
             avg_depth = sum(depths[v] for v in face) / 4
             face_depths.append((avg_depth, i, face))
         
-        face_depths.sort(reverse=True)
-        
-        # Target docking face is the BACK face (face 0, -X direction)
-        target_docking_face_idx = 0
+        face_depths.sort(reverse=True)  # Draw far faces first
         
         for depth, idx, face in face_depths:
             points = [pts_2d[v] for v in face]
             shade_idx = [d[1] for d in face_depths].index(idx)
             shade = 0.5 + 0.5 * (shade_idx / len(face_depths))
             
-            if idx == target_docking_face_idx:
+            if idx == self.target_docking_face_idx:
                 base_color = self.TARGET_DOCK_COLOR
             else:
                 base_color = self.TARGET_COLOR
@@ -584,13 +620,14 @@ class DockingGame:
     def draw_cube(self, position, quaternion, color, edge_color, dock_color=None, draw_dock_arrow=False):
         """Draw the spacecraft cube with optional docking face highlight."""
         vertices = self.transform_vertices(self.cube_vertices, position, quaternion)
+        R = self.dynamics.quat_to_rotation_matrix(quaternion)
         
         # Project all vertices
         projected = self.renderer.project_points(vertices)
         pts_2d = [p[0] for p in projected]
         depths = [p[1] for p in projected]
         
-        # Draw faces (painter's algorithm - sort by depth)
+        # Draw faces with painter's algorithm (depth sorting)
         face_depths = []
         for i, face in enumerate(self.cube_faces):
             avg_depth = sum(depths[v] for v in face) / 4
@@ -604,7 +641,7 @@ class DockingGame:
             shade_idx = [d[1] for d in face_depths].index(idx)
             shade = 0.5 + 0.5 * (shade_idx / len(face_depths))
             
-            # Use docking color for the docking face (front face, +X)
+            # Use docking color for the docking face (+Z)
             if dock_color is not None and idx == self.docking_face_idx:
                 base_color = dock_color
             else:
@@ -614,10 +651,9 @@ class DockingGame:
             pygame.draw.polygon(self.screen, shaded_color, points)
             pygame.draw.polygon(self.screen, edge_color, points, 2)
         
-        # Draw red arrow on chaser docking face (+X direction)
-        # Arrow points in +Z body direction so it aligns with target's arrow when docked
+        # Draw red arrow on chaser docking face (+Z direction)
         if draw_dock_arrow:
-            self.draw_docking_arrow(position, quaternion, np.array([1, 0, 0]), self.AXIS_X, size=0.5, length=0.4)
+            self.draw_docking_arrow(position, quaternion, np.array([0, 0, 1]), self.AXIS_X, size=0.5, length=0.4)
         
         # Return average depth for draw ordering
         return sum(depths) / len(depths)
@@ -648,17 +684,17 @@ class DockingGame:
         Get the center positions of the docking faces for both spacecraft.
         
         Returns:
-            chaser_dock_pos: position of chaser's docking face center (+X face)
-            target_dock_pos: position of target's docking face center (-X face)
+            chaser_dock_pos: position of chaser's docking face center (+Z face)
+            target_dock_pos: position of target's docking face center (-Z face)
         """
-        # Chaser docking face is +X in body frame
+        # Chaser docking face is +Z in body frame
         R_chaser = self.dynamics.quat_to_rotation_matrix(self.state[6:10])
-        chaser_dock_normal = R_chaser @ np.array([1, 0, 0])
+        chaser_dock_normal = R_chaser @ np.array([0, 0, 1])
         chaser_dock_pos = self.state[0:3] + chaser_dock_normal * 0.5  # 0.5 = half chaser size
         
-        # Target docking face is -X in body frame
+        # Target docking face is -Z in body frame
         R_target = self.dynamics.quat_to_rotation_matrix(self.target_quaternion)
-        target_dock_normal = R_target @ np.array([-1, 0, 0])
+        target_dock_normal = R_target @ np.array([0, 0, -1])
         target_dock_pos = self.target_position + target_dock_normal * (self.target_size / 2)
         
         return chaser_dock_pos, target_dock_pos
@@ -827,6 +863,70 @@ class DockingGame:
             reason_rect = reason_text.get_rect(center=(self.width//2, 80))
             self.screen.blit(reason_text, reason_rect)
     
+    def draw_axis_indicator(self):
+        """Draw a 3D axis indicator in the bottom right corner (like Solidworks)."""
+        # Position in bottom right
+        cx = self.width - 80
+        cy = self.height - 80
+        axis_length = 50
+        
+        # Get camera rotation matrix
+        cam_matrix = self.renderer.get_camera_matrix()
+        
+        # Define axis endpoints in world frame
+        axes = [
+            (np.array([1, 0, 0]), self.AXIS_X, "X"),  # X - red
+            (np.array([0, 1, 0]), self.AXIS_Y, "Y"),  # Y - green
+            (np.array([0, 0, 1]), self.AXIS_Z, "Z"),  # Z - blue
+        ]
+        
+        # Transform and project each axis
+        axis_data = []
+        for axis_dir, color, label in axes:
+            # Rotate by camera matrix
+            rotated = cam_matrix @ axis_dir
+            # Simple projection (just use x and y, ignore z for this indicator)
+            x_2d = cx + rotated[0] * axis_length
+            y_2d = cy - rotated[1] * axis_length  # Flip Y for screen coords
+            depth = rotated[2]  # For drawing order
+            axis_data.append((depth, (cx, cy), (int(x_2d), int(y_2d)), color, label))
+        
+        # Sort by depth (draw far axes first)
+        axis_data.sort(key=lambda x: x[0])
+        
+        # Draw background circle
+        pygame.draw.circle(self.screen, (30, 35, 50), (cx, cy), 65)
+        pygame.draw.circle(self.screen, (60, 70, 90), (cx, cy), 65, 2)
+        
+        # Draw axes
+        for depth, origin, end, color, label in axis_data:
+            # Draw axis line
+            pygame.draw.line(self.screen, color, origin, end, 3)
+            # Draw arrowhead
+            dx = end[0] - origin[0]
+            dy = end[1] - origin[1]
+            length = (dx**2 + dy**2)**0.5
+            if length > 5:
+                # Normalize direction
+                dx, dy = dx/length, dy/length
+                # Arrowhead
+                head_size = 8
+                perp_x, perp_y = -dy, dx
+                tip = end
+                left = (int(end[0] - dx*head_size + perp_x*head_size*0.5),
+                       int(end[1] - dy*head_size + perp_y*head_size*0.5))
+                right = (int(end[0] - dx*head_size - perp_x*head_size*0.5),
+                        int(end[1] - dy*head_size - perp_y*head_size*0.5))
+                pygame.draw.polygon(self.screen, color, [tip, left, right])
+            
+            # Draw label
+            label_offset = 12
+            label_x = int(end[0] + dx * label_offset) if length > 5 else end[0]
+            label_y = int(end[1] + dy * label_offset) if length > 5 else end[1]
+            label_text = self.font.render(label, True, color)
+            label_rect = label_text.get_rect(center=(label_x, label_y))
+            self.screen.blit(label_text, label_rect)
+    
     def run(self):
         """Main game loop."""
         print("\n" + "="*60)
@@ -867,6 +967,31 @@ class DockingGame:
                     elif event.key == pygame.K_r:
                         self.reset()
                         print("Game reset!")
+                    # Camera view shortcuts (pairs differ by 180° rotation)
+                    # 1/2: Z-axis views (1 sees yellow/-Z face, 2 sees green/+Z face)
+                    elif event.key == pygame.K_1:  # Looking at -Z face (yellow)
+                        self.renderer.camera_azimuth = 0
+                        self.renderer.camera_elevation = -90
+                    elif event.key == pygame.K_2:  # Looking at +Z face (green) - 180° about Y
+                        self.renderer.camera_azimuth = 0
+                        self.renderer.camera_elevation = 90
+                    # 3/4: X-axis views
+                    elif event.key == pygame.K_3:  # Looking at -X face
+                        self.renderer.camera_azimuth = 90
+                        self.renderer.camera_elevation = 0
+                    elif event.key == pygame.K_4:  # Looking at +X face - 180° about Y
+                        self.renderer.camera_azimuth = -90
+                        self.renderer.camera_elevation = 0
+                    # 5/6: Y-axis views
+                    elif event.key == pygame.K_5:  # Looking at -Y face
+                        self.renderer.camera_azimuth = 180
+                        self.renderer.camera_elevation = 0
+                    elif event.key == pygame.K_6:  # Looking at +Y face - 180° about Y
+                        self.renderer.camera_azimuth = 0
+                        self.renderer.camera_elevation = 0
+                    elif event.key == pygame.K_7:  # Isometric view
+                        self.renderer.camera_azimuth = 45
+                        self.renderer.camera_elevation = 35
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1 or event.button == 3:
                         mouse_dragging = True
@@ -878,9 +1003,9 @@ class DockingGame:
                         current_pos = pygame.mouse.get_pos()
                         dx = current_pos[0] - last_mouse_pos[0]
                         dy = current_pos[1] - last_mouse_pos[1]
-                        self.renderer.camera_azimuth += dx * 0.5
-                        # Allow full 360 degree rotation (inverted vertical)
-                        self.renderer.camera_elevation -= dy * 0.5
+                        self.renderer.camera_azimuth -= dx * 0.5
+                        # Allow full 360 degree rotation
+                        self.renderer.camera_elevation += dy * 0.5
                         # Wrap elevation to stay in reasonable range
                         self.renderer.camera_elevation = self.renderer.camera_elevation % 360
                         if self.renderer.camera_elevation > 180:
@@ -940,6 +1065,7 @@ class DockingGame:
                 self.draw_target_satellite()
             
             self.draw_hud()
+            self.draw_axis_indicator()
             
             pygame.display.flip()
             self.clock.tick(60)
