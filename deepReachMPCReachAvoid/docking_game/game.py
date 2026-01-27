@@ -467,33 +467,46 @@ class DockingGame:
     
     def draw_docking_arrow(self, position, quaternion, face_normal_body, arrow_color, size, length=0.4):
         """
-        Draw an arrow ON the docking face to indicate required orientation.
-        The arrow is drawn flat on the face surface.
+        Draw an arrow ON the docking face pointing in a direction on the face.
+        The arrow lies flat on the docking face surface.
+        Only draws if the face is visible (facing the camera).
         
         Args:
             position: center position of the spacecraft
             quaternion: orientation quaternion
-            face_normal_body: normal direction of the face in body frame (+X or -X)
+            face_normal_body: normal direction of the face in body frame
             arrow_color: color of the arrow
             size: half-size of the spacecraft (to position arrow on face)
             length: arrow length on the face
         """
         R = self.dynamics.quat_to_rotation_matrix(quaternion)
         
-        # Face normal in world frame
+        # Face normal in world/LVLH frame
         face_normal = R @ face_normal_body
         
-        # Arrow points in +Z direction in body frame ("up" on the face)
-        # This ensures both arrows point the same way when spacecraft are aligned
-        arrow_dir_body = np.array([0, 0, 1])
+        # Get camera direction (from target to camera)
+        cam_matrix = self.renderer.get_camera_matrix()
+        camera_pos = cam_matrix @ np.array([0, 0, self.renderer.camera_distance])
+        face_center_world = position + face_normal * size
+        view_dir = camera_pos - face_center_world
+        view_dir = view_dir / (np.linalg.norm(view_dir) + 1e-8)
+        
+        # Check if face is visible (facing the camera)
+        dot = np.dot(face_normal, view_dir)
+        if dot < 0:
+            # Face is pointing away from camera, don't draw arrow
+            return None
+        
+        # Arrow points in +Y body direction ("up" on the -Z face in the X-Y plane)
+        arrow_dir_body = np.array([0, 1, 0])
         arrow_dir = R @ arrow_dir_body
         
-        # Arrow perpendicular direction (for arrowhead) - use Y axis
-        arrow_perp_body = np.array([0, 1, 0])
+        # Arrow perpendicular direction (for arrowhead) - use X body axis
+        arrow_perp_body = np.array([1, 0, 0])
         arrow_perp = R @ arrow_perp_body
         
-        # Position arrow on the face (offset by face size)
-        face_center = position + face_normal * (size + 0.01)  # Slightly above face
+        # Position arrow on the face (offset by face size in face_normal direction)
+        face_center = position + face_normal * (size + 0.02)  # Slightly above face
         
         # Arrow geometry
         arrow_base = face_center - arrow_dir * (length * 0.5)
@@ -560,10 +573,10 @@ class DockingGame:
             pygame.draw.polygon(self.screen, shaded_color, points)
             pygame.draw.polygon(self.screen, self.TARGET_EDGE, points, 2)
         
-        # Draw red arrow on target docking face (-X direction)
-        # Arrow points in +Z body direction so it aligns with chaser's arrow when docked
+        # Draw red arrow on target docking face (-Z direction, the yellow face in X-Y plane)
+        # Arrow points in +Y body direction
         self.draw_docking_arrow(self.target_position, self.target_quaternion, 
-                                np.array([-1, 0, 0]), self.AXIS_X, size=s, length=0.5)
+                                np.array([0, 0, -1]), self.AXIS_X, size=s, length=0.5)
         
         # Return average depth for draw ordering
         return sum(depths) / len(depths)
@@ -630,12 +643,36 @@ class DockingGame:
         end_z_2d, _ = self.renderer.project_point(end_z)
         pygame.draw.line(self.screen, self.AXIS_Z, origin, end_z_2d, 3)
     
+    def get_docking_face_positions(self):
+        """
+        Get the center positions of the docking faces for both spacecraft.
+        
+        Returns:
+            chaser_dock_pos: position of chaser's docking face center (+X face)
+            target_dock_pos: position of target's docking face center (-X face)
+        """
+        # Chaser docking face is +X in body frame
+        R_chaser = self.dynamics.quat_to_rotation_matrix(self.state[6:10])
+        chaser_dock_normal = R_chaser @ np.array([1, 0, 0])
+        chaser_dock_pos = self.state[0:3] + chaser_dock_normal * 0.5  # 0.5 = half chaser size
+        
+        # Target docking face is -X in body frame
+        R_target = self.dynamics.quat_to_rotation_matrix(self.target_quaternion)
+        target_dock_normal = R_target @ np.array([-1, 0, 0])
+        target_dock_pos = self.target_position + target_dock_normal * (self.target_size / 2)
+        
+        return chaser_dock_pos, target_dock_pos
+    
     def draw_hud(self):
         """Draw heads-up display."""
         pos = self.state[0:3]
         vel = self.state[3:6]
         omega = self.state[10:13]
         roll, pitch, yaw = self.quat_to_euler(self.state[6:10])
+        
+        # Calculate docking face distance
+        chaser_dock_pos, target_dock_pos = self.get_docking_face_positions()
+        dock_face_dist = chaser_dock_pos - target_dock_pos
         
         # Top-left: basic info
         lines = [
@@ -656,25 +693,25 @@ class DockingGame:
             self.screen.blit(text, (20, y))
             y += 20
             
-        # Bottom-left: Distance to target panel
+        # Bottom-left: Distance to target panel (dock face to dock face)
         panel_y = self.height - 180
         panel_x = 20
         
         # Draw panel background
-        panel_rect = pygame.Rect(panel_x - 5, panel_y - 5, 220, 170)
+        panel_rect = pygame.Rect(panel_x - 5, panel_y - 5, 250, 170)
         pygame.draw.rect(self.screen, (30, 35, 50), panel_rect)
         pygame.draw.rect(self.screen, (60, 70, 90), panel_rect, 2)
         
         # Title
-        title = self.font.render("DISTANCE TO TARGET", True, self.TEXT_COLOR)
+        title = self.font.render("DOCK FACE DISTANCE", True, self.TEXT_COLOR)
         self.screen.blit(title, (panel_x, panel_y))
         panel_y += 25
         
-        # Position errors with colored axis labels
+        # Docking face position errors with colored axis labels
         dist_items = [
-            ("X:", pos[0], "m", self.AXIS_X),
-            ("Y:", pos[1], "m", self.AXIS_Y),
-            ("Z:", pos[2], "m", self.AXIS_Z),
+            ("X:", dock_face_dist[0], "m", self.AXIS_X),
+            ("Y:", dock_face_dist[1], "m", self.AXIS_Y),
+            ("Z:", dock_face_dist[2], "m", self.AXIS_Z),
         ]
         
         for label, value, unit, color in dist_items:
@@ -842,9 +879,12 @@ class DockingGame:
                         dx = current_pos[0] - last_mouse_pos[0]
                         dy = current_pos[1] - last_mouse_pos[1]
                         self.renderer.camera_azimuth += dx * 0.5
-                        self.renderer.camera_elevation = np.clip(
-                            self.renderer.camera_elevation + dy * 0.5, -89, 89
-                        )
+                        # Allow full 360 degree rotation (inverted vertical)
+                        self.renderer.camera_elevation -= dy * 0.5
+                        # Wrap elevation to stay in reasonable range
+                        self.renderer.camera_elevation = self.renderer.camera_elevation % 360
+                        if self.renderer.camera_elevation > 180:
+                            self.renderer.camera_elevation -= 360
                         last_mouse_pos = current_pos
                 elif event.type == pygame.MOUSEWHEEL:
                     self.renderer.camera_distance = np.clip(
