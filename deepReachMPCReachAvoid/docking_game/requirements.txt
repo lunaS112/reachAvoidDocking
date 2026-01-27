@@ -1,0 +1,3 @@
+# Requirements for 13D Docking Game
+pygame>=2.5.0
+numpy>=1.21.0
