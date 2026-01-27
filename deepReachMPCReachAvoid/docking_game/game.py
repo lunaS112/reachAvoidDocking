@@ -300,6 +300,13 @@ class DockingGame:
         self.target_quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # Identity
         self.target_size = 1.5  # Slightly larger than chaser
         
+        # Docking/collision tolerances
+        self.collision_distance = 1.25  # Distance at which collision occurs (sum of half-sizes)
+        self.dock_pos_epsilon = 0.3     # Position tolerance for successful dock (m)
+        self.dock_vel_epsilon = 0.15    # Velocity tolerance (m/s)
+        self.dock_omega_epsilon = 0.1   # Angular velocity tolerance (rad/s)
+        self.dock_angle_epsilon = 15.0  # Orientation tolerance (degrees)
+        
         self.reset()
         
     def reset(self):
@@ -314,6 +321,8 @@ class DockingGame:
         self.time_elapsed = 0.0
         self.game_over = False
         self.success = False
+        self.failure = False
+        self.failure_reason = ""
         self.last_trans_ctrl = np.zeros(3)
         self.last_rot_ctrl = np.zeros(3)
         
@@ -354,13 +363,85 @@ class DockingGame:
         
         return control
     
-    def check_docking(self):
-        """Check docking conditions."""
-        pos_err = np.linalg.norm(self.state[0:3])
-        vel_err = np.linalg.norm(self.state[3:6])
-        omega_err = np.linalg.norm(self.state[10:13])
+    def quat_to_euler(self, q):
+        """Convert quaternion to Euler angles (roll, pitch, yaw) in degrees."""
+        q0, q1, q2, q3 = q
         
-        return pos_err < 0.5 and vel_err < 0.1 and omega_err < 0.1
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (q0 * q1 + q2 * q3)
+        cosr_cosp = 1 - 2 * (q1 * q1 + q2 * q2)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+        
+        # Pitch (y-axis rotation)
+        sinp = 2 * (q0 * q2 - q3 * q1)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)
+        else:
+            pitch = math.asin(sinp)
+        
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (q0 * q3 + q1 * q2)
+        cosy_cosp = 1 - 2 * (q2 * q2 + q3 * q3)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        
+        return np.degrees(roll), np.degrees(pitch), np.degrees(yaw)
+    
+    def get_docking_alignment_angle(self):
+        """
+        Calculate the angle between chaser's +X axis and target's -X axis.
+        For perfect docking, these should be anti-parallel (180 deg alignment).
+        Returns the error angle in degrees (0 = perfect alignment).
+        """
+        R_chaser = self.dynamics.quat_to_rotation_matrix(self.state[6:10])
+        R_target = self.dynamics.quat_to_rotation_matrix(self.target_quaternion)
+        
+        # Chaser docking direction: +X in body frame
+        chaser_dock_dir = R_chaser @ np.array([1, 0, 0])
+        # Target docking direction: -X in body frame (faces the chaser)
+        target_dock_dir = R_target @ np.array([-1, 0, 0])
+        
+        # For proper docking, these vectors should be parallel (same direction)
+        # since chaser approaches with +X facing target's -X
+        dot = np.clip(np.dot(chaser_dock_dir, target_dock_dir), -1, 1)
+        angle_error = np.degrees(np.arccos(dot))
+        
+        return angle_error
+    
+    def check_collision_and_docking(self):
+        """
+        Check for collision and docking conditions.
+        Returns: (is_collision, is_success, failure_reason)
+        """
+        pos = self.state[0:3]
+        vel = self.state[3:6]
+        omega = self.state[10:13]
+        
+        pos_dist = np.linalg.norm(pos - self.target_position)
+        vel_mag = np.linalg.norm(vel)
+        omega_mag = np.linalg.norm(omega)
+        angle_error = self.get_docking_alignment_angle()
+        
+        # Check if collision occurred (bodies touching)
+        if pos_dist < self.collision_distance:
+            # Check all docking conditions
+            vel_ok = vel_mag < self.dock_vel_epsilon
+            omega_ok = omega_mag < self.dock_omega_epsilon
+            angle_ok = angle_error < self.dock_angle_epsilon
+            
+            if vel_ok and omega_ok and angle_ok:
+                return True, True, ""  # Successful docking
+            else:
+                # Collision failure - determine reason
+                reasons = []
+                if not vel_ok:
+                    reasons.append(f"velocity too high ({vel_mag:.2f} m/s)")
+                if not omega_ok:
+                    reasons.append(f"spinning too fast ({omega_mag:.2f} rad/s)")
+                if not angle_ok:
+                    reasons.append(f"misaligned ({angle_error:.1f}°)")
+                return True, False, ", ".join(reasons)
+        
+        return False, False, ""
     
     def transform_vertices(self, vertices, position, quaternion):
         """Transform vertices by position and orientation."""
@@ -383,6 +464,53 @@ class DockingGame:
             p1, _ = self.renderer.project_point([-grid_size, i, 0])
             p2, _ = self.renderer.project_point([grid_size, i, 0])
             pygame.draw.line(self.screen, self.GRID_COLOR, p1, p2, 1)
+    
+    def draw_docking_arrow(self, position, quaternion, direction, arrow_color, length=0.8):
+        """
+        Draw an arrow on the docking face to indicate required orientation.
+        
+        Args:
+            position: center position of the spacecraft
+            quaternion: orientation quaternion
+            direction: direction the arrow points (in body frame)
+            arrow_color: color of the arrow
+            length: arrow length
+        """
+        R = self.dynamics.quat_to_rotation_matrix(quaternion)
+        
+        # Arrow starts at face center offset, points in the 'up' direction on that face
+        # For +X face (chaser), arrow points in +Z body direction
+        # For -X face (target), arrow also points in +Z body direction
+        
+        # Face normal direction
+        face_normal = R @ direction
+        
+        # Arrow 'up' direction on the face (use Z-axis of body frame)
+        arrow_up = R @ np.array([0, 0, 1])
+        
+        # Arrow base position (slightly offset from face)
+        face_offset = 0.55 if np.linalg.norm(position) < 0.1 else 0.55  # Adjust for target vs chaser
+        arrow_base = position + face_normal * face_offset
+        
+        # Arrow tip
+        arrow_tip = arrow_base + arrow_up * length
+        
+        # Arrow head (two small lines)
+        arrow_head_len = length * 0.3
+        head_right = R @ np.array([0, 0.3, -0.3])
+        head_left = R @ np.array([0, -0.3, -0.3])
+        head_right = arrow_tip + head_right * arrow_head_len
+        head_left = arrow_tip + head_left * arrow_head_len
+        
+        # Project and draw
+        base_2d, _ = self.renderer.project_point(arrow_base)
+        tip_2d, _ = self.renderer.project_point(arrow_tip)
+        hr_2d, _ = self.renderer.project_point(head_right)
+        hl_2d, _ = self.renderer.project_point(head_left)
+        
+        pygame.draw.line(self.screen, arrow_color, base_2d, tip_2d, 4)
+        pygame.draw.line(self.screen, arrow_color, tip_2d, hr_2d, 4)
+        pygame.draw.line(self.screen, arrow_color, tip_2d, hl_2d, 4)
     
     def draw_target_satellite(self):
         """Draw the target satellite at origin with docking side highlighted."""
@@ -409,7 +537,6 @@ class DockingGame:
         face_depths.sort(reverse=True)
         
         # Target docking face is the BACK face (face 0, -X direction)
-        # This faces the chaser's front (+X) docking side
         target_docking_face_idx = 0
         
         for depth, idx, face in face_depths:
@@ -417,7 +544,6 @@ class DockingGame:
             shade_idx = [d[1] for d in face_depths].index(idx)
             shade = 0.5 + 0.5 * (shade_idx / len(face_depths))
             
-            # Use docking color for the docking face
             if idx == target_docking_face_idx:
                 base_color = self.TARGET_DOCK_COLOR
             else:
@@ -426,8 +552,12 @@ class DockingGame:
             shaded_color = tuple(int(c * shade) for c in base_color)
             pygame.draw.polygon(self.screen, shaded_color, points)
             pygame.draw.polygon(self.screen, self.TARGET_EDGE, points, 2)
+        
+        # Draw red arrow on target docking face (-X direction)
+        self.draw_docking_arrow(self.target_position, self.target_quaternion, 
+                                np.array([-1, 0, 0]), self.AXIS_X, length=0.6)
     
-    def draw_cube(self, position, quaternion, color, edge_color, dock_color=None):
+    def draw_cube(self, position, quaternion, color, edge_color, dock_color=None, draw_dock_arrow=False):
         """Draw the spacecraft cube with optional docking face highlight."""
         vertices = self.transform_vertices(self.cube_vertices, position, quaternion)
         
@@ -459,6 +589,10 @@ class DockingGame:
             shaded_color = tuple(int(c * shade) for c in base_color)
             pygame.draw.polygon(self.screen, shaded_color, points)
             pygame.draw.polygon(self.screen, edge_color, points, 2)
+        
+        # Draw red arrow on chaser docking face (+X direction)
+        if draw_dock_arrow:
+            self.draw_docking_arrow(position, quaternion, np.array([1, 0, 0]), self.AXIS_X, length=0.5)
     
     def draw_body_axes(self, position, quaternion, length=1.5):
         """Draw body frame axes."""
@@ -486,7 +620,9 @@ class DockingGame:
         pos = self.state[0:3]
         vel = self.state[3:6]
         omega = self.state[10:13]
+        roll, pitch, yaw = self.quat_to_euler(self.state[6:10])
         
+        # Top-left: basic info
         lines = [
             f"Time: {self.time_elapsed:.1f}s",
             f"",
@@ -494,9 +630,7 @@ class DockingGame:
             f"Velocity:  [{vel[0]:7.2f}, {vel[1]:7.2f}, {vel[2]:7.2f}] m/s",
             f"Ang.Vel:   [{omega[0]:7.2f}, {omega[1]:7.2f}, {omega[2]:7.2f}] rad/s",
             f"",
-            f"Dist to target: {np.linalg.norm(pos):.2f} m",
             f"Speed: {np.linalg.norm(vel):.2f} m/s",
-            f"",
             f"Trans ctrl: {np.linalg.norm(self.last_trans_ctrl):.1f} N",
             f"Rot ctrl:   {np.linalg.norm(self.last_rot_ctrl):.2f} N·m",
         ]
@@ -507,34 +641,139 @@ class DockingGame:
             self.screen.blit(text, (20, y))
             y += 20
             
-        # Controls help (right side)
-        help_lines = [
-            "CONTROLS:",
-            "",
-            "WASD - Translate X/Y",
-            "Q/E  - Translate Z",
-            "",
-            "Arrows - Pitch/Yaw",
-            "Z/C    - Roll",
-            "",
-            "R - Reset",
-            "ESC - Quit",
-            "",
-            "Mouse drag - Orbit camera",
+        # Bottom-left: Distance to target panel
+        panel_y = self.height - 180
+        panel_x = 20
+        
+        # Draw panel background
+        panel_rect = pygame.Rect(panel_x - 5, panel_y - 5, 220, 170)
+        pygame.draw.rect(self.screen, (30, 35, 50), panel_rect)
+        pygame.draw.rect(self.screen, (60, 70, 90), panel_rect, 2)
+        
+        # Title
+        title = self.font.render("DISTANCE TO TARGET", True, self.TEXT_COLOR)
+        self.screen.blit(title, (panel_x, panel_y))
+        panel_y += 25
+        
+        # Position errors with colored axis labels
+        dist_items = [
+            ("X:", pos[0], "m", self.AXIS_X),
+            ("Y:", pos[1], "m", self.AXIS_Y),
+            ("Z:", pos[2], "m", self.AXIS_Z),
         ]
         
-        y = 20
-        for line in help_lines:
-            text = self.font.render(line, True, self.TEXT_COLOR)
-            self.screen.blit(text, (self.width - 200, y))
-            y += 20
+        for label, value, unit, color in dist_items:
+            label_text = self.font.render(label, True, color)
+            value_text = self.font.render(f"{value:7.2f} {unit}", True, self.TEXT_COLOR)
+            self.screen.blit(label_text, (panel_x, panel_y))
+            self.screen.blit(value_text, (panel_x + 25, panel_y))
+            panel_y += 20
+        
+        panel_y += 5
+        
+        # Orientation errors
+        angle_error = self.get_docking_alignment_angle()
+        orient_items = [
+            ("Roll:", roll, "°", self.AXIS_X),
+            ("Pitch:", pitch, "°", self.AXIS_Y),
+            ("Yaw:", yaw, "°", self.AXIS_Z),
+            ("Align:", angle_error, "°", (255, 200, 50) if angle_error < self.dock_angle_epsilon else (255, 100, 100)),
+        ]
+        
+        for label, value, unit, color in orient_items:
+            label_text = self.font.render(label, True, color)
+            value_text = self.font.render(f"{value:7.1f} {unit}", True, self.TEXT_COLOR)
+            self.screen.blit(label_text, (panel_x, panel_y))
+            self.screen.blit(value_text, (panel_x + 50, panel_y))
+            panel_y += 20
             
-        # Success message
+        # Top-right: Controls help with color-coded axes
+        help_x = self.width - 230
+        help_y = 20
+        
+        # Title
+        title = self.font.render("CONTROLS:", True, self.TEXT_COLOR)
+        self.screen.blit(title, (help_x, help_y))
+        help_y += 30
+        
+        # Translation controls with axis colors
+        trans_label = self.font.render("Translation:", True, self.TEXT_COLOR)
+        self.screen.blit(trans_label, (help_x, help_y))
+        help_y += 20
+        
+        # W/S = X axis (red)
+        ws_key = self.font.render("W/S", True, (255, 255, 255))
+        ws_axis = self.font.render(" = X axis", True, self.AXIS_X)
+        self.screen.blit(ws_key, (help_x + 10, help_y))
+        self.screen.blit(ws_axis, (help_x + 45, help_y))
+        help_y += 20
+        
+        # A/D = Y axis (green)
+        ad_key = self.font.render("A/D", True, (255, 255, 255))
+        ad_axis = self.font.render(" = Y axis", True, self.AXIS_Y)
+        self.screen.blit(ad_key, (help_x + 10, help_y))
+        self.screen.blit(ad_axis, (help_x + 45, help_y))
+        help_y += 20
+        
+        # Q/E = Z axis (blue)
+        qe_key = self.font.render("Q/E", True, (255, 255, 255))
+        qe_axis = self.font.render(" = Z axis", True, self.AXIS_Z)
+        self.screen.blit(qe_key, (help_x + 10, help_y))
+        self.screen.blit(qe_axis, (help_x + 45, help_y))
+        help_y += 30
+        
+        # Rotation controls
+        rot_label = self.font.render("Rotation:", True, self.TEXT_COLOR)
+        self.screen.blit(rot_label, (help_x, help_y))
+        help_y += 20
+        
+        # Z/C = Roll (X axis, red)
+        zc_key = self.font.render("Z/C", True, (255, 255, 255))
+        zc_axis = self.font.render(" = Roll", True, self.AXIS_X)
+        self.screen.blit(zc_key, (help_x + 10, help_y))
+        self.screen.blit(zc_axis, (help_x + 45, help_y))
+        help_y += 20
+        
+        # Up/Down = Pitch (Y axis, green)
+        ud_key = self.font.render("↑/↓", True, (255, 255, 255))
+        ud_axis = self.font.render(" = Pitch", True, self.AXIS_Y)
+        self.screen.blit(ud_key, (help_x + 10, help_y))
+        self.screen.blit(ud_axis, (help_x + 45, help_y))
+        help_y += 20
+        
+        # Left/Right = Yaw (Z axis, blue)
+        lr_key = self.font.render("←/→", True, (255, 255, 255))
+        lr_axis = self.font.render(" = Yaw", True, self.AXIS_Z)
+        self.screen.blit(lr_key, (help_x + 10, help_y))
+        self.screen.blit(lr_axis, (help_x + 45, help_y))
+        help_y += 30
+        
+        # Other controls
+        other_lines = [
+            "R - Reset",
+            "ESC - Quit",
+            "Mouse drag - Orbit",
+        ]
+        for line in other_lines:
+            text = self.font.render(line, True, self.TEXT_COLOR)
+            self.screen.blit(text, (help_x, help_y))
+            help_y += 20
+            
+        # Success/Failure messages
         if self.success:
             msg = "DOCKING SUCCESSFUL!"
             text = self.font_large.render(msg, True, self.SUCCESS_COLOR)
             rect = text.get_rect(center=(self.width//2, 50))
             self.screen.blit(text, rect)
+        elif self.failure:
+            msg = "COLLISION - DOCKING FAILED!"
+            text = self.font_large.render(msg, True, (255, 80, 80))
+            rect = text.get_rect(center=(self.width//2, 50))
+            self.screen.blit(text, rect)
+            
+            reason_text = self.font.render(f"Reason: {self.failure_reason}", True, (255, 150, 150))
+            reason_rect = reason_text.get_rect(center=(self.width//2, 80))
+            self.screen.blit(reason_text, reason_rect)
     
     def run(self):
         """Main game loop."""
@@ -604,10 +843,17 @@ class DockingGame:
                 self.state = self.dynamics.step(self.state, control, self.dt)
                 self.time_elapsed += self.dt
                 
-                if self.check_docking():
+                # Check collision and docking
+                is_collision, is_success, failure_reason = self.check_collision_and_docking()
+                if is_collision:
                     self.game_over = True
-                    self.success = True
-                    print(f"\n*** DOCKING SUCCESSFUL! Time: {self.time_elapsed:.1f}s ***\n")
+                    if is_success:
+                        self.success = True
+                        print(f"\n*** DOCKING SUCCESSFUL! Time: {self.time_elapsed:.1f}s ***\n")
+                    else:
+                        self.failure = True
+                        self.failure_reason = failure_reason
+                        print(f"\n*** COLLISION - DOCKING FAILED! {failure_reason} ***\n")
             
             # Render
             self.screen.fill(self.BG_COLOR)
@@ -624,7 +870,7 @@ class DockingGame:
             edge_color = (30, 180, 70) if self.success else self.CHASER_EDGE
             dock_color = self.CHASER_DOCK_COLOR if not self.success else self.SUCCESS_COLOR
             
-            self.draw_cube(pos, quat, color, edge_color, dock_color)
+            self.draw_cube(pos, quat, color, edge_color, dock_color, draw_dock_arrow=True)
             self.draw_body_axes(pos, quat)
             self.draw_hud()
             
