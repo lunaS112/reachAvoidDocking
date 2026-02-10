@@ -857,6 +857,476 @@ class Docking6D(Dynamics):
         }
 
 
+class Docking13D(Dynamics):
+    """
+    13-state docking dynamics:
+      - Relative translation in LVLH: (x,y,z,vx,vy,vz)
+      - Chaser attitude: quaternion q (LVLH->Body), angular velocity omega (Body, relative to LVLH)
+    Controls:
+      - Body-frame force Fb (N): [Fx,Fy,Fz]
+      - Body-frame torque taub (N*m): [tx,ty,tz]
+    """
+
+    def __init__(self, set_mode: str):
+        goal_state = None
+
+        # Orbit / control bounds
+        self.orbit_alt = 400  # km
+        self.F_bar = 20.0     # max force per axis (N)  (ASSUMPTION: your old u_bar was in N)
+        self.tau_bar = 1.5    # max torque per axis (N*m) (ASSUMPTION: your old u_theta_bar was torque)
+
+        # Chaser spacecraft dimensions (now 3D)
+        self.mc = 200.0
+        self.w_c = 1.0  # x-dim (m)
+        self.h_c = 1.0  # y-dim (m)
+        self.d_c = 1.0  # z-dim (m)
+        self.chaser_buffer_xy = math.sqrt(self.w_c**2 + self.h_c**2) / 2.0
+        self.chaser_buffer_z = self.d_c / 2.0
+
+        # Derived
+        self.n = self.mean_motion()
+        self.I = self.inertia_tensor_body()  # 3x3 torch tensor on CUDA later
+
+        # Docking tolerances
+        self.eps_p = 0.1
+        self.eps_v = 0.1
+        self.eps_q = 0.02       # radians, attitude error tolerance #TODO Validate this tolerance
+        self.eps_omega = 0.05
+        self.v_max = 2.5
+
+        # Target geometry (still mainly planar in your code)
+        self.w_t = 6.0
+        self.h_t = 3.0
+        self.d_t = 3.0          # target "thickness" in z (m) #TODO Validate this dimension
+        self.dock_rad = 1.5
+
+        # Goal: position/velocity zero, attitude = yaw(pi/2), omega=0 #TODO Validate goal attitude - currently 90 deg yaw and 0 roll/pitch
+        self.q_goal = self.quat_from_axis_angle(
+            torch.tensor([0.0, 0.0, 1.0]), math.pi / 2.0
+        )
+
+        if goal_state is None:
+            # State: [x,y,z,vx,vy,vz,q0,q1,q2,q3,wx,wy,wz]
+            self.goal_state = torch.tensor([
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                float(self.q_goal[0]), float(self.q_goal[1]), float(self.q_goal[2]), float(self.q_goal[3]),
+                0.0, 0.0, 0.0
+            ])
+        else:
+            self.goal_state = torch.tensor(goal_state)
+
+        # BRAT parameters
+        self.reach_fn_weight = 5.0 #TODO Tune
+        self.avoid_fn_weight = 10.0 #TODO Tune
+        self.set_mode = set_mode
+
+        if set_mode == 'reach_avoid':
+            l_type = 'brat_hjivi'
+        else:
+            raise NotImplementedError('Only reach_avoid mode is implemented')
+
+        # (HJ/DeepReach) ranges (ASSUMPTION: expand from planar; tune as needed)
+        self.state_dim = 13
+        self.control_dim = 6
+
+        self.state_range_ = torch.tensor([
+            [-4, 4],   # x
+            [-4, 4],   # y
+            [-2, 2],   # z
+            [-0.2, 0.2],  # vx
+            [-0.2, 0.2],  # vy
+            [-0.2, 0.2],  # vz
+            [-1, 1],   # q0
+            [-1, 1],   # q1
+            [-1, 1],   # q2
+            [-1, 1],   # q3
+            [-0.5, 0.5],  # wx
+            [-0.5, 0.5],  # wy
+            [-0.5, 0.5],  # wz
+        ]).cuda()
+
+        self.control_range_ = torch.tensor([
+            [-self.F_bar, self.F_bar],   # Fx
+            [-self.F_bar, self.F_bar],   # Fy
+            [-self.F_bar, self.F_bar],   # Fz
+            [-self.tau_bar, self.tau_bar],  # tx
+            [-self.tau_bar, self.tau_bar],  # ty
+            [-self.tau_bar, self.tau_bar],  # tz
+        ]).cuda()
+
+        # MPC initialization parameters
+        self.eps_var = torch.tensor([self.F_bar, self.F_bar, self.F_bar, 
+                                     self.tau_bar, self.tau_bar, self.tau_bar]).cuda()
+        self.control_init = torch.zeros(6).cuda()  # Initial control guess for MPC
+
+        # Normalization
+        state_mean_ = (self.state_range_[:, 0] + self.state_range_[:, 1]) / 2.0
+        state_var_  = (self.state_range_[:, 1] - self.state_range_[:, 0]) / 2.0
+
+        # MPC weights (ASSUMPTION: quick extension; tune)
+        self.Q = torch.eye(self.state_dim).cuda()
+        # position
+        self.Q[0,0] = 3.0; self.Q[1,1] = 3.0; self.Q[2,2] = 3.0
+        # velocity
+        self.Q[3,3] = 10.0; self.Q[4,4] = 10.0; self.Q[5,5] = 10.0
+        # quaternion + omega (light penalties; docking precision via reach_fn)
+        self.Q[6,6] = 1.0; self.Q[7,7] = 1.0; self.Q[8,8] = 1.0; self.Q[9,9] = 1.0
+        self.Q[10,10] = 5.0; self.Q[11,11] = 5.0; self.Q[12,12] = 5.0
+
+        super().__init__(
+            name="Docking13D",
+            loss_type=l_type,
+            set_mode=set_mode,
+            state_dim=self.state_dim,
+            input_dim=self.state_dim + 1,   # states + time (removed periodic sin/cos)
+            control_dim=self.control_dim,
+            disturbance_dim=0,
+            state_mean=state_mean_.cpu().tolist(),
+            state_var=state_var_.cpu().tolist(),
+            value_mean=0.5,
+            value_var=1,
+            value_normto=0.02,
+            deepReach_model='exact'
+        )
+
+        # store for periodic transform usage
+        self.state_mean = state_mean_
+        self.state_var  = state_var_
+
+        # Put inertia and q_goal on GPU
+        self.I = self.I.cuda()
+        self.q_goal = self.q_goal.cuda()
+
+    # ---------- Orbital params ----------
+    def mean_motion(self):
+        mu = torch.tensor(3.986004418e14)  # m^3/s^2
+        r_earth = 6371e3
+        r = r_earth + (self.orbit_alt * 1e3)
+        return torch.sqrt(mu / r**3)
+
+    # ---------- Inertia ----------
+    def inertia_tensor_body(self):
+        # Rectangular box inertia about COM in body frame (diagonal)
+        m = self.mc
+        wx, hy, dz = self.w_c, self.h_c, self.d_c
+        Ixx = (m / 12.0) * (hy**2 + dz**2)
+        Iyy = (m / 12.0) * (wx**2 + dz**2)
+        Izz = (m / 12.0) * (wx**2 + hy**2)
+        return torch.diag(torch.tensor([Ixx, Iyy, Izz], dtype=torch.float32))
+
+    # ---------- Quaternion utilities (scalar-first) ---------- #TODO: Move these into quaternion.py
+    def quat_from_axis_angle(self, axis, angle):
+        axis = axis / (torch.norm(axis) + 1e-12)
+        half = 0.5 * angle
+        q0 = torch.cos(torch.tensor(half))
+        qv = axis * torch.sin(torch.tensor(half))
+        return torch.tensor([q0, qv[0], qv[1], qv[2]], dtype=torch.float32)
+
+    def quat_conj(self, q):
+        return torch.stack([q[...,0], -q[...,1], -q[...,2], -q[...,3]], dim=-1)
+
+    def quat_mul(self, q, p):
+        # q ⊗ p
+        q0,q1,q2,q3 = q[...,0],q[...,1],q[...,2],q[...,3]
+        p0,p1,p2,p3 = p[...,0],p[...,1],p[...,2],p[...,3]
+        return torch.stack([
+            q0*p0 - q1*p1 - q2*p2 - q3*p3,
+            q0*p1 + q1*p0 + q2*p3 - q3*p2,
+            q0*p2 - q1*p3 + q2*p0 + q3*p1,
+            q0*p3 + q1*p2 - q2*p1 + q3*p0
+        ], dim=-1)
+
+    def quat_to_R_LVLH_to_body(self, q):
+        # q = [q0,q1,q2,q3] scalar-first
+        q0,q1,q2,q3 = q[...,0],q[...,1],q[...,2],q[...,3]
+        R = torch.zeros(q.shape[:-1] + (3,3), device=q.device, dtype=q.dtype)
+        R[...,0,0] = 1 - 2*(q2*q2 + q3*q3)
+        R[...,0,1] = 2*(q1*q2 + q0*q3)
+        R[...,0,2] = 2*(q1*q3 - q0*q2)
+        R[...,1,0] = 2*(q1*q2 - q0*q3)
+        R[...,1,1] = 1 - 2*(q1*q1 + q3*q3)
+        R[...,1,2] = 2*(q2*q3 + q0*q1)
+        R[...,2,0] = 2*(q1*q3 + q0*q2)
+        R[...,2,1] = 2*(q2*q3 - q0*q1)
+        R[...,2,2] = 1 - 2*(q1*q1 + q2*q2)
+        return R
+
+    def quat_error_angle(self, q, q_goal):
+        # angle of q_rel = q_goal^{-1} ⊗ q
+        q_rel = self.quat_mul(self.quat_conj(q_goal), q)
+        # shortest angle: 2*acos(|q0|)
+        q0 = torch.clamp(torch.abs(q_rel[...,0]), 0.0, 1.0)
+        return 2.0 * torch.acos(q0)
+
+    # ---------- Interface required by your base class ----------
+    def control_range(self, state):
+        return self.control_range_.cpu().tolist()
+
+    def state_test_range(self):
+        return self.state_range_.cpu().tolist()
+
+    def state_verification_range(self):
+        return self.state_range_.cpu().tolist()
+
+    def equivalent_wrapped_state(self, state):
+        # No periodic angle now; quaternion handles wrap inherently.
+        # Optional: re-normalize quaternion here if you want.
+        wrapped = torch.clone(state)
+        q = wrapped[...,6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        wrapped[...,6:10] = q
+        return wrapped
+
+    def periodic_transform_fn(self, input):
+        # Identity transform (no periodic theta anymore)
+        return input.cuda()
+
+    def sample_target_state(self, num_samples):
+        """Sample states near the docking region for training/testing."""
+        target_state_range = self.state_test_range()
+        
+        # Position: focus near docking region
+        target_state_range[0] = [-2.0, 2.0]  # x
+        target_state_range[1] = [-2.0, 2.0]  # y
+        target_state_range[2] = [-1.0, 1.0]  # z
+        
+        # Velocity: keep small velocities near docking
+        target_state_range[3] = [-0.5, 0.5]  # vx
+        target_state_range[4] = [-0.5, 0.5]  # vy
+        target_state_range[5] = [-0.5, 0.5]  # vz
+        
+        # Quaternion: sample near goal quaternion
+        # For simplicity, we'll set to goal and add small perturbations after
+        target_state_range[6] = [0.5, 1.0]   # q0 (keep positive for consistency)
+        target_state_range[7] = [-0.5, 0.5]  # q1
+        target_state_range[8] = [-0.5, 0.5]  # q2
+        target_state_range[9] = [-0.5, 0.5]  # q3
+        
+        # Angular velocity: keep small
+        target_state_range[10] = [-0.3, 0.3]  # wx
+        target_state_range[11] = [-0.3, 0.3]  # wy
+        target_state_range[12] = [-0.3, 0.3]  # wz
+        
+        # Convert to tensor
+        target_state_range = torch.tensor(target_state_range)
+        
+        # Sample uniformly within the target ranges
+        sampled_states = target_state_range[:, 0] + torch.rand(num_samples, self.state_dim) * (
+            target_state_range[:, 1] - target_state_range[:, 0]
+        )
+        
+        # Normalize quaternions
+        q = sampled_states[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        sampled_states[:, 6:10] = q
+        
+        return sampled_states
+    
+    # ---------- 13D dynamics ----------
+    def dsdt(self, state, control, disturbance):
+        """
+        state: [...,13]
+          [x,y,z,vx,vy,vz,q0,q1,q2,q3,wx,wy,wz]
+        control: [...,6]
+          [Fx,Fy,Fz,tx,ty,tz] in BODY frame
+        """
+        dsdt = torch.zeros_like(state)
+
+        # unpack
+        x,y,z = state[...,0], state[...,1], state[...,2]
+        vx,vy,vz = state[...,3], state[...,4], state[...,5]
+        q = state[...,6:10]
+        omega = state[...,10:13]
+
+        # Normalize quaternion defensively (keeps simulation stable)
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+
+        # Body controls
+        Fb = control[...,0:3]       # N in body
+        taub = control[...,3:6]     # N*m in body
+
+        # Rotate Fb to LVLH acceleration: a_L = (1/m) R(q)^T Fb
+        R_L2B = self.quat_to_R_LVLH_to_body(q)
+        # Multiply: R^T * Fb
+        aL = torch.matmul(R_L2B.transpose(-1, -2), Fb.unsqueeze(-1)).squeeze(-1) / self.mc
+
+        n = self.n
+
+        # Translation kinematics
+        dsdt[...,0] = vx
+        dsdt[...,1] = vy
+        dsdt[...,2] = vz
+
+        # 3D HCW dynamics
+        ax = 2*n*vy + 3*(n**2)*x + aL[...,0]
+        ay = -2*n*vx + aL[...,1]
+        az = -(n**2)*z + aL[...,2]
+
+        # velocity clamp like your original (applied to accel)
+        ax = torch.where((vx >= self.v_max) & (ax > 0), torch.zeros_like(ax), ax)
+        ax = torch.where((vx <= -self.v_max) & (ax < 0), torch.zeros_like(ax), ax)
+        ay = torch.where((vy >= self.v_max) & (ay > 0), torch.zeros_like(ay), ay)
+        ay = torch.where((vy <= -self.v_max) & (ay < 0), torch.zeros_like(ay), ay)
+        az = torch.where((vz >= self.v_max) & (az > 0), torch.zeros_like(az), az)
+        az = torch.where((vz <= -self.v_max) & (az < 0), torch.zeros_like(az), az)
+
+        dsdt[...,3] = ax
+        dsdt[...,4] = ay
+        dsdt[...,5] = az
+
+        # Quaternion kinematics: qdot = 0.5 * Omega(omega) * q
+        wx,wy,wz = omega[...,0], omega[...,1], omega[...,2]
+        Omega = torch.zeros(state.shape[:-1] + (4,4), device=state.device, dtype=state.dtype)
+        Omega[...,0,1] = -wx; Omega[...,0,2] = -wy; Omega[...,0,3] = -wz
+        Omega[...,1,0] =  wx; Omega[...,1,2] =  wz; Omega[...,1,3] = -wy
+        Omega[...,2,0] =  wy; Omega[...,2,1] = -wz; Omega[...,2,3] =  wx
+        Omega[...,3,0] =  wz; Omega[...,3,1] =  wy; Omega[...,3,2] = -wx
+
+        qdot = 0.5 * torch.matmul(Omega, q.unsqueeze(-1)).squeeze(-1)
+        dsdt[...,6:10] = qdot
+
+        # Rigid-body rotational dynamics: omega_dot = I^{-1}(tau - omega x (I omega))
+        I = self.I
+        Iomega = torch.matmul(I, omega.unsqueeze(-1)).squeeze(-1)
+        cross = torch.cross(omega, Iomega, dim=-1)
+        omegadot = torch.linalg.solve(I, (taub - cross).unsqueeze(-1)).squeeze(-1)
+        dsdt[...,10:13] = omegadot
+
+        return dsdt
+
+    # ---------- Reach set ----------
+    def reach_fn(self, state):
+        """
+        Signed distance <= 0 if within docking tolerances in:
+          - position (3D L2)
+          - velocity (3D L2)
+          - attitude (angle error)
+          - omega (3D L2)
+        """
+        x,y,z = state[...,0], state[...,1], state[...,2]
+        vx,vy,vz = state[...,3], state[...,4], state[...,5]
+        q = state[...,6:10]
+        omega = state[...,10:13]
+
+        goal = self.goal_state.to(state.device)
+        xg,yg,zg = goal[0], goal[1], goal[2]
+        vxg,vyg,vzg = goal[3], goal[4], goal[5]
+        qg = self.q_goal.to(state.device)
+        omegag = goal[10:13]
+
+        pos_dist = torch.sqrt((x-xg)**2 + (y-yg)**2 + (z-zg)**2) - self.eps_p
+        vel_dist = torch.sqrt((vx-vxg)**2 + (vy-vyg)**2 + (vz-vzg)**2) - self.eps_v
+        att_dist = self.quat_error_angle(q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg) - self.eps_q
+        omg_dist = torch.norm(omega - omegag, dim=-1) - self.eps_omega
+
+        # Keep your shaping idea (I won’t over-tune; same spirit)
+        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
+        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
+        att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.1)
+        omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
+
+        goal = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
+        return torch.max(goal, dim=-1).values
+
+    # ---------- Avoid set ----------
+    def avoid_fn(self, state):
+        """
+        3D extension of your planar avoid_fn.
+        Uncertainty: your original geometry is planar; I extrude in z.
+        """
+        x = state[...,0]
+        y = state[...,1]
+        z = state[...,2]
+
+        # --- Planar SDF from your code (x-y) ---
+        s_rect = torch.maximum(
+            torch.abs(x) - (self.w_t/2 + self.chaser_buffer_xy),
+            torch.maximum(-(y + self.chaser_buffer_xy), y - (self.h_t + self.chaser_buffer_xy))
+        )
+
+        effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
+        dist_semi = torch.sqrt(x**2 + y**2) - effective_rad
+        s_dock = torch.maximum(-y, dist_semi)
+        s_bubble_xy = torch.maximum(s_rect, -s_dock)
+
+        s_cutout = torch.maximum(torch.abs(x) - effective_rad,
+                                 torch.maximum(-(y + self.chaser_buffer_xy), y))
+        s_fail_xy = torch.maximum(s_bubble_xy, -s_cutout + 0.02)
+
+        # --- Extrude in z: only collide when |z| is within thickness ---
+        half_thick = (self.d_t / 2.0) + self.chaser_buffer_z
+        s_z = torch.abs(z) - half_thick
+
+        # Combine as an intersection of (xy collision region) AND (within z slab)
+        # Using max for intersection of SDFs:
+        s_fail = torch.maximum(s_fail_xy, s_z)
+
+        s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
+        return s_fail
+
+    def boundary_fn(self, state):
+        if self.set_mode == 'reach_avoid':
+            return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+
+    def hamiltonian(self, state, dvds):
+        if self.set_mode != 'reach_avoid':
+            raise NotImplementedError
+        opt_control = self.optimal_control(state, dvds)
+        dsdt_ = self.dsdt(state, opt_control, None)
+        return torch.sum(dvds * dsdt_, dim=-1)
+
+    def optimal_control(self, state, dvds):
+        """
+        Bang-bang control for reach-avoid, but:
+          - Force optimal sign depends on attitude: dv/dv · (R^T F_b)/m = (R dv_v)/m · F_b
+        """
+        if self.set_mode != 'reach_avoid':
+            raise NotImplementedError
+
+        q = state[...,6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        R_L2B = self.quat_to_R_LVLH_to_body(q)
+
+        # Costates for translational acceleration act through vx,vy,vz
+        p_v = dvds[...,3:6]  # ∂V/∂v_LVLH
+
+        # Hamiltonian force term: p_v · (1/m) R^T F_b = (1/m)(R p_v) · F_b
+        # where (R p_v) gives body-frame coefficients.
+        coeff_body = torch.matmul(R_L2B, p_v.unsqueeze(-1)).squeeze(-1) / self.mc
+
+        Fx = torch.where(coeff_body[...,0] > 0, -self.F_bar, self.F_bar)
+        Fy = torch.where(coeff_body[...,1] > 0, -self.F_bar, self.F_bar)
+        Fz = torch.where(coeff_body[...,2] > 0, -self.F_bar, self.F_bar)
+
+        # Costates for omega: omega_dot includes I^{-1} tau
+        p_omega = dvds[...,10:13]  # ∂V/∂omega
+        # maximize p_omega · (I^{-1} tau) => (I^{-T} p_omega) · tau
+        coeff_tau = torch.linalg.solve(self.I.transpose(0,1), p_omega.unsqueeze(-1)).squeeze(-1)
+
+        tx = torch.where(coeff_tau[...,0] > 0, -self.tau_bar, self.tau_bar)
+        ty = torch.where(coeff_tau[...,1] > 0, -self.tau_bar, self.tau_bar)
+        tz = torch.where(coeff_tau[...,2] > 0, -self.tau_bar, self.tau_bar)
+
+        return torch.stack([Fx, Fy, Fz, tx, ty, tz], dim=-1)
+
+    def optimal_disturbance(self, state, dvds):
+        return 0
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': 2,
+        }
+
+
 class Quadrotor(Dynamics):
 
     def __init__(self, collisionR: float, collective_thrust_max: float,  set_mode: str):  # simpler quadrotor
