@@ -185,6 +185,9 @@ class Dynamics(ABC):
     def sample_target_state(self, num_samples):
         raise NotImplementedError
 
+    def sample_target_state_refined(self, num_samples):
+        return self.sample_target_state(num_samples)
+
     @abstractmethod
     def cost_fn(self, state_traj):
         raise NotImplementedError
@@ -558,7 +561,7 @@ class Docking6D(Dynamics):
         # Define state/control space
         self.state_dim = 6
         self.state_range_ = torch.tensor(
-            [[-15, 15], [-15, 15], [-2.5 , 2.5], [-2.5 , 2.5], [-math.pi, math.pi], [-0.5, 0.5]]).cuda()
+            [[-15, 15], [-15, 15], [-2.5 , 2.5], [-2.5 , 2.5], [-math.pi, math.pi], [-1.0, 1.0]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
@@ -616,8 +619,19 @@ class Docking6D(Dynamics):
 
     def equivalent_wrapped_state(self, state):
         wrapped_state = torch.clone(state)
+        # Wrap theta to [-π, π]
         wrapped_state[..., 4] = (
             wrapped_state[..., 4] + math.pi) % (2 * math.pi) - math.pi
+        # Clamp velocities to their bounds to prevent out-of-distribution states
+        wrapped_state[..., 2] = torch.clamp(wrapped_state[..., 2], 
+                                            self.state_range_[2, 0].item(), 
+                                            self.state_range_[2, 1].item())  # vx
+        wrapped_state[..., 3] = torch.clamp(wrapped_state[..., 3], 
+                                            self.state_range_[3, 0].item(), 
+                                            self.state_range_[3, 1].item())  # vy
+        wrapped_state[..., 5] = torch.clamp(wrapped_state[..., 5], 
+                                            self.state_range_[5, 0].item(), 
+                                            self.state_range_[5, 1].item())  # omega
         return wrapped_state
 
     def periodic_transform_fn(self, input):
@@ -650,7 +664,7 @@ class Docking6D(Dynamics):
         dsdt[..., 0] = state[..., 2]
         dsdt[..., 1] = state[..., 3]
         dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
-        dsdt[..., 3] = -2 * self.mean_motion() * state[..., 0] + control[..., 1] / self.mc
+        dsdt[..., 3] = -2 * self.mean_motion() * state[..., 2] + control[..., 1] / self.mc
 
         current_vx = state[..., 2]
         current_vy = state[..., 3]
@@ -781,7 +795,7 @@ class Docking6D(Dynamics):
         target_state_range[4] = [np.pi/2 - np.pi/4, np.pi/2 + np.pi/4] 
         
         # Angular velocity: keep small
-        target_state_range[5] = [-1.0, 1.0] 
+        target_state_range[5] = [-0.5, 0.5] 
         
         # Convert to tensor
         target_state_range = torch.tensor(target_state_range)
@@ -791,6 +805,70 @@ class Docking6D(Dynamics):
             target_state_range[:, 1] - target_state_range[:, 0]
         )
         return sampled_states
+
+    def sample_target_state_refined(self, num_samples):
+        """Multi-scale target sampling concentrated near the exact goal state.
+        
+        Tier 1 (5%):  Exact goal + tiny noise (pins the minimum location)
+        Tier 2 (35%): Gaussian around goal with tolerance-scale std (teaches gradient funnel)
+        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance (where V transitions)
+        Tier 4 (40%): Broader uniform sampling (existing behavior, for context)
+        """
+        samples = torch.zeros(num_samples, self.state_dim)
+        idx = 0
+
+        # Tier 1 (5%): Exact goal + tiny noise
+        n_exact = int(num_samples * 0.05)
+        noise_std = torch.tensor([
+            self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
+            self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
+            self.eps_theta * 0.1,                     # theta: 0.001rad
+            self.eps_omega * 0.1                      # omega: 0.005rad/s
+        ])
+        samples[idx:idx + n_exact] = self.goal_state.unsqueeze(0) + torch.randn(n_exact, self.state_dim) * noise_std
+        idx += n_exact
+
+        # Tier 2 (35%): Gaussian around goal with tolerance-scale std
+        n_gaussian = int(num_samples * 0.35)
+        goal_std = torch.tensor([
+            self.eps_p * 2, self.eps_p * 2,
+            self.eps_v * 2, self.eps_v * 2,
+            self.eps_theta * 2,
+            self.eps_omega * 2
+        ])
+        samples[idx:idx + n_gaussian] = self.goal_state.unsqueeze(0) + torch.randn(n_gaussian, self.state_dim) * goal_std
+        idx += n_gaussian
+
+        # Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance
+        # Samples on/near the reach set boundary where the value function transitions
+        n_boundary = int(num_samples * 0.20)
+        tolerances = torch.tensor([
+            self.eps_p, self.eps_p,
+            self.eps_v, self.eps_v,
+            self.eps_theta,
+            self.eps_omega
+        ])
+        # Each dimension independently at a random fraction of [0.8, 1.2]x its tolerance
+        scale_factors = 0.8 + 0.4 * torch.rand(n_boundary, self.state_dim)
+        # Random sign for each dimension (sample on both sides of goal)
+        signs = torch.sign(torch.randn(n_boundary, self.state_dim))
+        samples[idx:idx + n_boundary] = self.goal_state.unsqueeze(0) + signs * scale_factors * tolerances.unsqueeze(0)
+        idx += n_boundary
+
+        # Tier 4 (40%): Broader uniform sampling (existing behavior, for context)
+        n_broad = num_samples - idx
+        target_state_range = self.state_test_range()
+        target_state_range[0] = [-2.0, 2.0]   # px
+        target_state_range[1] = [-2.0, 2.0]   # py
+        target_state_range[2] = [-0.5, 0.5]   # vx
+        target_state_range[3] = [-0.5, 0.5]   # vy
+        target_state_range[4] = [np.pi/2 - np.pi/4, np.pi/2 + np.pi/4]  # theta
+        target_state_range[5] = [-0.5, 0.5]   # omega
+        target_state_range = torch.tensor(target_state_range)
+        samples[idx:] = target_state_range[:, 0] + torch.rand(
+            n_broad, self.state_dim) * (target_state_range[:, 1] - target_state_range[:, 0])
+
+        return samples
 
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
