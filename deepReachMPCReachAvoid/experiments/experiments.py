@@ -18,9 +18,9 @@ from collections import OrderedDict
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, MultiValidator, MLPConditionedValidator, target_fraction, MLP, MLPValidator, SliceSampleGenerator
 import seaborn as sns
+from experiments.experiment_viz_helper import ExperimentVizMixin
 
-
-class Experiment(ABC):
+class Experiment(ExperimentVizMixin, ABC):
     def __init__(self, model, dataset, experiment_dir, use_wandb):
         self.model = model
         self.dataset = dataset
@@ -36,13 +36,13 @@ class Experiment(ABC):
         self.max_full_rollbacks = 0
 
         # Refinment Horizon tracking
-        self.horizon_epoch_map = {}     # Epoch when horizon was reached
-        self.horizon_counter_map = {}   # dataset.counter when horizon was reached
+        self.horizon_epoch_map = {}      # Epoch when horizon was reached
+        self.horizon_counter_map = {}    # dataset.counter when horizon was reached
         self.horizon_checkpoint_map = {} # Path to checkpoint
 
         # Convergance threshold param
         self.min_cov_threshold = 0.5
-        self.max_cov_threshold = 0.95
+        self.max_cov_threshold = 0.80
 
     @abstractmethod
     def init_special(self):
@@ -295,7 +295,7 @@ class Experiment(ABC):
 
         self.last_refine_time = math.floor(min(1.0, self.dataset.counter/self.dataset.counter_end) *
                                            (self.dataset.tMax-self.dataset.tMin)/self.dataset.time_till_refinement)*self.dataset.time_till_refinement
-        self.use_MPC_terminal_loss = False
+        self.mpc_penalty_scale = 0.0
 
         self.num_epochs = epochs
         actual_epoch = 0
@@ -370,11 +370,11 @@ class Experiment(ABC):
                         losses = loss_fn(
                             states, values, dvs[..., 0], dvs[...,
                                                              1:], boundary_values, dirichlet_masks, model_results['model_out'],
-                            MPC_values, gt['MPC_values'], self.use_MPC_terminal_loss)
+                            MPC_values, gt['MPC_values'], self.mpc_penalty_scale)
                     elif self.dataset.dynamics.loss_type == 'brat_hjivi':
                         losses = loss_fn(
                             states, values, dvs[..., 0], dvs[..., 1:], boundary_values, reach_values, avoid_values, dirichlet_masks, model_results[
-                                'model_out'], MPC_values, gt['MPC_values'], self.use_MPC_terminal_loss)
+                                'model_out'], MPC_values, gt['MPC_values'], self.mpc_penalty_scale)
                     else:
                         raise NotImplementedError
 
@@ -1149,145 +1149,6 @@ class Experiment(ABC):
             self.model.train()
             self.model.requires_grad_(True)
 
-    def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None):
-        x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-        y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-
-        xs = torch.linspace(x_min, x_max, x_resolution)
-        ys = torch.linspace(y_min, y_max, y_resolution)
-        xys = torch.cartesian_prod(xs, ys)
-        fig = plt.figure(figsize=(6, 5*len(times)))
-        X, Y = np.meshgrid(xs, ys)
-        for i in range(len(times)):
-            coords = torch.zeros(
-                x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
-            coords[:, 0] = times[i]
-            coords[:, 1:] = torch.tensor(plot_config['state_slices'])
-            coords[:, 1 + plot_config['x_axis_idx']] = xys[:, 0]
-            coords[:, 1 + plot_config['y_axis_idx']] = xys[:, 1]
-
-            with torch.no_grad():
-                model_results = self.model(
-                    {'coords': self.dataset.dynamics.coord_to_input(coords.cuda())})
-
-                values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(
-                ), model_results['model_out'].squeeze(dim=-1).detach())
-
-            ax = fig.add_subplot(len(times), 1, 1 + i)
-            ax.set_title('t = %0.2f' % (times[i]))
-            BRT_img = values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-            max_value = np.amax(BRT_img)
-            min_value = np.amin(BRT_img)
-            imshow_kwargs = {
-                'vmax': max_value,
-                'vmin': min_value,
-                'cmap': 'coolwarm_r',
-                'extent': (x_min, x_max, y_min, y_max),
-                'origin': 'lower',
-            }
-            ax.imshow(BRT_img, **imshow_kwargs)
-            lx = self.dataset.dynamics.boundary_fn(coords.cuda()[..., 1:]).detach(
-            ).cpu().numpy().reshape(x_resolution, y_resolution).T
-            zero_contour = ax.contour(X,
-                                      Y,
-                                      BRT_img,
-                                      levels=[0.0],
-                                      colors="black",
-                                      linewidths=2,
-                                      linestyles='--')
-
-            failure_set_contour = ax.contour(X,
-                                             Y,
-                                             lx,
-                                             levels=[0.0],
-                                             colors="saddlebrown",
-                                             linewidths=2,
-                                             linestyles='-')
-            if delta_level is not None:
-                delta_contour = ax.contour(X,
-                                           Y,
-                                           BRT_img,
-                                           levels=[delta_level],
-                                           colors="black",
-                                           linewidths=2,
-                                           linestyles='-')
-        return fig
-
-    def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times, delta_level=None):
-        x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-        y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-        z_min, z_max = state_test_range[plot_config['z_axis_idx']]
-
-        xs = torch.linspace(x_min, x_max, x_resolution)
-        ys = torch.linspace(y_min, y_max, y_resolution)
-        zs = torch.linspace(z_min, z_max, z_resolution)
-        xys = torch.cartesian_prod(xs, ys)
-
-        fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
-        X, Y = np.meshgrid(xs, ys)
-        for i in range(len(times)):
-            for j in range(len(zs)):
-                coords = torch.zeros(
-                    x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
-                coords[:, 0] = times[i]
-                coords[:, 1:] = torch.tensor(plot_config['state_slices'])
-                coords[:, 1 + plot_config['x_axis_idx']] = xys[:, 0]
-                coords[:, 1 + plot_config['y_axis_idx']] = xys[:, 1]
-                coords[:, 1 + plot_config['z_axis_idx']] = zs[j]
-
-                lx = self.dataset.dynamics.boundary_fn(coords.cuda()[..., 1:]).detach(
-                ).cpu().numpy().reshape(x_resolution, y_resolution).T
-                with torch.no_grad():
-                    model_results = self.model(
-                        {'coords': self.dataset.dynamics.coord_to_input(coords.cuda())})
-                    values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(
-                    ), model_results['model_out'].squeeze(dim=-1).detach())
-
-                ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
-                ax.set_title('t = %0.2f, %s = %0.2f' % (
-                    times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j]))
-
-                BRT_img = values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
-
-                max_value = np.amax(BRT_img)
-                min_value = np.amin(BRT_img)
-                imshow_kwargs = {
-                    'vmax': max_value,
-                    'vmin': min_value,
-                    'cmap': 'coolwarm_r',
-                    'extent': (x_min, x_max, y_min, y_max),
-                    'origin': 'lower',
-                }
-
-                s1 = ax.imshow(BRT_img, **imshow_kwargs)
-                fig.colorbar(s1)
-                zero_contour = ax.contour(X,
-                                          Y,
-                                          BRT_img,
-                                          levels=[0.0],
-                                          colors="black",
-                                          linewidths=1,
-                                          linestyles='--')
-
-                failure_set_contour = ax.contour(X,
-                                                 Y,
-                                                 lx,
-                                                 levels=[0.0],
-                                                 colors="brown",
-                                                 linewidths=2,
-                                                 linestyles='-')
-
-                if delta_level is not None:
-                    delta_contour = ax.contour(X,
-                                               Y,
-                                               BRT_img,
-                                               levels=[delta_level],
-                                               colors="black",
-                                               linewidths=1,
-                                               linestyles='-')
-
-        return fig
-
     def validate(self, epoch, save_path, x_resolution, y_resolution, z_resolution, time_resolution):
         was_training = self.model.training
         self.model.eval()
@@ -1295,6 +1156,7 @@ class Experiment(ABC):
 
         plot_config = self.dataset.dynamics.plot_config()
 
+        # Plot Position Slice (px vs py) of the learned value function
         state_test_range = self.dataset.dynamics.state_test_range()
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         if plot_config['z_axis_idx'] == -1:
@@ -1309,6 +1171,46 @@ class Experiment(ABC):
                 'val_plot': wandb.Image(fig),
             })
         plt.close()
+        
+        # Plot velocity slice (vx vs vy) of the learned value function
+        if self.dataset.dynamics.state_dim >= 4:  # Need at least vx, vy dimensions
+            fig_velocity = self.plotVelocitySlice(
+                state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
+            if self.use_wandb:
+                wandb.log({
+                    'step': epoch,
+                    'val_plot_velocity': wandb.Image(fig_velocity),
+                })
+            plt.close()
+        
+        # Plot rotation slice (theta vs omega) of the learned value function
+        if self.dataset.dynamics.state_dim >= 6:  # Need at least theta, omega dimensions
+            fig_rotation = self.plotRotationSlice(
+                state_test_range, plot_config, x_resolution, y_resolution, times)
+            if self.use_wandb:
+                wandb.log({
+                    'step': epoch,
+                    'val_plot_rotation': wandb.Image(fig_rotation),
+                })
+            plt.close()
+        
+        # Also visualize MPC training dataset for comparison
+        self.validate_mpc_dataset_position(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+        self.validate_mpc_dataset_velocity(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+        self.validate_mpc_dataset_rotation(epoch, x_resolution, y_resolution, time_resolution)
+        
+        # Compute MPC ground truth - controlled by frequency 
+        # Set self.mpc_ground_truth_frequency = N to run every N validation calls
+        # Set self.mpc_ground_truth_frequency = 0 to disable
+        mpc_gt_freq = getattr(self, 'mpc_ground_truth_frequency', 1)
+        if mpc_gt_freq > 0:
+            if not hasattr(self, '_mpc_gt_call_counter'):
+                self._mpc_gt_call_counter = 0
+            self._mpc_gt_call_counter += 1
+            if self._mpc_gt_call_counter >= mpc_gt_freq:
+                self._mpc_gt_call_counter = 0
+                self.validate_mpc_ground_truth(epoch, x_resolution, y_resolution, z_resolution)
+        
         plt.close()
         if was_training:
             self.model.train()
@@ -1415,6 +1317,13 @@ class Experiment(ABC):
                 0.9*self.loss_weights['mpc_loss'] + 0.1*self.mpc_importance_coef*num/(den+1e-16), 1e5)
 
     def dataset_refinement(self, time_interval_length, epoch):
+
+        # Update early-time penalty ramp if active
+        if hasattr(self, 'early_time_start_epoch') and self.dataset.refinement_mode == 'early_time':
+            refinement_epochs = epoch - self.early_time_start_epoch
+            ramp_epochs = max(self.dataset.pause_epochs * 0.5, 1)
+            ramp_progress = min(refinement_epochs / ramp_epochs, 1.0)
+            self.mpc_penalty_scale = ramp_progress * self.mpc_penalty_max
 
         ######## In Pause ########
         if self.dataset.is_paused:
@@ -1673,35 +1582,73 @@ class Experiment(ABC):
 
             # Terminal refinement setup
             if current_horizon >= self.dataset.tMax:
-                # reached final horizon - switch to terminal refinement
+                # reached final horizon - switch to refinement
                 self.last_refine_time = self.dataset.tMax
-                self.dataset.use_terminal_MPC()
-                for g in self.optim.param_groups:
-                    g['lr'] = 1e-6  # TODO: make it a hyperparam
-                self.use_MPC_terminal_loss = True
-                self.MPC_importance_final = 1.0  # TODO: make it a hyperparam
-                # self.MPC_importance_init = 1.0
                 self.dataset.policy = self.model
-                refine_till_t = self.dataset.tMax
-                self.dataset.generate_MPC_dataset(
-                    refine_till_t, 
-                    refine_till_t, 
-                    style="terminal"
+
+                if self.dataset.refinement_mode == 'early_time':
+                    # Early-time refinement: focus on low-time region
+                    tqdm.write(f"\n>>> Early-Time Refinement at epoch {epoch} <<<")
+                    tqdm.write(f"    Time range: [0, {self.dataset.early_time_range}s], "
+                               f"LR: {self.early_time_lr}, "
+                               f"Penalty max: {self.mpc_penalty_max}, "
+                               f"Regen every: {self.dataset.epoch_till_refinement} epochs")
+                    self.mpc_penalty_scale = 0.0  # Ramp starts at zero
+                    self.early_time_start_epoch = epoch  # CRITICAL: enables ramp logic
+                    for g in self.optim.param_groups:
+                        g['lr'] = self.early_time_lr
+                    self.dataset.use_early_time_MPC()
+                    self.dataset.generate_MPC_dataset(
+                        self.dataset.tMax,  # T: full horizon for diversity
+                        0.0,                # t: MUST be 0.0 for low-time data
+                        style="early_time"
                     )
+                    self.dataset.refinement_target_sampling = True
+                    # Reset loss weights to let EMA recalibrate on new data distribution
+                    self.loss_weights['mpc_loss'] = 1.0
+                    self.loss_weights['dirichlet'] = 1.0
+                    tqdm.write(f"    Loss weights reset: mpc={self.loss_weights['mpc_loss']}, dirichlet={self.loss_weights['dirichlet']}")
+                else:
+                    # Terminal refinement (existing behavior)
+                    self.dataset.use_terminal_MPC()
+                    for g in self.optim.param_groups:
+                        g['lr'] = 1e-6  # TODO: make it a hyperparam
+                    self.mpc_penalty_scale = 1.0
+                    self.MPC_importance_final = 1.0  # TODO: make it a hyperparam
+                    # self.MPC_importance_init = 1.0
+                    refine_till_t = self.dataset.tMax
+                    self.dataset.generate_MPC_dataset(
+                        refine_till_t, 
+                        refine_till_t, 
+                        style="terminal"
+                    )
+
                 # Recompute sorted indices after dataset regeneration
                 self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0]) 
             return epoch
         
-        # Terminal Refinment regeneration
+        # Refinement regeneration (terminal or early-time)
         if time_interval_length >= self.dataset.tMax and epoch % self.dataset.epoch_till_refinement == 0 and self.dataset.use_MPC:
             # in case we want a long finetuning phase, we regenerate the dataset every epoch_till_refinement epochs
-            for g in self.optim.param_groups:
-                g['lr'] = 1e-6
-            self.use_MPC_terminal_loss = True
             self.dataset.policy = self.model
-            self.dataset.use_terminal_MPC()
-            self.dataset.generate_MPC_dataset(
-                self.dataset.tMax, self.dataset.tMax, style="terminal")
+
+            if self.dataset.refinement_mode == 'early_time':
+                tqdm.write(f"\n>>> EARLY-TIME MPC REGENERATION at epoch {epoch} (penalty_scale={self.mpc_penalty_scale:.4f}) <<<")
+                for g in self.optim.param_groups:
+                    g['lr'] = self.early_time_lr
+                self.dataset.use_early_time_MPC()
+                self.dataset.generate_MPC_dataset(
+                    self.dataset.tMax, 0.0, style="early_time")
+                # Reset loss weights to let EMA recalibrate on fresh data
+                self.loss_weights['mpc_loss'] = 1.0
+                self.loss_weights['dirichlet'] = 1.0
+            else:
+                for g in self.optim.param_groups:
+                    g['lr'] = 1e-6
+                self.mpc_penalty_scale = 1.0
+                self.dataset.use_terminal_MPC()
+                self.dataset.generate_MPC_dataset(
+                    self.dataset.tMax, self.dataset.tMax, style="terminal")
             
             # Recompute sorted indices after dataset regeneration
             self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])

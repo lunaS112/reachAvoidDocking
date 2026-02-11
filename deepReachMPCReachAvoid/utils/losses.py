@@ -6,7 +6,7 @@ from utils import diff_operators, quaternion
 
 def init_brt_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type, use_MPC, MPC_finetune_lambda):
     def brt_hjivi_loss(state, value, dvdt, dvds, boundary_value, dirichlet_mask, output, MPC_values, MPC_labels,
-                        use_MPC_terminal_loss=False):
+                        mpc_penalty_scale=0.0):
         # Curriculum training loss
         if dynamics.deepReach_model == 'exact':
             dirichlet_loss = torch.Tensor([0]).cuda()
@@ -15,7 +15,7 @@ def init_brt_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type
             dirichlet_loss=torch.abs(dirichlet).sum() / dirichlet_loss_divisor
         if MPC_loss_type=='l1':
             mpc_loss=torch.abs(MPC_values-MPC_labels).sum()
-            if use_MPC_terminal_loss:
+            if mpc_penalty_scale > 0:
                 #scale critical values
                 if dynamics.set_mode == 'avoid':
                     unsafe_cost_safe_value_indeces = torch.argwhere(
@@ -24,13 +24,13 @@ def init_brt_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type
                     unsafe_cost_safe_value_indeces = torch.argwhere(
                         torch.logical_and(MPC_labels.squeeze(0) > 0.0, MPC_values.squeeze(0) <= 0.0)).detach().squeeze(-1)
                 mpc_loss+=(torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces]-MPC_labels[:,unsafe_cost_safe_value_indeces])*
-                        torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda
+                        torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda*mpc_penalty_scale
 
 
         elif MPC_loss_type=='l2':
             mpc_loss=torch.pow(MPC_values-MPC_labels,2).sum() 
             #scale critical values
-            if use_MPC_terminal_loss:
+            if mpc_penalty_scale > 0:
                 if dynamics.set_mode == 'avoid':
                     unsafe_cost_safe_value_indeces = torch.argwhere(
                         torch.logical_and(MPC_labels.squeeze(0) < 0.0, MPC_values.squeeze(0) >= 0.0)).detach().squeeze(-1)
@@ -39,7 +39,7 @@ def init_brt_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type
                         torch.logical_and(MPC_labels.squeeze(0) > 0.0, MPC_values.squeeze(0) <= 0.0)).detach().squeeze(-1)
         
                 mpc_loss+=(torch.pow(MPC_values[:,unsafe_cost_safe_value_indeces]-MPC_labels[:,unsafe_cost_safe_value_indeces],2)
-                        * torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda
+                        * torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda*mpc_penalty_scale
         else:
             raise NotImplementedError
         
@@ -72,7 +72,7 @@ def init_brt_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type
 
 def init_brat_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_type, use_MPC, MPC_finetune_lambda):
     def brat_hjivi_loss(state, value, dvdt, dvds, boundary_value, reach_value, avoid_value, dirichlet_mask, output, MPC_values, MPC_labels, 
-                        use_MPC_terminal_loss=False):
+                        mpc_penalty_scale=0.0):
         # Curriculum training loss
         if dynamics.deepReach_model == 'exact':
             dirichlet_loss = torch.Tensor([0]).cuda()
@@ -81,20 +81,20 @@ def init_brat_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor, MPC_loss_typ
             dirichlet_loss=torch.abs(dirichlet).sum() / dirichlet_loss_divisor
         if MPC_loss_type=='l1':
             mpc_loss=torch.abs(MPC_values-MPC_labels).sum()
-            if use_MPC_terminal_loss:
+            if mpc_penalty_scale > 0:
                 #scale critical values
                 unsafe_cost_safe_value_indeces = torch.argwhere(
                     torch.logical_and(MPC_labels.squeeze(0) > 0.0, MPC_values.squeeze(0) <= 0.0)).detach().squeeze(-1)
                 mpc_loss+=(torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces]-MPC_labels[:,unsafe_cost_safe_value_indeces])*
-                        torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda
+                        torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda*mpc_penalty_scale
         elif MPC_loss_type=='l2':
             mpc_loss=torch.pow(MPC_values-MPC_labels,2).sum() 
-            if use_MPC_terminal_loss:
+            if mpc_penalty_scale > 0:
                 unsafe_cost_safe_value_indeces = torch.argwhere(
                     torch.logical_and(MPC_labels.squeeze(0) > 0.0, MPC_values.squeeze(0) <= 0.0)).detach().squeeze(-1)
         
                 mpc_loss+=(torch.pow(MPC_values[:,unsafe_cost_safe_value_indeces]-MPC_labels[:,unsafe_cost_safe_value_indeces],2)
-                        * torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda
+                        * torch.abs(MPC_values[:,unsafe_cost_safe_value_indeces])).sum()*MPC_finetune_lambda*mpc_penalty_scale
         else:
             raise NotImplementedError
         
