@@ -137,7 +137,18 @@ if (mode == 'all') or (mode == 'train'):
     p.add_argument('--MPC_data_path', type=str, default='none', required=False,
                    help="MPC data path, where inputs.pt and value_labels.pt exist. Note that inputs.pt is normalized. Specify when using your own dataset")
     
-    
+    # Refinement mode options
+    p.add_argument('--refinement_mode', type=str, default='terminal',
+                   choices=['terminal', 'early_time'],
+                   help='Refinement mode after full horizon: terminal or early_time')
+    p.add_argument('--early_time_range', type=float, default=1.0,
+                   help='Upper bound of focused time range for early_time mode (seconds)')
+    p.add_argument('--early_time_penalty_max', type=float, default=0.15,
+                   help='Max false-positive penalty scale for early_time mode (vs 1.0 for terminal)')
+    p.add_argument('--early_time_lr', type=float, default=5e-6,
+                   help='Learning rate during early_time refinement')
+    p.add_argument('--epoch_till_refinement', type=int, default=20000,
+                   help='Epochs between MPC dataset regeneration during refinement phase')
     
     
     '''parameters that you probably don't need to pay attention'''
@@ -198,7 +209,9 @@ if (mode == 'all') or (mode == 'train'):
                    help='z-axis resolution of validation plot during training')
     p.add_argument('--val_time_resolution', type=int, default=6,
                    help='time-axis resolution of validation plot during training')
-    
+    p.add_argument('--mpc_ground_truth_frequency', type=int, default=5,
+                   help='How often to compute MPC ground truth visualization (1=every validation, 5=every 5th, 0=disabled)')
+
     # loss options
     p.add_argument('--minWith', type=str, required=False, default= 'target', choices=[
                    'none', 'zero', 'target'], help='BRS vs BRT computation (typically should be using target for BRT)')
@@ -338,13 +351,22 @@ dataset = dataio.ReachabilityDataset(
     num_MPC_data_samples = orig_opt.num_MPC_data_samples, num_iterative_refinement=orig_opt.num_iterative_refinement,
     time_till_refinement=orig_opt.time_till_refinement,num_MPC_batches=orig_opt.num_MPC_batches, 
     aug_with_MPC_data= orig_opt.aug_with_MPC_data, policy=policy, refine_dataset=(not orig_opt.not_refine_dataset),
-    pause_epochs=orig_opt.pause_epochs, cost_type=orig_opt.cost_type, mpc_percentage=orig_opt.mpc_percentage)
+    pause_epochs=orig_opt.pause_epochs, cost_type=orig_opt.cost_type, mpc_percentage=orig_opt.mpc_percentage,
+    refinement_mode=orig_opt.refinement_mode, early_time_range=orig_opt.early_time_range,
+    epoch_till_refinement=orig_opt.epoch_till_refinement)
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
 experiment = experiment_class(
     model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb)
 experiment.init_special(**{argname: getattr(orig_opt, argname) for argname in inspect.signature(
     experiment_class.init_special).parameters.keys() if argname != 'self'})
+
+# Set MPC ground truth visualization frequency
+experiment.mpc_ground_truth_frequency = orig_opt.mpc_ground_truth_frequency
+
+# Set early-time refinement parameters
+experiment.mpc_penalty_max = orig_opt.early_time_penalty_max
+experiment.early_time_lr = orig_opt.early_time_lr
 
 if (mode == 'all') or (mode == 'train'):
     if dynamics.loss_type == 'brt_hjivi':

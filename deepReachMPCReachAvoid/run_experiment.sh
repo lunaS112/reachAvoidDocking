@@ -43,7 +43,19 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics
 python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 10 --pretrain --pretrain_iters 1000 --num_epochs 13000 --pause_epoch 1000 --counter_end 10000 --num_nl 256 --set_mode reach_avoid --lr 1e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 10 --num_MPC_data_samples 500 --numpoints 5000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.05 --deepReach_model exact --time_till_refinement 0.5 --cost_type mixed --mpc_percentage 0.8 --use_wandb --wandb_project MPC_test --wandb_name Docking6D_RA --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 # With recomended hyperparameters 
-python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 12 --pretrain --pretrain_iters 1000 --num_epochs 130000 --pause_epoch 1000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 2000 --num_MPC_batches 50 --num_MPC_data_samples 5000 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000\
+ --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 15\
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_MedData --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+
+# Early time refinement
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000 \
+ --pretrain_iters 1000 --num_epochs 160000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 15 \
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --refinement_mode early_time --early_time_range 2 --early_time_penalty_max 0.15 --early_time_lr 2e-6 --epoch_till_refinement 7500\
+ --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_EarlyTime_V2 --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 ############################################# Docking13D Reach_avoid problem ##########################################
 # Quick test run (smaller settings for debugging)

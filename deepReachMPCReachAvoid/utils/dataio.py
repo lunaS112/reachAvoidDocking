@@ -40,7 +40,8 @@ class ReachabilityDataset(Dataset):
     def __init__(self, dynamics, numpoints, pretrain, pretrain_iters, tMin, tMax, counter_start, counter_end, num_src_samples, num_target_samples,
                  use_MPC, time_curr, MPC_data_path, num_MPC_perturbation_samples, MPC_dt, MPC_mode, MPC_sample_mode, MPC_style,
                  MPC_lambda_, MPC_batch_size, MPC_receding_horizon, num_MPC_data_samples, num_iterative_refinement, time_till_refinement, num_MPC_batches=1,
-                 aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100, cost_type='reachability', mpc_percentage=0.8):
+                 aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100, cost_type='reachability', mpc_percentage=0.8,
+                 refinement_mode='terminal', early_time_range=1.0, epoch_till_refinement=20000):
         self.dynamics = dynamics
         self.numpoints = numpoints
         self.pretrain = pretrain
@@ -69,7 +70,7 @@ class ReachabilityDataset(Dataset):
         self.MPC_mode = MPC_mode
         self.MPC_sample_mode = MPC_sample_mode
 
-        self.epoch_till_refinement = 20000
+        self.epoch_till_refinement = epoch_till_refinement
         self.refine_dataset = refine_dataset
         self.MPC_lambda_ = MPC_lambda_
         self.MPC_style = MPC_style
@@ -78,6 +79,11 @@ class ReachabilityDataset(Dataset):
         # MPC Cost function parameters
         self.mpc_percentage = mpc_percentage
         self.cost_type = cost_type
+
+        # Refinement mode parameters
+        self.refinement_mode = refinement_mode
+        self.early_time_range = early_time_range
+        self.refinement_target_sampling = False
 
         # PAUSE Parameters: Pause training to refine dataset
         self.pause_epochs = pause_epochs  # How many epochs to pause at each horizon
@@ -107,9 +113,14 @@ class ReachabilityDataset(Dataset):
 
     def use_terminal_MPC(self):
         # self.MPC_dt can be different
-        self.MPC_dt = 0.005
+        self.MPC_dt = 0.05
         self.num_iterative_refinement = -1
         # self.MPC_batch_size=50000
+
+    def use_early_time_MPC(self):
+        """Configure dataset for early-time refinement mode."""
+        self.MPC_dt = 0.05
+        self.num_iterative_refinement = 7 
 
     def __len__(self):
         return 1
@@ -132,8 +143,12 @@ class ReachabilityDataset(Dataset):
         if self.num_target_samples > 0:
             num_mpc_target_samples = min(
                 int(self.MPC_batch_size/5), self.num_target_samples)
-            target_state_samples = self.dynamics.sample_target_state(
-                num_mpc_target_samples)
+            if self.refinement_target_sampling:
+                target_state_samples = self.dynamics.sample_target_state_refined(
+                    num_mpc_target_samples)
+            else:
+                target_state_samples = self.dynamics.sample_target_state(
+                    num_mpc_target_samples)
             MPC_states[-num_mpc_target_samples:] = target_state_samples
         return MPC_states
 
@@ -164,6 +179,9 @@ class ReachabilityDataset(Dataset):
 
             if style == "terminal" and i < self.num_MPC_batches/2:
                 t_max = T*1.0  # more data on the terminal time
+            elif style == "early_time" and i < self.num_MPC_batches/2:
+                early_time_steps = max(1, math.floor(self.early_time_range / self.MPC_dt))
+                t_max = random.randint(1, early_time_steps) * self.MPC_dt
             # t_max=self.tMax
             _, _, MPC_inputs_, MPC_values_ = self.mpc.get_batch_data(
                 MPC_states.to(device), t_max, self.policy, t=t)
@@ -172,6 +190,22 @@ class ReachabilityDataset(Dataset):
             MPC_values = torch.cat([MPC_values, MPC_values_], dim=0)
 
         # print("Generated %d labels"%MPC_inputs.shape[0])
+        if style == "early_time":
+            # Keep all low-time samples, subsample high-time samples
+            low_time_mask = MPC_inputs[:, 0] <= self.early_time_range
+            MPC_inputs_low = MPC_inputs[low_time_mask]
+            MPC_values_low = MPC_values[low_time_mask]
+
+            high_time_idxs = torch.where(~low_time_mask)[0]
+            keep_count = int(len(high_time_idxs) / 1.5)
+            if keep_count > 0 and len(high_time_idxs) > 0:
+                keep_idxs = high_time_idxs[torch.randperm(len(high_time_idxs))[:keep_count]]
+                MPC_inputs = torch.cat([MPC_inputs_low, MPC_inputs[keep_idxs]], dim=0)
+                MPC_values = torch.cat([MPC_values_low, MPC_values[keep_idxs]], dim=0)
+            else:
+                MPC_inputs = MPC_inputs_low
+                MPC_values = MPC_values_low
+
         if style == "terminal":
             # with more coords and values being at the terminal time
             MPC_inputs_ = MPC_inputs[MPC_inputs[:, 0] == T, ...]
@@ -278,10 +312,20 @@ class ReachabilityDataset(Dataset):
                 times[-self.num_src_samples:, 0] = self.tMin
 
         if self.num_target_samples > 0:
-            target_state_samples = self.dynamics.sample_target_state(
-                self.num_target_samples)
+            if self.refinement_target_sampling:
+                target_state_samples = self.dynamics.sample_target_state_refined(
+                    self.num_target_samples)
+            else:
+                target_state_samples = self.dynamics.sample_target_state(
+                    self.num_target_samples)
             model_states_normed[-self.num_target_samples:] = self.dynamics.coord_to_input(torch.cat((torch.zeros(
                 self.num_target_samples, 1), target_state_samples), dim=-1))[:, 1:self.dynamics.state_dim+1]
+
+        # During early-time refinement, bias target sample times toward low values
+        if self.refinement_target_sampling and self.num_target_samples > 0 and not self.pretrain:
+            times[-self.num_target_samples:, 0] = self.tMin + torch.zeros(
+                self.num_target_samples).uniform_(0, self.early_time_range)
+
         model_inputs = torch.cat((times, model_states_normed), dim=1)
 
         # generating MPC inputs
