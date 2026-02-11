@@ -1149,7 +1149,29 @@ class Experiment(ABC):
             self.model.train()
             self.model.requires_grad_(True)
 
-    def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None):
+    def _quat_to_yaw(self, q):
+        # q: [q0, q1, q2, q3] scalar-first
+        q0, q1, q2, q3 = q
+        siny_cosp = 2.0 * (q0 * q3 + q1 * q2)
+        cosy_cosp = 1.0 - 2.0 * (q2 * q2 + q3 * q3)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _annotate_quat(self, ax, quat_slice, theta_yaw):
+        if quat_slice is None or theta_yaw is None:
+            return
+        q_text = f"q=[{quat_slice[0]:.3f},{quat_slice[1]:.3f},{quat_slice[2]:.3f},{quat_slice[3]:.3f}]"
+        t_text = f"theta_yaw={theta_yaw:.3f} rad"
+        ax.text(
+            0.02, 0.98,
+            f"{q_text}\n{t_text}",
+            transform=ax.transAxes,
+            ha='left', va='top',
+            fontsize=8,
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none')
+        )
+
+    def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None,
+                      quat_slice=None, theta_yaw=None):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
 
@@ -1203,6 +1225,7 @@ class Experiment(ABC):
                                              colors="saddlebrown",
                                              linewidths=2,
                                              linestyles='-')
+            self._annotate_quat(ax, quat_slice, theta_yaw)
             if delta_level is not None:
                 delta_contour = ax.contour(X,
                                            Y,
@@ -1213,7 +1236,8 @@ class Experiment(ABC):
                                            linestyles='-')
         return fig
 
-    def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times, delta_level=None):
+    def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times,
+                         delta_level=None, quat_slice=None, theta_yaw=None):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
         z_min, z_max = state_test_range[plot_config['z_axis_idx']]
@@ -1277,6 +1301,8 @@ class Experiment(ABC):
                                                  linewidths=2,
                                                  linestyles='-')
 
+                self._annotate_quat(ax, quat_slice, theta_yaw)
+
                 if delta_level is not None:
                     delta_contour = ax.contour(X,
                                                Y,
@@ -1297,19 +1323,78 @@ class Experiment(ABC):
 
         state_test_range = self.dataset.dynamics.state_test_range()
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
+        fig = None
         if plot_config['z_axis_idx'] == -1:
             fig = self.plotSingleFig(
                 state_test_range, plot_config, x_resolution, y_resolution, times)
         else:
             fig = self.plotMultipleFigs(
                 state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
-        if self.use_wandb:
+
+        if self.use_wandb and fig is not None:
             wandb.log({
                 'step': epoch,
                 'val_plot': wandb.Image(fig),
             })
-        plt.close()
-        plt.close()
+            plt.close(fig)
+
+        # Docking13D: add quaternion-annotated validation plots
+        if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
+            base_quat = [1.0, 0.0, 0.0, 0.0]
+            quat_slices = [
+                [1.0, 0.2, 0.0, 0.0],
+                [1.0, 0.0, 0.2, 0.0],
+                [1.0, 0.0, 0.0, 0.2],
+            ]
+
+            # Main plot: identity quaternion, no rotation
+            main_cfg = dict(plot_config)
+            main_slices = list(main_cfg['state_slices'])
+            main_slices[6:10] = base_quat
+            main_cfg['state_slices'] = main_slices
+            base_yaw = self._quat_to_yaw(base_quat)
+
+            if main_cfg['z_axis_idx'] == -1:
+                main_fig = self.plotSingleFig(
+                    state_test_range, main_cfg, x_resolution, y_resolution, times,
+                    quat_slice=base_quat, theta_yaw=base_yaw)
+            else:
+                main_fig = self.plotMultipleFigs(
+                    state_test_range, main_cfg, x_resolution, y_resolution, z_resolution, times,
+                    quat_slice=base_quat, theta_yaw=base_yaw)
+
+            wandb.log({
+                'step': epoch,
+                'val_plot_docking13d_base': wandb.Image(main_fig),
+            })
+            plt.close(main_fig)
+
+            # Additional plots: small quaternion perturbations
+            for idx, quat in enumerate(quat_slices):
+                norm = math.sqrt(quat[0]**2 + quat[1]**2 + quat[2]**2 + quat[3]**2)
+                quat = [q / norm for q in quat]
+                yaw = self._quat_to_yaw(quat)
+                cfg = dict(plot_config)
+                slices = list(cfg['state_slices'])
+                slices[6:10] = quat
+                cfg['state_slices'] = slices
+
+                if cfg['z_axis_idx'] == -1:
+                    fig_q = self.plotSingleFig(
+                        state_test_range, cfg, x_resolution, y_resolution, times,
+                        quat_slice=quat, theta_yaw=yaw)
+                else:
+                    fig_q = self.plotMultipleFigs(
+                        state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
+                        quat_slice=quat, theta_yaw=yaw)
+
+                wandb.log({
+                    'step': epoch,
+                    f'val_plot_docking13d_q{idx+1}': wandb.Image(fig_q),
+                })
+                plt.close(fig_q)
+
+        plt.close('all')
         if was_training:
             self.model.train()
             self.model.requires_grad_(True)
