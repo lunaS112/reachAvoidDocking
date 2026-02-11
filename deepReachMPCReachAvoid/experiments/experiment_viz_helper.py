@@ -29,7 +29,29 @@ class ExperimentVizMixin:
     - self.experiment_dir: Path to experiment directory
     """
 
-    def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None):
+    def _quat_to_yaw(self, quat):
+        # quat: [q0, q1, q2, q3] scalar-first
+        q0, q1, q2, q3 = quat
+        siny_cosp = 2.0 * (q0 * q3 + q1 * q2)
+        cosy_cosp = 1.0 - 2.0 * (q2 * q2 + q3 * q3)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _annotate_quat(self, ax, quat_slice, theta_yaw):
+        if quat_slice is None or theta_yaw is None:
+            return
+        q_text = f"q=[{quat_slice[0]:.3f},{quat_slice[1]:.3f},{quat_slice[2]:.3f},{quat_slice[3]:.3f}]"
+        t_text = f"theta_yaw={theta_yaw:.3f} rad"
+        ax.text(
+            0.02, 0.98,
+            f"{q_text}\n{t_text}",
+            transform=ax.transAxes,
+            ha='left', va='top',
+            fontsize=8,
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none')
+        )
+
+    def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None,
+                      quat_slice=None, theta_yaw=None):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
 
@@ -83,6 +105,8 @@ class ExperimentVizMixin:
                                              colors="saddlebrown",
                                              linewidths=2,
                                              linestyles='-')
+            if self.dataset.dynamics.name == 'Docking13D':
+                self._annotate_quat(ax, quat_slice, theta_yaw)
             if delta_level is not None:
                 delta_contour = ax.contour(X,
                                            Y,
@@ -93,7 +117,8 @@ class ExperimentVizMixin:
                                            linestyles='-')
         return fig
 
-    def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times, delta_level=None):
+    def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times,
+                         delta_level=None, quat_slice=None, theta_yaw=None):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
         z_min, z_max = state_test_range[plot_config['z_axis_idx']]
@@ -156,6 +181,9 @@ class ExperimentVizMixin:
                                                  colors="brown",
                                                  linewidths=2,
                                                  linestyles='-')
+
+                if self.dataset.dynamics.name == 'Docking13D':
+                    self._annotate_quat(ax, quat_slice, theta_yaw)
 
                 if delta_level is not None:
                     delta_contour = ax.contour(X,
@@ -615,6 +643,300 @@ class ExperimentVizMixin:
         
         plt.close(fig_scatter)
         plt.close(fig_hist)
+
+    def validate_mpc_dataset_position_base_quat_scatter(self, epoch, x_resolution, y_resolution, z_resolution,
+                                                        time_resolution, angle_tol=0.2):
+        """Scatter plot of MPC samples for base quaternion (Docking13D only)."""
+        if self.dataset.dynamics.name != 'Docking13D':
+            return
+        if not self.dataset.use_MPC:
+            return
+        if not hasattr(self.dataset, 'MPC_inputs') or self.dataset.MPC_inputs is None:
+            return
+        if len(self.dataset.MPC_inputs) < 10:
+            return
+
+        plot_config = self.dataset.dynamics.plot_config()
+        state_test_range = self.dataset.dynamics.state_test_range()
+
+        x_axis_idx = plot_config['x_axis_idx']
+        y_axis_idx = plot_config['y_axis_idx']
+        z_axis_idx = plot_config['z_axis_idx']
+        if z_axis_idx == -1:
+            return
+
+        x_min, x_max = state_test_range[x_axis_idx]
+        y_min, y_max = state_test_range[y_axis_idx]
+        z_min, z_max = state_test_range[z_axis_idx]
+
+        times = torch.linspace(0, self.dataset.tMax, time_resolution)
+        zs = torch.linspace(z_min, z_max, z_resolution)
+
+        mpc_inputs_real = self.dataset.dynamics.input_to_coord(
+            self.dataset.MPC_inputs.clone()
+        )
+        mpc_values = self.dataset.MPC_values.clone()
+
+        mpc_inputs_real_np = mpc_inputs_real.detach().cpu().numpy()
+        mpc_values_np = mpc_values.detach().cpu().numpy()
+
+        mpc_times = mpc_inputs_real_np[:, 0]
+        mpc_x = mpc_inputs_real_np[:, 1 + x_axis_idx]
+        mpc_y = mpc_inputs_real_np[:, 1 + y_axis_idx]
+        mpc_z = mpc_inputs_real_np[:, 1 + z_axis_idx]
+
+        q = mpc_inputs_real_np[:, 1 + 6:1 + 10]
+        q0 = np.clip(np.abs(q[:, 0]), 0.0, 1.0)
+        quat_angle = 2.0 * np.arccos(q0)
+        quat_mask = quat_angle < angle_tol
+
+        state_slices = plot_config['state_slices']
+
+        if len(times) > 1:
+            time_tol = (times[1] - times[0]).item() / 10.0
+        else:
+            time_tol = 0.01
+
+        if len(zs) > 1:
+            z_tol = (zs[1] - zs[0]).item() / 10.0
+        else:
+            z_tol = 0.1
+
+        other_dim_tols = {}
+        for dim in range(self.dataset.dynamics.state_dim):
+            if dim in [x_axis_idx, y_axis_idx, z_axis_idx, 6, 7, 8, 9]:
+                continue
+            dim_range = state_test_range[dim][1] - state_test_range[dim][0]
+            other_dim_tols[dim] = dim_range * 0.3
+
+        xs_grid = np.linspace(x_min, x_max, x_resolution)
+        ys_grid = np.linspace(y_min, y_max, y_resolution)
+        X, Y = np.meshgrid(xs_grid, ys_grid)
+
+        fig_scatter = plt.figure(figsize=(6 * len(zs), 5 * len(times)))
+
+        for i, t in enumerate(times):
+            t_val = t.item()
+            for j, z in enumerate(zs):
+                z_val = z.item()
+
+                time_mask = np.abs(mpc_times - t_val) < time_tol
+                z_mask = np.abs(mpc_z - z_val) < z_tol
+
+                other_masks = np.ones(len(mpc_times), dtype=bool)
+                for dim, tol in other_dim_tols.items():
+                    dim_vals = mpc_inputs_real_np[:, 1 + dim]
+                    slice_val = state_slices[dim]
+                    other_masks &= np.abs(dim_vals - slice_val) < tol
+
+                combined_mask = time_mask & z_mask & other_masks & quat_mask
+
+                slice_x = mpc_x[combined_mask]
+                slice_y = mpc_y[combined_mask]
+                slice_vals = mpc_values_np[combined_mask]
+
+                num_samples = len(slice_x)
+                subplot_idx = i * len(zs) + j + 1
+                title_str = f't = {t_val:.2f}, {plot_config["state_labels"][z_axis_idx]} = {z_val:.2f}\n(n={num_samples})'
+
+                ax_scatter = fig_scatter.add_subplot(len(times), len(zs), subplot_idx)
+                ax_scatter.set_title(title_str, fontsize=10)
+
+                xys = torch.cartesian_prod(torch.tensor(xs_grid, dtype=torch.float32),
+                                           torch.tensor(ys_grid, dtype=torch.float32))
+                coords = torch.zeros(x_resolution * y_resolution, self.dataset.dynamics.state_dim + 1)
+                coords[:, 0] = t_val
+                coords[:, 1:] = torch.tensor(state_slices, dtype=torch.float32)
+                coords[:, 1 + x_axis_idx] = xys[:, 0]
+                coords[:, 1 + y_axis_idx] = xys[:, 1]
+                coords[:, 1 + z_axis_idx] = z_val
+                lx = self.dataset.dynamics.boundary_fn(coords[..., 1:]).numpy().reshape(x_resolution, y_resolution).T
+
+                if num_samples < 3:
+                    ax_scatter.set_facecolor('lightgray')
+                    ax_scatter.text(0.5, 0.5, 'Insufficient\nMPC data',
+                                    transform=ax_scatter.transAxes, ha='center', va='center',
+                                    fontsize=12, color='darkgray')
+                    if num_samples > 0:
+                        scatter = ax_scatter.scatter(slice_x, slice_y, c=slice_vals,
+                                                     cmap='coolwarm_r', s=30, edgecolors='black',
+                                                     linewidth=0.5, alpha=0.9)
+                        fig_scatter.colorbar(scatter, ax=ax_scatter)
+                else:
+                    local_vmin = np.nanmin(slice_vals)
+                    local_vmax = np.nanmax(slice_vals)
+                    scatter_sc = ax_scatter.scatter(slice_x, slice_y, c=slice_vals,
+                                                    cmap='coolwarm_r', s=30, edgecolors='black',
+                                                    linewidth=0.5, alpha=0.9,
+                                                    vmin=local_vmin, vmax=local_vmax)
+                    fig_scatter.colorbar(scatter_sc, ax=ax_scatter)
+
+                ax_scatter.contour(X, Y, lx, levels=[0.0], colors='saddlebrown',
+                                   linewidths=1.5, linestyles='-')
+
+                ax_scatter.set_xlim(x_min, x_max)
+                ax_scatter.set_ylim(y_min, y_max)
+                if i == len(times) - 1:
+                    ax_scatter.set_xlabel(plot_config['state_labels'][x_axis_idx])
+                if j == 0:
+                    ax_scatter.set_ylabel(plot_config['state_labels'][y_axis_idx])
+
+        fixed_str = f'Base quaternion, fixed: vx={state_slices[3]:.2f}, vy={state_slices[4]:.2f}, vz={state_slices[5]:.2f}'
+        fig_scatter.suptitle(f'MPC Dataset Position - Scatter (Epoch {epoch})\n{fixed_str}', fontsize=14)
+
+        plt.tight_layout()
+
+        if self.use_wandb:
+            wandb.log({
+                'step': epoch,
+                'mpc_dataset_position_scatter_base_quat': wandb.Image(fig_scatter),
+            })
+
+        plt.close(fig_scatter)
+
+    def validate_mpc_dataset_position_base_quat_hist(self, epoch, x_resolution, y_resolution, z_resolution, time_resolution,
+                                                     angle_tol=0.2):
+        """Sampling histogram for base quaternion (Docking13D only)."""
+        if self.dataset.dynamics.name != 'Docking13D':
+            return
+        if not self.dataset.use_MPC:
+            return
+        if not hasattr(self.dataset, 'MPC_inputs') or self.dataset.MPC_inputs is None:
+            return
+        if len(self.dataset.MPC_inputs) < 10:
+            return
+
+        plot_config = self.dataset.dynamics.plot_config()
+        state_test_range = self.dataset.dynamics.state_test_range()
+
+        x_axis_idx = plot_config['x_axis_idx']
+        y_axis_idx = plot_config['y_axis_idx']
+        z_axis_idx = plot_config['z_axis_idx']
+        if z_axis_idx == -1:
+            return
+
+        x_min, x_max = state_test_range[x_axis_idx]
+        y_min, y_max = state_test_range[y_axis_idx]
+        z_min, z_max = state_test_range[z_axis_idx]
+
+        times = torch.linspace(0, self.dataset.tMax, time_resolution)
+        zs = torch.linspace(z_min, z_max, z_resolution)
+
+        mpc_inputs_real = self.dataset.dynamics.input_to_coord(
+            self.dataset.MPC_inputs.clone()
+        )
+
+        mpc_times = mpc_inputs_real[:, 0].numpy()
+        mpc_x = mpc_inputs_real[:, 1 + x_axis_idx].numpy()
+        mpc_y = mpc_inputs_real[:, 1 + y_axis_idx].numpy()
+        mpc_z = mpc_inputs_real[:, 1 + z_axis_idx].numpy()
+
+        q = mpc_inputs_real[:, 1 + 6:1 + 10].numpy()
+        q0 = np.clip(np.abs(q[:, 0]), 0.0, 1.0)
+        quat_angle = 2.0 * np.arccos(q0)
+        quat_mask = quat_angle < angle_tol
+
+        state_slices = plot_config['state_slices']
+
+        if len(times) > 1:
+            time_tol = (times[1] - times[0]).item() / 10.0
+        else:
+            time_tol = 0.01
+
+        if len(zs) > 1:
+            z_tol = (zs[1] - zs[0]).item() / 10.0
+        else:
+            z_tol = 0.1
+
+        other_dim_tols = {}
+        for dim in range(self.dataset.dynamics.state_dim):
+            if dim in [x_axis_idx, y_axis_idx, z_axis_idx, 6, 7, 8, 9]:
+                continue
+            dim_range = state_test_range[dim][1] - state_test_range[dim][0]
+            other_dim_tols[dim] = dim_range * 0.3
+
+        xs_grid = np.linspace(x_min, x_max, x_resolution)
+        ys_grid = np.linspace(y_min, y_max, y_resolution)
+        X, Y = np.meshgrid(xs_grid, ys_grid)
+
+        fig_hist2d = plt.figure(figsize=(6 * len(zs), 5 * len(times)))
+
+        for i, t in enumerate(times):
+            t_val = t.item()
+            for j, z in enumerate(zs):
+                z_val = z.item()
+
+                time_mask = np.abs(mpc_times - t_val) < time_tol
+                z_mask = np.abs(mpc_z - z_val) < z_tol
+
+                other_masks = np.ones(len(mpc_times), dtype=bool)
+                for dim, tol in other_dim_tols.items():
+                    dim_vals = mpc_inputs_real[:, 1 + dim].numpy()
+                    slice_val = state_slices[dim]
+                    other_masks &= np.abs(dim_vals - slice_val) < tol
+
+                combined_mask = time_mask & z_mask & other_masks & quat_mask
+
+                slice_x = mpc_x[combined_mask]
+                slice_y = mpc_y[combined_mask]
+                num_samples = len(slice_x)
+                subplot_idx = i * len(zs) + j + 1
+
+                ax = fig_hist2d.add_subplot(len(times), len(zs), subplot_idx)
+                ax.set_title(f't = {t_val:.2f}, {plot_config["state_labels"][z_axis_idx]} = {z_val:.2f}\n(n={num_samples})', fontsize=10)
+
+                if num_samples < 3:
+                    ax.set_facecolor('lightgray')
+                    ax.text(0.5, 0.5, 'Insufficient\nMPC data',
+                            transform=ax.transAxes, ha='center', va='center',
+                            fontsize=12, color='darkgray')
+                else:
+                    hist2d, x_edges, y_edges = np.histogram2d(
+                        slice_x, slice_y,
+                        bins=[x_resolution, y_resolution],
+                        range=[[x_min, x_max], [y_min, y_max]]
+                    )
+                    im = ax.imshow(
+                        hist2d.T,
+                        extent=(x_min, x_max, y_min, y_max),
+                        origin='lower',
+                        cmap='viridis',
+                        aspect='equal'
+                    )
+                    fig_hist2d.colorbar(im, ax=ax)
+
+                xys = torch.cartesian_prod(torch.tensor(xs_grid, dtype=torch.float32),
+                                           torch.tensor(ys_grid, dtype=torch.float32))
+                coords = torch.zeros(x_resolution * y_resolution, self.dataset.dynamics.state_dim + 1)
+                coords[:, 0] = t_val
+                coords[:, 1:] = torch.tensor(state_slices, dtype=torch.float32)
+                coords[:, 1 + x_axis_idx] = xys[:, 0]
+                coords[:, 1 + y_axis_idx] = xys[:, 1]
+                coords[:, 1 + z_axis_idx] = z_val
+                lx = self.dataset.dynamics.boundary_fn(coords[..., 1:]).numpy().reshape(x_resolution, y_resolution).T
+                ax.contour(X, Y, lx, levels=[0.0], colors='saddlebrown', linewidths=1.5, linestyles='-')
+
+                ax.set_xlim(x_min, x_max)
+                ax.set_ylim(y_min, y_max)
+                if i == len(times) - 1:
+                    ax.set_xlabel(plot_config['state_labels'][x_axis_idx])
+                if j == 0:
+                    ax.set_ylabel(plot_config['state_labels'][y_axis_idx])
+
+        fixed_str = f'Fixed: vx={state_slices[3]:.2f}, vy={state_slices[4]:.2f}, vz={state_slices[5]:.2f}'
+        fig_hist2d.suptitle(
+            f'MPC Dataset Position - Sampling Histogram (Base Quaternion) (Epoch {epoch})\n{fixed_str}',
+            fontsize=14
+        )
+        plt.tight_layout()
+
+        if self.use_wandb:
+            wandb.log({
+                'step': epoch,
+                'mpc_dataset_position_hist_base_quat': wandb.Image(fig_hist2d),
+            })
+
+        plt.close(fig_hist2d)
 
     def validate_mpc_dataset_velocity(self, epoch, x_resolution, y_resolution, z_resolution, time_resolution):
         """

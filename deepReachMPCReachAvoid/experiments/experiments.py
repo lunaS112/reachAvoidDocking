@@ -1160,46 +1160,99 @@ class Experiment(ExperimentVizMixin, ABC):
         state_test_range = self.dataset.dynamics.state_test_range()
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         fig = None
-        if plot_config['z_axis_idx'] == -1:
-            fig = self.plotSingleFig(
-                state_test_range, plot_config, x_resolution, y_resolution, times)
+        if self.dataset.dynamics.name == 'Docking13D':
+            base_quat = [1.0, 0.0, 0.0, 0.0]
+            base_yaw = self._quat_to_yaw(base_quat)
+            base_cfg = dict(plot_config)
+            base_slices = list(base_cfg['state_slices'])
+            base_slices[6:10] = base_quat
+            base_cfg['state_slices'] = base_slices
+
+            if base_cfg['z_axis_idx'] == -1:
+                fig = self.plotSingleFig(
+                    state_test_range, base_cfg, x_resolution, y_resolution, times,
+                    quat_slice=base_quat, theta_yaw=base_yaw)
+            else:
+                fig = self.plotMultipleFigs(
+                    state_test_range, base_cfg, x_resolution, y_resolution, z_resolution, times,
+                    quat_slice=base_quat, theta_yaw=base_yaw)
         else:
-            fig = self.plotMultipleFigs(
-                state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
+            if plot_config['z_axis_idx'] == -1:
+                fig = self.plotSingleFig(
+                    state_test_range, plot_config, x_resolution, y_resolution, times)
+            else:
+                fig = self.plotMultipleFigs(
+                    state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
 
         if self.use_wandb and fig is not None:
             wandb.log({
                 'step': epoch,
                 'val_plot': wandb.Image(fig),
             })
-        plt.close()
-        
-        # Plot velocity slice (vx vs vy) of the learned value function
-        if self.dataset.dynamics.state_dim >= 4:  # Need at least vx, vy dimensions
-            fig_velocity = self.plotVelocitySlice(
-                state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
-            if self.use_wandb:
+        if fig is not None:
+            plt.close(fig)
+
+        # Docking13D: add plots with small quaternion perturbations
+        if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
+            quat_slices = [
+                [1.0, 0.2, 0.0, 0.0],
+                [1.0, 0.0, 0.2, 0.0],
+                [1.0, 0.0, 0.0, 0.2],
+            ]
+            for idx, quat in enumerate(quat_slices):
+                norm = math.sqrt(quat[0]**2 + quat[1]**2 + quat[2]**2 + quat[3]**2)
+                quat = [q / norm for q in quat]
+                yaw = self._quat_to_yaw(quat)
+                cfg = dict(plot_config)
+                slices = list(cfg['state_slices'])
+                slices[6:10] = quat
+                cfg['state_slices'] = slices
+
+                if cfg['z_axis_idx'] == -1:
+                    fig_q = self.plotSingleFig(
+                        state_test_range, cfg, x_resolution, y_resolution, times,
+                        quat_slice=quat, theta_yaw=yaw)
+                else:
+                    fig_q = self.plotMultipleFigs(
+                        state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
+                        quat_slice=quat, theta_yaw=yaw)
+
                 wandb.log({
                     'step': epoch,
-                    'val_plot_velocity': wandb.Image(fig_velocity),
+                    f'val_plot_docking13d_q{idx+1}': wandb.Image(fig_q),
                 })
-            plt.close()
+                plt.close(fig_q)
+
+            self.validate_mpc_dataset_position_base_quat_scatter(
+                epoch, x_resolution, y_resolution, z_resolution, time_resolution)
         
-        # Plot rotation slice (theta vs omega) of the learned value function
-        if self.dataset.dynamics.state_dim >= 6:  # Need at least theta, omega dimensions
-            fig_rotation = self.plotRotationSlice(
-                state_test_range, plot_config, x_resolution, y_resolution, times)
-            if self.use_wandb:
-                wandb.log({
-                    'step': epoch,
-                    'val_plot_rotation': wandb.Image(fig_rotation),
-                })
-            plt.close()
-        
-        # Also visualize MPC training dataset for comparison
-        self.validate_mpc_dataset_position(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-        self.validate_mpc_dataset_velocity(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-        self.validate_mpc_dataset_rotation(epoch, x_resolution, y_resolution, time_resolution)
+        if self.dataset.dynamics.name != 'Docking13D':
+            # Plot velocity slice (vx vs vy) of the learned value function
+            if self.dataset.dynamics.state_dim >= 4:  # Need at least vx, vy dimensions
+                fig_velocity = self.plotVelocitySlice(
+                    state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times)
+                if self.use_wandb:
+                    wandb.log({
+                        'step': epoch,
+                        'val_plot_velocity': wandb.Image(fig_velocity),
+                    })
+                plt.close()
+            
+            # Plot rotation slice (theta vs omega) of the learned value function
+            if self.dataset.dynamics.state_dim >= 6:  # Need at least theta, omega dimensions
+                fig_rotation = self.plotRotationSlice(
+                    state_test_range, plot_config, x_resolution, y_resolution, times)
+                if self.use_wandb:
+                    wandb.log({
+                        'step': epoch,
+                        'val_plot_rotation': wandb.Image(fig_rotation),
+                    })
+                plt.close()
+            
+            # Also visualize MPC training dataset for comparison
+            self.validate_mpc_dataset_position(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+            self.validate_mpc_dataset_velocity(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+            self.validate_mpc_dataset_rotation(epoch, x_resolution, y_resolution, time_resolution)
         
         # Compute MPC ground truth - controlled by frequency 
         # Set self.mpc_ground_truth_frequency = N to run every N validation calls

@@ -1009,9 +1009,9 @@ class Docking13D(Dynamics):
         self.control_dim = 6
 
         self.state_range_ = torch.tensor([
-            [-4, 4],   # x
-            [-4, 4],   # y
-            [-2, 2],   # z
+            [-15, 15],   # x
+            [-15, 15],   # y
+            [-15, 15],   # z
             [-0.2, 0.2],  # vx
             [-0.2, 0.2],  # vy
             [-0.2, 0.2],  # vz
@@ -1161,44 +1161,91 @@ class Docking13D(Dynamics):
         return input.cuda()
 
     def sample_target_state(self, num_samples):
-        """Sample states near the docking region for training/testing."""
-        target_state_range = self.state_test_range()
-        
-        # Position: focus near docking region
-        target_state_range[0] = [-2.0, 2.0]  # x
-        target_state_range[1] = [-2.0, 2.0]  # y
-        target_state_range[2] = [-1.0, 1.0]  # z
-        
-        # Velocity: keep small velocities near docking
-        target_state_range[3] = [-0.5, 0.5]  # vx
-        target_state_range[4] = [-0.5, 0.5]  # vy
-        target_state_range[5] = [-0.5, 0.5]  # vz
-        
-        # Quaternion: sample near goal quaternion
-        # For simplicity, we'll set to goal and add small perturbations after
-        target_state_range[6] = [0.5, 1.0]   # q0 (keep positive for consistency)
-        target_state_range[7] = [-0.5, 0.5]  # q1
-        target_state_range[8] = [-0.5, 0.5]  # q2
-        target_state_range[9] = [-0.5, 0.5]  # q3
-        
-        # Angular velocity: keep small
-        target_state_range[10] = [-0.3, 0.3]  # wx
-        target_state_range[11] = [-0.3, 0.3]  # wy
-        target_state_range[12] = [-0.3, 0.3]  # wz
-        
-        # Convert to tensor
-        target_state_range = torch.tensor(target_state_range)
-        
-        # Sample uniformly within the target ranges
-        sampled_states = target_state_range[:, 0] + torch.rand(num_samples, self.state_dim) * (
-            target_state_range[:, 1] - target_state_range[:, 0]
-        )
-        
-        # Normalize quaternions
-        q = sampled_states[:, 6:10]
-        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
-        sampled_states[:, 6:10] = q
-        
+        """Sample near target and failure regions; BRT boundary sampling handled elsewhere."""
+        num_samples = int(num_samples)
+        num_goal = max(1, int(0.7 * num_samples))
+        num_fail = max(1, num_samples - num_goal)
+
+        def sample_quat_near_goal(n, angle_std=0.15):
+            q_goal = self.q_goal.detach().cpu()
+            axis = torch.randn(n, 3)
+            axis = axis / (torch.norm(axis, dim=-1, keepdim=True) + 1e-12)
+            angle = torch.randn(n) * angle_std
+            half = 0.5 * angle
+            q0 = torch.cos(half)
+            qv = axis * torch.sin(half).unsqueeze(-1)
+            q_delta = torch.cat([q0.unsqueeze(-1), qv], dim=-1)
+            q_goal_rep = q_goal.unsqueeze(0).repeat(n, 1)
+            q = self.quat_mul(q_goal_rep, q_delta)
+            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+            return q
+
+        # --- Near goal ---
+        goal_states = torch.zeros(num_goal, self.state_dim)
+        goal_states[:, 0] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.6
+        goal_states[:, 1] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.6
+        goal_states[:, 2] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.3
+        goal_states[:, 3] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
+        goal_states[:, 4] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
+        goal_states[:, 5] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
+        goal_states[:, 6:10] = sample_quat_near_goal(num_goal)
+        goal_states[:, 10] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
+        goal_states[:, 11] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
+        goal_states[:, 12] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
+
+        # --- Near failure (inside target body, outside docking cutout) ---
+        fail_states = torch.zeros(num_fail, self.state_dim)
+        w = self.w_t / 2.0 + self.chaser_buffer_xy
+        y_min = -self.chaser_buffer_xy
+        y_max = self.h_t + self.chaser_buffer_xy
+        z_max = self.d_t / 2.0 + self.chaser_buffer_z
+        effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
+
+        collected = 0
+        max_iters = max(10, num_fail * 10)
+        iters = 0
+        while collected < num_fail and iters < max_iters:
+            batch = min(num_fail - collected, 256)
+            xs = (torch.rand(batch) * 2.0 - 1.0) * w
+            ys = y_min + torch.rand(batch) * (y_max - y_min)
+            zs = (torch.rand(batch) * 2.0 - 1.0) * z_max
+
+            # Hemisphere cutout: y >= 0 and inside sphere radius
+            hemi = torch.sqrt(xs**2 + ys**2 + zs**2) - effective_rad
+            in_hemi = (ys >= 0) & (hemi <= 0)
+            keep = ~in_hemi
+
+            xs = xs[keep]
+            ys = ys[keep]
+            zs = zs[keep]
+            if xs.numel() == 0:
+                iters += 1
+                continue
+
+            take = min(xs.numel(), num_fail - collected)
+            fail_states[collected:collected + take, 0] = xs[:take]
+            fail_states[collected:collected + take, 1] = ys[:take]
+            fail_states[collected:collected + take, 2] = zs[:take]
+            collected += take
+            iters += 1
+
+        if collected < num_fail:
+            fail_states = fail_states[:collected]
+
+        if collected > 0:
+            fail_states[:, 3] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
+            fail_states[:, 4] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
+            fail_states[:, 5] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
+            fail_states[:, 6:10] = sample_quat_near_goal(collected, angle_std=0.3)
+            fail_states[:, 10] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
+            fail_states[:, 11] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
+            fail_states[:, 12] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
+
+        sampled_states = torch.cat([goal_states, fail_states], dim=0)
+        if sampled_states.shape[0] < num_samples:
+            extra = num_samples - sampled_states.shape[0]
+            pad = goal_states[:extra].clone()
+            sampled_states = torch.cat([sampled_states, pad], dim=0)
         return sampled_states
     
     # ---------- 13D dynamics ----------
@@ -1317,28 +1364,24 @@ class Docking13D(Dynamics):
         y = state[...,1]
         z = state[...,2]
 
-        # --- Planar SDF from your code (x-y) ---
-        s_rect = torch.maximum(
-            torch.abs(x) - (self.w_t/2 + self.chaser_buffer_xy),
-            torch.maximum(-(y + self.chaser_buffer_xy), y - (self.h_t + self.chaser_buffer_xy))
+        # --- Rectangular prism SDF ---
+        half_w = self.w_t / 2.0 + self.chaser_buffer_xy
+        half_z = self.d_t / 2.0 + self.chaser_buffer_z
+        s_box = torch.maximum(
+            torch.abs(x) - half_w,
+            torch.maximum(
+                torch.maximum(-(y + self.chaser_buffer_xy), y - (self.h_t + self.chaser_buffer_xy)),
+                torch.abs(z) - half_z
+            )
         )
 
+        # --- Hemispherical cutout (centered at origin, y >= 0) ---
         effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
-        dist_semi = torch.sqrt(x**2 + y**2) - effective_rad
-        s_dock = torch.maximum(-y, dist_semi)
-        s_bubble_xy = torch.maximum(s_rect, -s_dock)
+        dist_sphere = torch.sqrt(x**2 + y**2 + z**2) - effective_rad
+        s_hemi = torch.maximum(-y, dist_sphere)
 
-        s_cutout = torch.maximum(torch.abs(x) - effective_rad,
-                                 torch.maximum(-(y + self.chaser_buffer_xy), y))
-        s_fail_xy = torch.maximum(s_bubble_xy, -s_cutout + 0.02)
-
-        # --- Extrude in z: only collide when |z| is within thickness ---
-        half_thick = (self.d_t / 2.0) + self.chaser_buffer_z
-        s_z = torch.abs(z) - half_thick
-
-        # Combine as an intersection of (xy collision region) AND (within z slab)
-        # Using max for intersection of SDFs:
-        s_fail = torch.maximum(s_fail_xy, s_z)
+        # Collision region: box minus hemispherical cutout
+        s_fail = torch.maximum(s_box, -s_hemi + 0.02)
 
         s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
         return s_fail
