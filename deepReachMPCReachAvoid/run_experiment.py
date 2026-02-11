@@ -1,3 +1,4 @@
+import json
 import wandb
 import configargparse
 import inspect
@@ -137,18 +138,15 @@ if (mode == 'all') or (mode == 'train'):
     p.add_argument('--MPC_data_path', type=str, default='none', required=False,
                    help="MPC data path, where inputs.pt and value_labels.pt exist. Note that inputs.pt is normalized. Specify when using your own dataset")
     
-    # Refinement mode options
-    p.add_argument('--refinement_mode', type=str, default='terminal',
-                   choices=['terminal', 'early_time'],
-                   help='Refinement mode after full horizon: terminal or early_time')
-    p.add_argument('--early_time_range', type=float, default=1.0,
-                   help='Upper bound of focused time range for early_time mode (seconds)')
-    p.add_argument('--early_time_penalty_max', type=float, default=0.15,
-                   help='Max false-positive penalty scale for early_time mode (vs 1.0 for terminal)')
-    p.add_argument('--early_time_lr', type=float, default=5e-6,
-                   help='Learning rate during early_time refinement')
+    # Post-curriculum refinement options
+    p.add_argument('--refinement_penalty_max', type=float, default=0.15,
+                   help='Max false-positive penalty scale during post-curriculum refinement')
     p.add_argument('--epoch_till_refinement', type=int, default=20000,
                    help='Epochs between MPC dataset regeneration during refinement phase')
+    p.add_argument('--refinement_dt', type=float, default=None,
+                   help='MPC dt during refinement (default: use same --MPC_dt as curriculum)')
+    p.add_argument('--refinement_lr', type=float, default=None,
+                   help='Learning rate during refinement (default: keep curriculum LR)')
     
     
     '''parameters that you probably don't need to pay attention'''
@@ -209,7 +207,7 @@ if (mode == 'all') or (mode == 'train'):
                    help='z-axis resolution of validation plot during training')
     p.add_argument('--val_time_resolution', type=int, default=6,
                    help='time-axis resolution of validation plot during training')
-    p.add_argument('--mpc_ground_truth_frequency', type=int, default=5,
+    p.add_argument('--mpc_ground_truth_frequency', type=int, default=0,
                    help='How often to compute MPC ground truth visualization (1=every validation, 5=every 5th, 0=disabled)')
 
     # loss options
@@ -230,12 +228,34 @@ if (mode == 'all') or (mode == 'train'):
     dynamics_params = {name: param for name, param in inspect.signature(
         dynamics_class).parameters.items() if name != 'self'}
     for param in dynamics_params.keys():
-        if dynamics_params[param].annotation is bool:
+        p_obj = dynamics_params[param]
+        has_default = p_obj.default is not inspect.Parameter.empty
+        has_annotation = p_obj.annotation is not inspect.Parameter.empty
+
+        if has_annotation and p_obj.annotation is bool:
+            # Bool parameters always get a default (False if none specified)
             p.add_argument(
-                '--' + param, type=dynamics_params[param].annotation, default=False, help='special dynamics_class argument')
+                '--' + param, type=bool,
+                default=p_obj.default if has_default else False,
+                help='special dynamics_class argument')
+        elif has_default:
+            # Parameter has a default in the constructor -> optional
+            kwargs = {'default': p_obj.default, 'required': False,
+                      'help': 'special dynamics_class argument'}
+            if has_annotation:
+                kwargs['type'] = p_obj.annotation
+            elif p_obj.default is None:
+                # No annotation and default is None -> likely a complex type
+                # (list, dict, etc.). Use json.loads to parse from CLI string.
+                kwargs['type'] = json.loads
+            p.add_argument('--' + param, **kwargs)
         else:
-            p.add_argument(
-                '--' + param, type=dynamics_params[param].annotation, required=True, help='special dynamics_class argument')
+            # No default -> required
+            kwargs = {'required': True,
+                      'help': 'special dynamics_class argument'}
+            if has_annotation:
+                kwargs['type'] = p_obj.annotation
+            p.add_argument('--' + param, **kwargs)
 
 if (mode == 'all') or (mode == 'test'):
     p.add_argument('--dt', type=float, default=0.0025,
@@ -313,6 +333,23 @@ if (mode == 'train') and (opt.resume_checkpoint > 0):
     orig_opt.num_epochs -= opt.resume_checkpoint
 
 dynamics.set_model(orig_opt.deepReach_model)
+
+# Capture actual dynamics config for reproducible model loading.
+# These values are determined by the dynamics constructor (which may use
+# hardcoded defaults) and are needed so that models trained with different
+# state_range / tolerance settings can be loaded correctly later.
+orig_opt.state_range = dynamics.state_range_.cpu().tolist()
+if hasattr(dynamics, 'goal_state'):
+    orig_opt.goal_state = dynamics.goal_state.cpu().tolist()
+for attr in ('eps_p', 'eps_v', 'eps_theta', 'eps_omega'):
+    if hasattr(dynamics, attr):
+        setattr(orig_opt, attr, getattr(dynamics, attr))
+
+if (mode == 'all') or (mode == 'train'):
+    # Re-write orig_opt.pickle with the captured dynamics config
+    with open(os.path.join(experiment_dir, 'orig_opt.pickle'), 'wb') as opt_file:
+        pickle.dump(orig_opt, opt_file)
+
 if mode=='test': 
     orig_opt.not_use_MPC=True
     orig_opt.no_time_curr=True
@@ -352,8 +389,7 @@ dataset = dataio.ReachabilityDataset(
     time_till_refinement=orig_opt.time_till_refinement,num_MPC_batches=orig_opt.num_MPC_batches, 
     aug_with_MPC_data= orig_opt.aug_with_MPC_data, policy=policy, refine_dataset=(not orig_opt.not_refine_dataset),
     pause_epochs=orig_opt.pause_epochs, cost_type=orig_opt.cost_type, mpc_percentage=orig_opt.mpc_percentage,
-    refinement_mode=orig_opt.refinement_mode, early_time_range=orig_opt.early_time_range,
-    epoch_till_refinement=orig_opt.epoch_till_refinement)
+    epoch_till_refinement=orig_opt.epoch_till_refinement, refinement_dt=orig_opt.refinement_dt)
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
 experiment = experiment_class(
@@ -364,9 +400,9 @@ experiment.init_special(**{argname: getattr(orig_opt, argname) for argname in in
 # Set MPC ground truth visualization frequency
 experiment.mpc_ground_truth_frequency = orig_opt.mpc_ground_truth_frequency
 
-# Set early-time refinement parameters
-experiment.mpc_penalty_max = orig_opt.early_time_penalty_max
-experiment.early_time_lr = orig_opt.early_time_lr
+# Set refinement parameters
+experiment.mpc_penalty_max = orig_opt.refinement_penalty_max
+experiment.refinement_lr = orig_opt.refinement_lr
 
 if (mode == 'all') or (mode == 'train'):
     if dynamics.loss_type == 'brt_hjivi':

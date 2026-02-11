@@ -25,12 +25,16 @@ CONTROLLER_COLORS = {
     'brt': '#1f77b4',            # blue
     'mpc': '#ff7f0e',            # orange
     'mpc_terminal': '#2ca02c',   # green
+    'cascaded_brt': '#d62728',   # red
+    'cascaded_mpc_terminal': '#9467bd',  # purple
 }
 
 CONTROLLER_LABELS = {
     'brt': 'BRT',
     'mpc': 'MPC',
     'mpc_terminal': 'MPC+Terminal',
+    'cascaded_brt': 'Cascaded BRT',
+    'cascaded_mpc_terminal': 'Cascaded MPC+Terminal',
 }
 
 

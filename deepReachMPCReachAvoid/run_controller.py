@@ -29,7 +29,10 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Controller classes (via convenience re-exports)
-from utils.controllers import BRTController, MPCController, MPCTerminalController
+from utils.controllers import (
+    BRTController, MPCController, MPCTerminalController,
+    CascadedBRTController, CascadedMPCTerminalController,
+)
 
 # Generic (multi-controller) visualisation
 from utils.controllers.controller_animation import (
@@ -43,6 +46,7 @@ from utils.controllers.controller_animation import (
 # BRT-specific visualisation (value-function heatmap animation)
 from utils.controllers.brt_animation import (
     create_deepreach_animation,
+    create_cascaded_deepreach_animation,
     plot_trajectory_static as brt_plot_trajectory_static,
     plot_simulation_data   as brt_plot_simulation_data,
 )
@@ -80,22 +84,60 @@ def build_controller(name, args):
             num_refinement=args.num_refinement,
             device=args.device,
         )
+    elif name == 'cascaded_brt':
+        return CascadedBRTController(
+            outer_checkpoint=args.checkpoint_path,
+            inner_checkpoint=args.inner_checkpoint_path,
+            outer_tMax=args.tMax,
+            inner_tMax=args.inner_tMax,
+            dt=args.dt,
+            device=args.device,
+        )
+    elif name == 'cascaded_mpc_terminal':
+        return CascadedMPCTerminalController(
+            outer_checkpoint=args.checkpoint_path,
+            inner_checkpoint=args.inner_checkpoint_path,
+            effective_horizon_sec=args.effective_horizon,
+            outer_tMax=args.tMax,
+            inner_tMax=args.inner_tMax,
+            dt=args.dt,
+            num_samples=args.num_samples,
+            num_refinement=args.num_refinement,
+            device=args.device,
+        )
     else:
         raise ValueError(f"Unknown controller: {name}")
 
+SAMPLING_STATE_RANGE = np.array([
+    [-13.0, 13.0],   # px  (m)
+    [-13.0, 13.0],   # py  (m)
+    [ -1.0,  1.0],   # vx  (m/s)
+    [ -1.0,  1.0],   # vy  (m/s)
+    [-np.pi, np.pi],  # theta (rad)  -- full range is fine
+    [ -0.75,  0.75],   # omega (rad/s)
+])
 
 def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
     """
-    Sample *n* valid initial conditions uniformly from the state space.
+    Sample *n* valid initial conditions uniformly from a feasible
+    sub-region of the state space.
+
+    The sampling bounds are the intersection of ``SAMPLING_STATE_RANGE``
+    (hard-coded above) and the dynamics' ``state_range_``, so we never
+    exceed the model's training domain.
 
     Filtering:
-      - Within state bounds.
+      - Within sampling bounds.
       - Not inside the failure set (avoid_fn > 0).
       - Not already docked (reach_fn > 0).
     """
     rng = np.random.RandomState(seed)
-    state_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
-    state_hi = dynamics.state_range_[:, 1].cpu().numpy().astype(np.float64)
+
+    # Intersect SAMPLING_STATE_RANGE with the dynamics' state_range_
+    dyn_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
+    dyn_hi = dynamics.state_range_[:, 1].cpu().numpy().astype(np.float64)
+    state_lo = np.maximum(dyn_lo, SAMPLING_STATE_RANGE[:, 0])
+    state_hi = np.minimum(dyn_hi, SAMPLING_STATE_RANGE[:, 1])
 
     samples = []
     attempts = 0
@@ -233,6 +275,11 @@ def load_dynamics(checkpoint_path):
             kwargs[pn] = getattr(orig_opt, pn)
     dynamics = dynamics_class(**kwargs)
     dynamics.set_model(orig_opt.deepReach_model)
+
+    # Fallback: ensure normalization matches training
+    if hasattr(orig_opt, 'state_range') and orig_opt.state_range is not None:
+        dynamics.override_state_range(orig_opt.state_range)
+
     return dynamics
 
 def run_single(args):
@@ -281,7 +328,12 @@ def run_single(args):
     print(f"Success:  {result['success']}")
     print(f"Docked:   {result.get('docked', 'N/A')}")
     print(f"Collision:{result.get('collision', 'N/A')}")
-    print(f"Final state: {result['final_state']}")
+    fs = result['final_state']
+    theta_err = np.arctan2(np.sin(fs[4] - np.pi/2), np.cos(fs[4] - np.pi/2))
+    print(f"Final state: px={fs[0]:.4f}m  py={fs[1]:.4f}m  "
+          f"vx={fs[2]:.4f}m/s  vy={fs[3]:.4f}m/s  "
+          f"θ_err={theta_err:.4f}rad ({np.degrees(theta_err):.2f}°)  "
+          f"ω={fs[5]:.4f}rad/s")
     print(f"Duration: {result['times'][-1]:.2f}s")
     print(f"Control effort: {result.get('control_effort', 0):.2f}")
     print(f"Wall time: {result.get('wall_time', 0):.2f}s")
@@ -319,6 +371,16 @@ def run_single(args):
             anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
             print(f"Generating BRT animation (with value function): {anim_path}")
             create_deepreach_animation(
+                controller, result, anim_path,
+                skip_frames=args.skip_frames,
+                resolution=args.resolution,
+                show_value_function=True,
+            )
+        elif ctrl_type == 'cascaded_brt' and not args.no_value_function:
+            # Cascaded BRT animation with phase-aware value function
+            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
+            print(f"Generating Cascaded BRT animation (with value function): {anim_path}")
+            create_cascaded_deepreach_animation(
                 controller, result, anim_path,
                 skip_frames=args.skip_frames,
                 resolution=args.resolution,
@@ -376,10 +438,26 @@ def run_compare(args):
         print(f"{'=' * 60}")
 
         results = []
+        idx_w = len(str(len(ics)))  # width for index formatting
         for i, ic in enumerate(ics):
-            print(f"\n--- {display}  rollout {i+1}/{len(ics)} ---")
             result = ctrl.simulate_docking(ic, args.max_sim_time)
             results.append(result)
+
+            # Per-rollout summary
+            fs = result['final_state']
+            theta_err = np.arctan2(np.sin(fs[4] - np.pi/2),
+                                   np.cos(fs[4] - np.pi/2))
+            if result['collision']:
+                outcome = 'COLLISION'
+            elif result['docked']:
+                outcome = 'DOCKED'
+            else:
+                outcome = 'TIMEOUT'
+            t_final = result['times'][-1]
+            print(f"  [{i+1:>{idx_w}}/{len(ics)}] {outcome:<10} "
+                  f"t={t_final:6.1f}s  "
+                  f"θ_err={np.degrees(theta_err):+7.2f}°  "
+                  f"effort={result['control_effort']:7.1f}")
 
         all_results[ctrl_name] = results
         m = compute_metrics(results)
@@ -393,12 +471,81 @@ def run_compare(args):
     # Print & save
     print_comparison_table(metrics_by_name)
 
+    # ---- Collect detailed per-rollout outcomes ----
+    detailed_by_name = {}
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        results = all_results[ctrl_name]
+
+        collisions = []
+        docked_list = []
+        timeouts = []
+
+        for i, result in enumerate(results):
+            fs = result['final_state']
+            theta_err = np.arctan2(np.sin(fs[4] - np.pi/2),
+                                   np.cos(fs[4] - np.pi/2))
+            detail = {
+                'rollout_idx': i,
+                'initial_state': ics[i].tolist(),
+                'final_state': fs.tolist(),
+                'theta_err_deg': round(float(np.degrees(theta_err)), 4),
+                'sim_time': round(float(result['times'][-1]), 4),
+                'control_effort': round(float(result['control_effort']), 4),
+            }
+
+            if result['collision']:
+                collisions.append(detail)
+            elif result['docked']:
+                docked_list.append(detail)
+            else:
+                timeouts.append(detail)
+
+        detailed_by_name[display] = {
+            'collisions': collisions,
+            'docked': docked_list,
+            'timeouts': timeouts,
+        }
+
+    # ---- Save collision ICs per controller as .npy ----
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        coll_details = detailed_by_name[display]['collisions']
+        if coll_details:
+            collision_ics = np.array([c['initial_state'] for c in coll_details])
+            collision_path = os.path.join(
+                args.output_dir, f'collision_ics_{ctrl_name}.npy')
+            np.save(collision_path, collision_ics)
+            print(f"  {display}: {len(coll_details)} collision IC(s) "
+                  f"saved to {collision_path}")
+
+    # ---- Print collision summary ----
+    print('\n' + '-' * 60)
+    print('COLLISION SUMMARY')
+    print('-' * 60)
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        coll = detailed_by_name[display]['collisions']
+        if coll:
+            print(f"\n{display}  ({len(coll)} collision(s)):")
+            for c in coll:
+                ic = c['initial_state']
+                print(f"  rollout {c['rollout_idx']:>3d}  "
+                      f"IC=[{ic[0]:+7.2f}, {ic[1]:+7.2f}, {ic[2]:+5.2f}, "
+                      f"{ic[3]:+5.2f}, {ic[4]:+5.2f}, {ic[5]:+5.2f}]  "
+                      f"t_coll={c['sim_time']:.1f}s")
+        else:
+            print(f"\n{display}: no collisions")
+    print('-' * 60)
+
+    # ---- Build and save JSON ----
     json_path = os.path.join(args.output_dir, 'comparison_results.json')
     json_data = {}
     for k, v in metrics_by_name.items():
         json_data[k] = {kk: (float(vv) if isinstance(vv, (np.floating, float))
                               else int(vv))
                          for kk, vv in v.items()}
+        json_data[k].update(detailed_by_name[k])
     with open(json_path, 'w') as f:
         json.dump(json_data, f, indent=2)
     print(f"Results saved to {json_path}")
@@ -446,12 +593,17 @@ def _add_shared_args(parser):
                         help='Maximum simulation time (s)')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Torch device')
+    # Cascaded controller args
+    parser.add_argument('--inner_checkpoint_path', type=str, default=None,
+                        help='Path to inner (short-horizon) model checkpoint (cascaded controllers)')
+    parser.add_argument('--inner_tMax', type=float, default=3.0,
+                        help='Inner BRT time horizon (cascaded controllers)')
     # MPC-specific
     parser.add_argument('--planning_horizon', type=float, default=20.0,
                         help='MPC-only planning horizon (s)')
     parser.add_argument('--mpc_dt', type=float, default=0.5,
                         help='MPC planning timestep (s); simulation uses --dt')
-    parser.add_argument('--effective_horizon', type=float, default=2.0,
+    parser.add_argument('--effective_horizon', type=float, default=3.0,
                         help='MPC+Terminal effective horizon (s)')
     parser.add_argument('--num_samples', type=int, default=100,
                         help='MPC random-shooting samples')
@@ -480,7 +632,7 @@ def main():
     _add_shared_args(sp_single)
     sp_single.add_argument(
         '--controller', type=str, default='brt',
-        choices=['brt', 'mpc', 'mpc_terminal'],
+        choices=['brt', 'mpc', 'mpc_terminal', 'cascaded_brt', 'cascaded_mpc_terminal'],
         help='Controller type to run')
     # Initial state
     sp_single.add_argument('--initial_px',    type=float, default=2.0)
@@ -504,7 +656,7 @@ def main():
     sp_compare.add_argument(
         '--controllers', type=str, nargs='+',
         default=['brt', 'mpc', 'mpc_terminal'],
-        choices=['brt', 'mpc', 'mpc_terminal'],
+        choices=['brt', 'mpc', 'mpc_terminal', 'cascaded_brt', 'cascaded_mpc_terminal'],
         help='Controllers to compare')
     sp_compare.add_argument('--n_rollouts', type=int, default=50,
                             help='Number of rollouts per controller')

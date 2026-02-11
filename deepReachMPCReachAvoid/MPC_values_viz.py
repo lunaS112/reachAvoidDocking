@@ -21,8 +21,8 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 20
-    dt = 0.5
+    T = 3
+    dt = 0.1
     style = "receding" # Can be "direct" or "receding"
     cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"

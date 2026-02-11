@@ -132,6 +132,11 @@ class MPCController:
         self.dynamics = dynamics_class(**kwargs)
         self.dynamics.set_model(self.orig_opt.deepReach_model)
 
+        # Fallback: ensure normalization matches training even if
+        # state_range was not passed through the constructor
+        if hasattr(self.orig_opt, 'state_range') and self.orig_opt.state_range is not None:
+            self.dynamics.override_state_range(self.orig_opt.state_range)
+
     def reset(self):
         """Reset controller state for a new simulation."""
         self.state_history = []
@@ -282,7 +287,5 @@ class MPCController:
         return pos_ok and vel_ok and theta_ok and omega_ok
 
     def _check_collision(self, state):
-        """Check if the chaser is inside the failure set."""
-        s = torch.tensor(state, dtype=torch.float32,
-                         device=self.device).unsqueeze(0)
-        return self.dynamics.avoid_fn(s).item() < 0
+        """Orientation-aware collision check (actual chaser corners)."""
+        return self.dynamics.check_collision_oriented(state)

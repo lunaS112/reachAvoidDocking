@@ -97,6 +97,11 @@ class BRTController:
         
         self.dynamics = dynamics_class(**kwargs)
         self.dynamics.set_model(self.orig_opt.deepReach_model)
+
+        # Fallback: ensure normalization matches training even if
+        # state_range was not passed through the constructor
+        if hasattr(self.orig_opt, 'state_range') and self.orig_opt.state_range is not None:
+            self.dynamics.override_state_range(self.orig_opt.state_range)
         
         # Create model with same architecture as training
         self.model = modules.SingleBVPNet(
@@ -534,14 +539,12 @@ class BRTController:
         return pos_ok and vel_ok and theta_ok and omega_ok
     
     def _check_collision(self, state):
-        """Check if state is in collision with target spacecraft."""
-        px, py = state[0], state[1]
-        
-        # Use dynamics avoid_fn (negative = collision)
-        state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
-        avoid_value = self.dynamics.avoid_fn(state_tensor).item()
-        
-        return avoid_value < 0
+        """Check if state is in collision with target spacecraft.
+
+        Uses the orientation-aware check (actual chaser corners) rather
+        than the conservative circular-buffer ``avoid_fn``.
+        """
+        return self.dynamics.check_collision_oriented(state)
     
     def get_value_grid(self, time, x_range=(-15, 15), y_range=(-15, 15), 
                        resolution=50, fixed_state=None):
