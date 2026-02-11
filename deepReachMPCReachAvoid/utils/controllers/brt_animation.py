@@ -495,8 +495,8 @@ def plot_simulation_data(sim_result, save_path=None):
     # Position
     ax = axes[0, 0]
     ax.plot(times, trajectory[:, 0], 'b-', label='px')
-    ax.plot(times, trajectory[:, 1], 'g-', label='py')
-    ax.axhline(0, color='k', linestyle='--', alpha=0.3)
+    ax.plot(times, trajectory[:, 1], 'r--', label='py')
+    ax.axhline(0, color='k', linestyle=':', linewidth=1.5, alpha=0.5, label='Goal')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Position (m)')
     ax.set_title('Position')
@@ -506,8 +506,8 @@ def plot_simulation_data(sim_result, save_path=None):
     # Velocity
     ax = axes[0, 1]
     ax.plot(times, trajectory[:, 2], 'b-', label='vx')
-    ax.plot(times, trajectory[:, 3], 'g-', label='vy')
-    ax.axhline(0, color='k', linestyle='--', alpha=0.3)
+    ax.plot(times, trajectory[:, 3], 'r--', label='vy')
+    ax.axhline(0, color='k', linestyle=':', linewidth=1.5, alpha=0.5, label='Goal')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Velocity (m/s)')
     ax.set_title('Velocity')
@@ -517,8 +517,9 @@ def plot_simulation_data(sim_result, save_path=None):
     # Orientation
     ax = axes[1, 0]
     ax.plot(times, trajectory[:, 4], 'r-', label='θ')
-    ax.plot(times, trajectory[:, 5], 'b-', label='ω')
-    ax.axhline(np.pi/2, color='g', linestyle='--', alpha=0.5, label='θ_target')
+    ax.plot(times, trajectory[:, 5], 'b--', label='ω')
+    ax.axhline(np.pi/2, color='k', linestyle=':', linewidth=1.5, alpha=0.5, label='θ_goal')
+    ax.axhline(0, color='gray', linestyle=':', linewidth=1, alpha=0.3, label='ω_goal')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Angle (rad), Angular vel (rad/s)')
     ax.set_title('Orientation')
@@ -528,8 +529,8 @@ def plot_simulation_data(sim_result, save_path=None):
     # Control inputs
     ax = axes[1, 1]
     ax.plot(times, controls[:, 0], 'r-', label='u_x')
-    ax.plot(times, controls[:, 1], 'g-', label='u_y')
-    ax.plot(times, controls[:, 2], 'b-', label='u_θ')
+    ax.plot(times, controls[:, 1], 'g--', label='u_y')
+    ax.plot(times, controls[:, 2], 'b:', label='u_θ')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Control')
     ax.set_title('Control Inputs')

@@ -1,0 +1,525 @@
+#!/usr/bin/env python3
+"""
+Unified controller runner for Docking6D.
+
+Subcommands:
+    single   -- Run one controller from a specified initial condition.
+    compare  -- Run N rollouts per controller from random ICs and compare metrics.
+
+Usage:
+    python run_controller.py single  --controller brt   [options]
+    python run_controller.py compare --controllers brt mpc mpc_terminal [options]
+"""
+
+import argparse
+import inspect
+import json
+import os
+import pickle
+import sys
+import time
+
+import numpy as np
+import torch
+import matplotlib
+matplotlib.use('Agg')          # non-interactive backend (safe on headless servers)
+import matplotlib.pyplot as plt
+
+# Add the project root to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Controller classes (via convenience re-exports)
+from utils.controllers import BRTController, MPCController, MPCTerminalController
+
+# Generic (multi-controller) visualisation
+from utils.controllers.controller_animation import (
+    animate_trajectories,
+    plot_trajectories_static,
+    plot_simulation_data_multi,
+    CONTROLLER_LABELS,
+    CONTROLLER_COLORS,
+)
+
+# BRT-specific visualisation (value-function heatmap animation)
+from utils.controllers.brt_animation import (
+    create_deepreach_animation,
+    plot_trajectory_static as brt_plot_trajectory_static,
+    plot_simulation_data   as brt_plot_simulation_data,
+)
+
+from dynamics import dynamics as dynamics_module
+
+
+
+def build_controller(name, args):
+    """Instantiate a controller by name string."""
+    if name == 'brt':
+        return BRTController(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            dt=args.dt,
+            device=args.device,
+        )
+    elif name == 'mpc':
+        return MPCController(
+            checkpoint_path=args.checkpoint_path,
+            planning_horizon_sec=args.planning_horizon,
+            mpc_dt=args.mpc_dt,
+            dt=args.dt,
+            num_samples=args.num_samples,
+            num_refinement=args.num_refinement,
+            device=args.device,
+        )
+    elif name == 'mpc_terminal':
+        return MPCTerminalController(
+            checkpoint_path=args.checkpoint_path,
+            effective_horizon_sec=args.effective_horizon,
+            tMax=args.tMax,
+            dt=args.dt,
+            num_samples=args.num_samples,
+            num_refinement=args.num_refinement,
+            device=args.device,
+        )
+    else:
+        raise ValueError(f"Unknown controller: {name}")
+
+
+def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
+    """
+    Sample *n* valid initial conditions uniformly from the state space.
+
+    Filtering:
+      - Within state bounds.
+      - Not inside the failure set (avoid_fn > 0).
+      - Not already docked (reach_fn > 0).
+    """
+    rng = np.random.RandomState(seed)
+    state_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
+    state_hi = dynamics.state_range_[:, 1].cpu().numpy().astype(np.float64)
+
+    samples = []
+    attempts = 0
+    max_attempts = n * 200
+
+    while len(samples) < n and attempts < max_attempts:
+        batch_size = min(n * 10, 5000)
+        batch = rng.uniform(state_lo, state_hi, size=(batch_size, 6))
+        batch_t = torch.tensor(batch, dtype=torch.float32, device=device)
+
+        avoid_vals = dynamics.avoid_fn(batch_t).cpu().numpy()
+        reach_vals = dynamics.reach_fn(batch_t).cpu().numpy()
+
+        valid = (avoid_vals > 0) & (reach_vals > 0)
+        for s in batch[valid]:
+            if len(samples) >= n:
+                break
+            samples.append(s)
+        attempts += batch_size
+
+    if len(samples) < n:
+        print(f"WARNING: only sampled {len(samples)}/{n} valid ICs "
+              f"after {attempts} attempts.")
+
+    return np.array(samples[:n])
+
+
+def compute_metrics(all_results):
+    """Aggregate metrics from a list of result dicts."""
+    n = len(all_results)
+    if n == 0:
+        return {}
+    goals      = sum(1 for r in all_results if r['docked'])
+    collisions = sum(1 for r in all_results if r['collision'])
+    successes  = sum(1 for r in all_results if r['success'])
+    efforts    = [r['control_effort'] for r in all_results]
+    times      = [r['wall_time'] for r in all_results]
+    return {
+        'n': n,
+        'goal_rate':            goals / n,
+        'collision_rate':       collisions / n,
+        'success_rate':         successes / n,
+        'mean_control_effort':  float(np.mean(efforts)),
+        'std_control_effort':   float(np.std(efforts)),
+        'mean_wall_time':       float(np.mean(times)),
+        'std_wall_time':        float(np.std(times)),
+    }
+
+
+def print_comparison_table(metrics_by_controller):
+    """Print a formatted comparison table to stdout."""
+    header = (f"{'Controller':<18} {'Goal%':>7} {'Coll%':>7} {'Succ%':>7} "
+              f"{'Effort':>14} {'Time (s)':>14}")
+    sep = '-' * len(header)
+    print('\n' + sep)
+    print('CONTROLLER COMPARISON')
+    print(sep)
+    print(header)
+    print(sep)
+    for name, m in metrics_by_controller.items():
+        effort_str = f"{m['mean_control_effort']:.1f} +/- {m['std_control_effort']:.1f}"
+        time_str   = f"{m['mean_wall_time']:.2f} +/- {m['std_wall_time']:.2f}"
+        print(f"{name:<18} {m['goal_rate']*100:>6.1f}% "
+              f"{m['collision_rate']*100:>6.1f}% "
+              f"{m['success_rate']*100:>6.1f}% "
+              f"{effort_str:>14} {time_str:>14}")
+    print(sep + '\n')
+
+
+def plot_metrics_bar(metrics_by_controller, save_path=None):
+    """Grouped bar chart of comparison metrics."""
+    names = list(metrics_by_controller.keys())
+    n_ctrl = len(names)
+
+    label_to_type = {v: k for k, v in CONTROLLER_LABELS.items()}
+    colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brt'), '#1f77b4')
+              for n in names]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    x = np.arange(n_ctrl)
+
+    # Rates
+    w = 0.25
+    axes[0].bar(x - w,
+                [metrics_by_controller[n]['goal_rate'] * 100 for n in names],
+                w, label='Goal %', color='#66c2a5')
+    axes[0].bar(x,
+                [metrics_by_controller[n]['collision_rate'] * 100 for n in names],
+                w, label='Collision %', color='#fc8d62')
+    axes[0].bar(x + w,
+                [metrics_by_controller[n]['success_rate'] * 100 for n in names],
+                w, label='Success %', color='#8da0cb')
+    axes[0].set_xticks(x); axes[0].set_xticklabels(names, fontsize=9)
+    axes[0].set_ylabel('Percentage (%)'); axes[0].set_title('Rates')
+    axes[0].legend(fontsize=8); axes[0].set_ylim([0, 105])
+    axes[0].grid(axis='y', alpha=0.3)
+
+    # Control effort
+    means = [metrics_by_controller[n]['mean_control_effort'] for n in names]
+    stds  = [metrics_by_controller[n]['std_control_effort']  for n in names]
+    axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+    axes[1].set_xticks(x); axes[1].set_xticklabels(names, fontsize=9)
+    axes[1].set_ylabel('Control Effort'); axes[1].set_title('Mean Control Effort')
+    axes[1].grid(axis='y', alpha=0.3)
+
+    # Runtime
+    means = [metrics_by_controller[n]['mean_wall_time'] for n in names]
+    stds  = [metrics_by_controller[n]['std_wall_time']  for n in names]
+    axes[2].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+    axes[2].set_xticks(x); axes[2].set_xticklabels(names, fontsize=9)
+    axes[2].set_ylabel('Wall Time (s)'); axes[2].set_title('Mean Runtime per Rollout')
+    axes[2].grid(axis='y', alpha=0.3)
+
+    plt.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Metrics plot saved to {save_path}")
+    return fig
+
+
+def load_dynamics(checkpoint_path):
+    """Load a dynamics instance from the experiment's saved options."""
+    experiment_dir = os.path.dirname(
+        os.path.dirname(os.path.dirname(checkpoint_path)))
+    opt_path = os.path.join(experiment_dir, 'orig_opt.pickle')
+    with open(opt_path, 'rb') as f:
+        orig_opt = pickle.load(f)
+
+    dynamics_class = getattr(dynamics_module, orig_opt.dynamics_class)
+    sig = inspect.signature(dynamics_class)
+    kwargs = {}
+    for pn in sig.parameters.keys():
+        if pn != 'self' and hasattr(orig_opt, pn):
+            kwargs[pn] = getattr(orig_opt, pn)
+    dynamics = dynamics_class(**kwargs)
+    dynamics.set_model(orig_opt.deepReach_model)
+    return dynamics
+
+def run_single(args):
+    """Run one controller from a specified initial condition."""
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    if not os.path.exists(args.checkpoint_path):
+        print(f"ERROR: checkpoint not found: {args.checkpoint_path}")
+        return
+
+    ctrl_type = args.controller
+    display = CONTROLLER_LABELS.get(ctrl_type, ctrl_type)
+
+    print('=' * 60)
+    print(f'{display} Controller -- Single Run')
+    print('=' * 60)
+
+    # Build controller
+    controller = build_controller(ctrl_type, args)
+    dynamics = controller.dynamics
+
+    # Initial state
+    initial_state = np.array([
+        args.initial_px,  args.initial_py,
+        args.initial_vx,  args.initial_vy,
+        args.initial_theta, args.initial_omega,
+    ])
+    print(f"\nInitial state: px={initial_state[0]:.2f}, py={initial_state[1]:.2f}, "
+          f"vx={initial_state[2]:.2f}, vy={initial_state[3]:.2f}, "
+          f"theta={initial_state[4]:.2f}, omega={initial_state[5]:.2f}")
+
+    # BRT-specific pre-check
+    if ctrl_type == 'brt':
+        v0 = controller.get_value(initial_state, args.tMax)
+        print(f"Initial V(x, tMax={args.tMax}s) = {v0:.4f}")
+        print(f"State is {'INSIDE' if v0 <= 0 else 'OUTSIDE'} the BRT")
+
+    # Run simulation
+    print(f"\nRunning simulation for {args.max_sim_time}s ...")
+    result = controller.simulate_docking(initial_state, args.max_sim_time)
+
+    # ---- Print results ----
+    print('\n' + '=' * 60)
+    print('SIMULATION RESULTS')
+    print('=' * 60)
+    print(f"Success:  {result['success']}")
+    print(f"Docked:   {result.get('docked', 'N/A')}")
+    print(f"Collision:{result.get('collision', 'N/A')}")
+    print(f"Final state: {result['final_state']}")
+    print(f"Duration: {result['times'][-1]:.2f}s")
+    print(f"Control effort: {result.get('control_effort', 0):.2f}")
+    print(f"Wall time: {result.get('wall_time', 0):.2f}s")
+
+    if ctrl_type == 'brt':
+        if result.get('phase_transition_time') is not None:
+            print(f"Entered BRT (Phase 2) at t={result['phase_transition_time']:.2f}s")
+        else:
+            print("Never entered BRT (stayed in Phase 1)")
+        phases = result.get('phases', np.array([]))
+        if len(phases) > 0:
+            print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
+            print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
+
+    # ---- Generate outputs ----
+    print('\n' + '=' * 60)
+    print('GENERATING OUTPUTS')
+    print('=' * 60)
+
+    # Generic static plots (all controller types)
+    result_dict = {display: result}
+
+    traj_path = os.path.join(args.output_dir, 'trajectory.png')
+    print(f"Generating trajectory plot: {traj_path}")
+    plot_trajectories_static(result_dict, dynamics, save_path=traj_path)
+
+    data_path = os.path.join(args.output_dir, 'simulation_data.png')
+    print(f"Generating data plots: {data_path}")
+    plot_simulation_data_multi(result_dict, save_path=data_path)
+
+    # Animation
+    if not args.no_animation:
+        if ctrl_type == 'brt' and not args.no_value_function:
+            # BRT-specific animation with value-function heatmap
+            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
+            print(f"Generating BRT animation (with value function): {anim_path}")
+            create_deepreach_animation(
+                controller, result, anim_path,
+                skip_frames=args.skip_frames,
+                resolution=args.resolution,
+                show_value_function=True,
+            )
+        else:
+            # Generic animation (works for any controller)
+            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
+            print(f"Generating animation: {anim_path}")
+            animate_trajectories(
+                result_dict, dynamics, anim_path,
+                skip_frames=args.skip_frames, dt=args.dt,
+            )
+
+    print('\n' + '=' * 60)
+    print('DONE')
+    print('=' * 60)
+    print(f"Outputs saved to: {args.output_dir}")
+
+def run_compare(args):
+    """Run N rollouts per controller and compare metrics."""
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    if not os.path.exists(args.checkpoint_path):
+        print(f"ERROR: checkpoint not found: {args.checkpoint_path}")
+        return
+
+    # Load dynamics for IC sampling
+    dynamics = load_dynamics(args.checkpoint_path)
+
+    # Sample initial conditions
+    print(f"\nSampling {args.n_rollouts} initial conditions (seed={args.seed}) ...")
+    ics = sample_initial_conditions(
+        dynamics, args.n_rollouts, device=args.device, seed=args.seed)
+    print(f"Sampled {len(ics)} valid ICs.\n")
+
+    ic_path = os.path.join(args.output_dir, 'initial_conditions.npy')
+    np.save(ic_path, ics)
+    print(f"Initial conditions saved to {ic_path}")
+
+    # Build controllers
+    controllers = {}
+    for name in args.controllers:
+        print(f"\nBuilding controller: {name}")
+        controllers[name] = build_controller(name, args)
+
+    # Run rollouts
+    all_results = {}
+    metrics_by_name = {}
+
+    for ctrl_name, ctrl in controllers.items():
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        print(f"\n{'=' * 60}")
+        print(f"Running {len(ics)} rollouts for {display}")
+        print(f"{'=' * 60}")
+
+        results = []
+        for i, ic in enumerate(ics):
+            print(f"\n--- {display}  rollout {i+1}/{len(ics)} ---")
+            result = ctrl.simulate_docking(ic, args.max_sim_time)
+            results.append(result)
+
+        all_results[ctrl_name] = results
+        m = compute_metrics(results)
+        metrics_by_name[display] = m
+        print(f"\n{display}: goal={m['goal_rate']*100:.1f}%  "
+              f"coll={m['collision_rate']*100:.1f}%  "
+              f"succ={m['success_rate']*100:.1f}%  "
+              f"effort={m['mean_control_effort']:.1f}  "
+              f"time={m['mean_wall_time']:.2f}s")
+
+    # Print & save
+    print_comparison_table(metrics_by_name)
+
+    json_path = os.path.join(args.output_dir, 'comparison_results.json')
+    json_data = {}
+    for k, v in metrics_by_name.items():
+        json_data[k] = {kk: (float(vv) if isinstance(vv, (np.floating, float))
+                              else int(vv))
+                         for kk, vv in v.items()}
+    with open(json_path, 'w') as f:
+        json.dump(json_data, f, indent=2)
+    print(f"Results saved to {json_path}")
+
+    bar_path = os.path.join(args.output_dir, 'metrics_comparison.png')
+    plot_metrics_bar(metrics_by_name, save_path=bar_path)
+
+    # Trajectory comparison (first IC)
+    first_results = {}
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        first_results[display] = all_results[ctrl_name][0]
+
+    traj_path = os.path.join(args.output_dir, 'trajectory_comparison.png')
+    plot_trajectories_static(first_results, dynamics, save_path=traj_path)
+
+    data_path = os.path.join(args.output_dir, 'simulation_data_comparison.png')
+    plot_simulation_data_multi(first_results, save_path=data_path)
+
+    # Optional animation
+    if args.animate:
+        anim_path = os.path.join(args.output_dir, 'comparison_animation.mp4')
+        print(f"\nGenerating comparison animation -> {anim_path}")
+        animate_trajectories(
+            first_results, dynamics, anim_path,
+            skip_frames=args.skip_frames, dt=args.dt)
+
+    print(f"\nAll outputs saved to {args.output_dir}")
+    print("Done.")
+
+
+def _add_shared_args(parser):
+    """Arguments common to both subcommands."""
+    parser.add_argument(
+        '--checkpoint_path', type=str,
+        default='runs/Docking6D_RA_14sec/training/checkpoints/model_epoch_145000.pth',
+        help='Path to trained model checkpoint')
+    parser.add_argument('--output_dir', type=str, default='./outputs/controller',
+                        help='Directory to save outputs')
+    parser.add_argument('--tMax', type=float, default=15.0,
+                        help='BRT / terminal cost time horizon')
+    parser.add_argument('--dt', type=float, default=0.1,
+                        help='Control / integration timestep (s)')
+    parser.add_argument('--max_sim_time', type=float, default=30.0,
+                        help='Maximum simulation time (s)')
+    parser.add_argument('--device', type=str, default='cuda',
+                        help='Torch device')
+    # MPC-specific
+    parser.add_argument('--planning_horizon', type=float, default=20.0,
+                        help='MPC-only planning horizon (s)')
+    parser.add_argument('--mpc_dt', type=float, default=0.5,
+                        help='MPC planning timestep (s); simulation uses --dt')
+    parser.add_argument('--effective_horizon', type=float, default=2.0,
+                        help='MPC+Terminal effective horizon (s)')
+    parser.add_argument('--num_samples', type=int, default=100,
+                        help='MPC random-shooting samples')
+    parser.add_argument('--num_refinement', type=int, default=10,
+                        help='MPC iterative refinement passes')
+    # Animation
+    parser.add_argument('--skip_frames', type=int, default=5,
+                        help='Frames to skip in animation')
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Docking6D Controller Runner',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python run_controller.py single  --controller brt\n"
+            "  python run_controller.py compare --controllers brt mpc mpc_terminal\n"
+        ),
+    )
+    subparsers = parser.add_subparsers(dest='command', required=True)
+
+    # ---- single ----
+    sp_single = subparsers.add_parser(
+        'single', help='Run one controller from a specified initial condition')
+    _add_shared_args(sp_single)
+    sp_single.add_argument(
+        '--controller', type=str, default='brt',
+        choices=['brt', 'mpc', 'mpc_terminal'],
+        help='Controller type to run')
+    # Initial state
+    sp_single.add_argument('--initial_px',    type=float, default=2.0)
+    sp_single.add_argument('--initial_py',    type=float, default=10.0)
+    sp_single.add_argument('--initial_vx',    type=float, default=0.0)
+    sp_single.add_argument('--initial_vy',    type=float, default=0.0)
+    sp_single.add_argument('--initial_theta', type=float, default=-1.57)
+    sp_single.add_argument('--initial_omega', type=float, default=0.0)
+    # Animation
+    sp_single.add_argument('--no_animation', action='store_true',
+                           help='Skip animation generation')
+    sp_single.add_argument('--no_value_function', action='store_true',
+                           help='Skip value-function heatmap in BRT animation')
+    sp_single.add_argument('--resolution', type=int, default=40,
+                           help='Value-function grid resolution (BRT only)')
+
+    # ---- compare ----
+    sp_compare = subparsers.add_parser(
+        'compare', help='Compare controllers over N rollouts from random ICs')
+    _add_shared_args(sp_compare)
+    sp_compare.add_argument(
+        '--controllers', type=str, nargs='+',
+        default=['brt', 'mpc', 'mpc_terminal'],
+        choices=['brt', 'mpc', 'mpc_terminal'],
+        help='Controllers to compare')
+    sp_compare.add_argument('--n_rollouts', type=int, default=50,
+                            help='Number of rollouts per controller')
+    sp_compare.add_argument('--seed', type=int, default=1,
+                            help='Random seed for IC sampling')
+    sp_compare.add_argument('--animate', action='store_true',
+                            help='Generate comparison animation for first IC')
+
+    args = parser.parse_args()
+
+    if args.command == 'single':
+        run_single(args)
+    elif args.command == 'compare':
+        run_compare(args)
+
+
+if __name__ == '__main__':
+    main()

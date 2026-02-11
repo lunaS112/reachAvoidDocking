@@ -1,0 +1,32 @@
+{
+  "BRT": {
+    "n": 1,
+    "goal_rate": 0.0,
+    "collision_rate": 0.0,
+    "success_rate": 0.0,
+    "mean_control_effort": 1702.2734863998794,
+    "std_control_effort": 0.0,
+    "mean_wall_time": 12.57470697601093,
+    "std_wall_time": 0.0
+  },
+  "MPC": {
+    "n": 1,
+    "goal_rate": 0.0,
+    "collision_rate": 0.0,
+    "success_rate": 0.0,
+    "mean_control_effort": 57.356884765625004,
+    "std_control_effort": 0.0,
+    "mean_wall_time": 94.43920134901418,
+    "std_wall_time": 0.0
+  },
+  "MPC+Terminal": {
+    "n": 1,
+    "goal_rate": 0.0,
+    "collision_rate": 0.0,
+    "success_rate": 0.0,
+    "mean_control_effort": 1174.0759765625,
+    "std_control_effort": 0.0,
+    "mean_wall_time": 119.01728721498512,
+    "std_wall_time": 0.0
+  }
+}

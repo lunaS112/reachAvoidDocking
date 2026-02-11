@@ -639,7 +639,7 @@ class Docking6D(Dynamics):
         output_shape[-1] = output_shape[-1] + 1  # Add one more dimension for cos(theta)
         transformed_input = torch.zeros(output_shape)
         
-        # Copy the first 5 elements: [time, x, y, ux, uy]
+        # Copy the first 5 elements: [time, x, y, vx, vy]
         transformed_input[..., :5] = input[..., :5]
         
         # Transform the periodic angle theta (at index 4 in state, index 5 in input)
@@ -663,8 +663,8 @@ class Docking6D(Dynamics):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]
         dsdt[..., 1] = state[..., 3]
-        dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
-        dsdt[..., 3] = -2 * self.mean_motion() * state[..., 2] + control[..., 1] / self.mc
+        dsdt[..., 2] = 3 * self.n**2 * state[..., 0] + 2 * self.n * state[..., 3] + control[..., 0] / self.mc
+        dsdt[..., 3] = -2 * self.n * state[..., 2] + control[..., 1] / self.mc
 
         current_vx = state[..., 2]
         current_vy = state[..., 3]
@@ -681,7 +681,7 @@ class Docking6D(Dynamics):
             torch.zeros_like(dsdt[..., 3]),dsdt[..., 3])
 
         dsdt[..., 4] = state[..., 5]
-        dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
+        dsdt[..., 5] = control[..., 2] / self.jc
         return dsdt
 
     # L2 Norm (exact)
@@ -871,7 +871,11 @@ class Docking6D(Dynamics):
         return samples
 
     def cost_fn(self, state_traj):
-        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+        # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
+        # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
+        reach_values = self.reach_fn(state_traj)
+        avoid_values = self.avoid_fn(state_traj)
+        return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
     
     def hamiltonian(self, state, dvds):
         if self.set_mode == 'reach_avoid':
