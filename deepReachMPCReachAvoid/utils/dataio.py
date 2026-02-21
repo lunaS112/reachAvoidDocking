@@ -41,7 +41,7 @@ class ReachabilityDataset(Dataset):
                  use_MPC, time_curr, MPC_data_path, num_MPC_perturbation_samples, MPC_dt, MPC_mode, MPC_sample_mode, MPC_style,
                  MPC_lambda_, MPC_batch_size, MPC_receding_horizon, num_MPC_data_samples, num_iterative_refinement, time_till_refinement, num_MPC_batches=1,
                  aug_with_MPC_data=0, policy=None, refine_dataset=True, pause_epochs = 100, cost_type='reachability', mpc_percentage=0.8,
-                 refinement_mode='terminal', early_time_range=1.0, epoch_till_refinement=20000):
+                 epoch_till_refinement=20000, refinement_dt=None):
         self.dynamics = dynamics
         self.numpoints = numpoints
         self.pretrain = pretrain
@@ -80,10 +80,8 @@ class ReachabilityDataset(Dataset):
         self.mpc_percentage = mpc_percentage
         self.cost_type = cost_type
 
-        # Refinement mode parameters
-        self.refinement_mode = refinement_mode
-        self.early_time_range = early_time_range
-        self.refinement_target_sampling = False
+        # Refinement-style MPC overrides
+        self.refinement_dt = refinement_dt
 
         # PAUSE Parameters: Pause training to refine dataset
         self.pause_epochs = pause_epochs  # How many epochs to pause at each horizon
@@ -111,16 +109,9 @@ class ReachabilityDataset(Dataset):
                     os.path.join(MPC_data_path, 'value_labels.pt'))
             self.mpc_time_sorted_indices = torch.argsort(self.MPC_inputs[:, 0])
 
-    def use_terminal_MPC(self):
-        # self.MPC_dt can be different
-        self.MPC_dt = 0.05
-        self.num_iterative_refinement = -1
-        # self.MPC_batch_size=50000
-
-    def use_early_time_MPC(self):
-        """Configure dataset for early-time refinement mode."""
-        self.MPC_dt = 0.05
-        self.num_iterative_refinement = 7 
+    def set_refinement_dt(self, dt):
+        """Set the MPC dt used during refinement-style data generation."""
+        self.refinement_dt = dt
 
     def __len__(self):
         return 1
@@ -143,18 +134,20 @@ class ReachabilityDataset(Dataset):
         if self.num_target_samples > 0:
             num_mpc_target_samples = min(
                 int(self.MPC_batch_size/5), self.num_target_samples)
-            if self.refinement_target_sampling:
-                target_state_samples = self.dynamics.sample_target_state_refined(
-                    num_mpc_target_samples)
-            else:
-                target_state_samples = self.dynamics.sample_target_state(
-                    num_mpc_target_samples)
+            target_state_samples = self.dynamics.sample_target_state(
+                num_mpc_target_samples)
             MPC_states[-num_mpc_target_samples:] = target_state_samples
         return MPC_states
 
     def generate_MPC_dataset(self, T, t, style="random"):
         print("Generating MPC dataset")
-        self.mpc = MPC.MPC(horizon=None, receding_horizon=self.MPC_receding_horizon, dT=self.MPC_dt, num_samples=self.num_MPC_perturbation_samples,
+        # Determine effective dt: refinement style can override MPC_dt
+        effective_dt = self.MPC_dt
+        if style == "refinement" and self.refinement_dt is not None:
+            effective_dt = self.refinement_dt
+            print(f"  Refinement style: using dt={effective_dt} (default: {self.MPC_dt})")
+
+        self.mpc = MPC.MPC(horizon=None, receding_horizon=self.MPC_receding_horizon, dT=effective_dt, num_samples=self.num_MPC_perturbation_samples,
                            dynamics_=self.dynamics, device='cuda', mode=self.MPC_mode,
                            sample_mode=self.MPC_sample_mode, lambda_=self.MPC_lambda_, style=self.MPC_style, num_iterative_refinement=self.num_iterative_refinement,
                            cost_type=self.cost_type, mpc_percentage=self.mpc_percentage)
@@ -169,52 +162,19 @@ class ReachabilityDataset(Dataset):
 
             if self.mpc.style == "direct":
                 t_max = random.randint(1, math.floor(
-                    (T*1.1)/self.MPC_dt))*self.MPC_dt
+                    (T*1.1)/effective_dt))*effective_dt
             elif self.mpc.style == "receding":
                 t_max = random.randint(1, int(
-                    T/self.MPC_dt/self.mpc.receding_horizon))*self.mpc.receding_horizon*self.MPC_dt
+                    T/effective_dt/self.mpc.receding_horizon))*self.mpc.receding_horizon*effective_dt
                 # t_max=T*1.0
             else:
                 raise NotImplementedError
 
-            if style == "terminal" and i < self.num_MPC_batches/2:
-                t_max = T*1.0  # more data on the terminal time
-            elif style == "early_time" and i < self.num_MPC_batches/2:
-                early_time_steps = max(1, math.floor(self.early_time_range / self.MPC_dt))
-                t_max = random.randint(1, early_time_steps) * self.MPC_dt
-            # t_max=self.tMax
             _, _, MPC_inputs_, MPC_values_ = self.mpc.get_batch_data(
                 MPC_states.to(device), t_max, self.policy, t=t)
             
             MPC_inputs = torch.cat([MPC_inputs, MPC_inputs_], dim=0)
             MPC_values = torch.cat([MPC_values, MPC_values_], dim=0)
-
-        # print("Generated %d labels"%MPC_inputs.shape[0])
-        if style == "early_time":
-            # Keep all low-time samples, subsample high-time samples
-            low_time_mask = MPC_inputs[:, 0] <= self.early_time_range
-            MPC_inputs_low = MPC_inputs[low_time_mask]
-            MPC_values_low = MPC_values[low_time_mask]
-
-            high_time_idxs = torch.where(~low_time_mask)[0]
-            keep_count = int(len(high_time_idxs) / 1.5)
-            if keep_count > 0 and len(high_time_idxs) > 0:
-                keep_idxs = high_time_idxs[torch.randperm(len(high_time_idxs))[:keep_count]]
-                MPC_inputs = torch.cat([MPC_inputs_low, MPC_inputs[keep_idxs]], dim=0)
-                MPC_values = torch.cat([MPC_values_low, MPC_values[keep_idxs]], dim=0)
-            else:
-                MPC_inputs = MPC_inputs_low
-                MPC_values = MPC_values_low
-
-        if style == "terminal":
-            # with more coords and values being at the terminal time
-            MPC_inputs_ = MPC_inputs[MPC_inputs[:, 0] == T, ...]
-            MPC_values_ = MPC_values[MPC_inputs[:, 0] == T, ...]
-
-            idxs = torch.randperm(MPC_inputs[MPC_inputs[:, 0] < T].shape[0])[
-                :int(MPC_inputs[MPC_inputs[:, 0] < T].shape[0]/1.5)]
-            MPC_inputs = torch.cat([MPC_inputs[idxs, ...], MPC_inputs_], dim=0)
-            MPC_values = torch.cat([MPC_values[idxs, ...], MPC_values_], dim=0)
 
         # convert to memory-mapped tensor for faster query
         if not os.path.exists("./data"):
@@ -313,19 +273,10 @@ class ReachabilityDataset(Dataset):
                 times[-self.num_src_samples:, 0] = self.tMin
 
         if self.num_target_samples > 0:
-            if self.refinement_target_sampling:
-                target_state_samples = self.dynamics.sample_target_state_refined(
-                    self.num_target_samples)
-            else:
-                target_state_samples = self.dynamics.sample_target_state(
-                    self.num_target_samples)
+            target_state_samples = self.dynamics.sample_target_state(
+                self.num_target_samples)
             model_states_normed[-self.num_target_samples:] = self.dynamics.coord_to_input(torch.cat((torch.zeros(
                 self.num_target_samples, 1), target_state_samples), dim=-1))[:, 1:self.dynamics.state_dim+1]
-
-        # During early-time refinement, bias target sample times toward low values
-        if self.refinement_target_sampling and self.num_target_samples > 0 and not self.pretrain:
-            times[-self.num_target_samples:, 0] = self.tMin + torch.zeros(
-                self.num_target_samples).uniform_(0, self.early_time_range)
 
         model_inputs = torch.cat((times, model_states_normed), dim=1)
 

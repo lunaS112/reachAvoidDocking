@@ -33,7 +33,7 @@ class Experiment(ExperimentVizMixin, ABC):
         # Rollback tracking
         self.rollback_state = {}
         self.max_partial_rollbacks = 1
-        self.max_full_rollbacks = 0
+        self.max_full_rollbacks = 1
 
         # Refinment Horizon tracking
         self.horizon_epoch_map = {}      # Epoch when horizon was reached
@@ -216,6 +216,7 @@ class Experiment(ExperimentVizMixin, ABC):
             'horizon': current_horizon,
             'last_refine_time': self.last_refine_time,
             'dataset_counter': self.dataset.counter,
+            'state_range': self.dataset.dynamics.state_range_.cpu().tolist(),
         }
         
         torch.save(checkpoint, horizon_checkpoint_path)
@@ -435,7 +436,9 @@ class Experiment(ExperimentVizMixin, ABC):
                     checkpoint = {
                         'epoch': epoch+1,
                         'model': self.model.state_dict(),
-                        'optimizer': self.optim.state_dict()}
+                        'optimizer': self.optim.state_dict(),
+                        'state_range': self.dataset.dynamics.state_range_.cpu().tolist(),
+                    }
                     torch.save(checkpoint,
                                os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % (epoch+1)))
                     np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % (epoch+1)),
@@ -1377,14 +1380,23 @@ class Experiment(ExperimentVizMixin, ABC):
             self.loss_weights['mpc_loss'] = min(
                 0.9*self.loss_weights['mpc_loss'] + 0.1*self.mpc_importance_coef*num/(den+1e-16), 1e5)
 
-    def dataset_refinement(self, time_interval_length, epoch):
+    def set_refinement_lr(self, lr):
+        """Set the learning rate used during refinement phase."""
+        self.refinement_lr = lr
 
-        # Update early-time penalty ramp if active
-        if hasattr(self, 'early_time_start_epoch') and self.dataset.refinement_mode == 'early_time':
-            refinement_epochs = epoch - self.early_time_start_epoch
-            ramp_epochs = max(self.dataset.pause_epochs * 0.5, 1)
-            ramp_progress = min(refinement_epochs / ramp_epochs, 1.0)
-            self.mpc_penalty_scale = ramp_progress * self.mpc_penalty_max
+    def _enter_refinement(self, epoch):
+        """Apply refinement style: penalty, LR, and MPC regeneration."""
+        self.mpc_penalty_scale = self.mpc_penalty_max
+        if self.refinement_lr is not None:
+            for g in self.optim.param_groups:
+                g['lr'] = self.refinement_lr
+            tqdm.write(f"  Refinement LR: {self.refinement_lr}")
+        self.dataset.generate_MPC_dataset(
+            self.dataset.tMax, 0.0, style="refinement"
+        )
+        self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+
+    def dataset_refinement(self, time_interval_length, epoch):
 
         ######## In Pause ########
         if self.dataset.is_paused:
@@ -1641,78 +1653,19 @@ class Experiment(ExperimentVizMixin, ABC):
                 num_samples = 1000
             )
 
-            # Terminal refinement setup
+            # Refinement setup
             if current_horizon >= self.dataset.tMax:
-                # reached final horizon - switch to refinement
                 self.last_refine_time = self.dataset.tMax
                 self.dataset.policy = self.model
-
-                if self.dataset.refinement_mode == 'early_time':
-                    # Early-time refinement: focus on low-time region
-                    tqdm.write(f"\n>>> Early-Time Refinement at epoch {epoch} <<<")
-                    tqdm.write(f"    Time range: [0, {self.dataset.early_time_range}s], "
-                               f"LR: {self.early_time_lr}, "
-                               f"Penalty max: {self.mpc_penalty_max}, "
-                               f"Regen every: {self.dataset.epoch_till_refinement} epochs")
-                    self.mpc_penalty_scale = 0.0  # Ramp starts at zero
-                    self.early_time_start_epoch = epoch  # CRITICAL: enables ramp logic
-                    for g in self.optim.param_groups:
-                        g['lr'] = self.early_time_lr
-                    self.dataset.use_early_time_MPC()
-                    self.dataset.generate_MPC_dataset(
-                        self.dataset.tMax,  # T: full horizon for diversity
-                        0.0,                # t: MUST be 0.0 for low-time data
-                        style="early_time"
-                    )
-                    self.dataset.refinement_target_sampling = True
-                    # Reset loss weights to let EMA recalibrate on new data distribution
-                    self.loss_weights['mpc_loss'] = 1.0
-                    self.loss_weights['dirichlet'] = 1.0
-                    tqdm.write(f"    Loss weights reset: mpc={self.loss_weights['mpc_loss']}, dirichlet={self.loss_weights['dirichlet']}")
-                else:
-                    # Terminal refinement (existing behavior)
-                    self.dataset.use_terminal_MPC()
-                    for g in self.optim.param_groups:
-                        g['lr'] = 1e-6  # TODO: make it a hyperparam
-                    self.mpc_penalty_scale = 1.0
-                    self.MPC_importance_final = 1.0  # TODO: make it a hyperparam
-                    # self.MPC_importance_init = 1.0
-                    refine_till_t = self.dataset.tMax
-                    self.dataset.generate_MPC_dataset(
-                        refine_till_t, 
-                        refine_till_t, 
-                        style="terminal"
-                    )
-
-                # Recompute sorted indices after dataset regeneration
-                self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0]) 
+                tqdm.write(f"\n>>> Refinement at epoch {epoch} | penalty={self.mpc_penalty_max} | regen every {self.dataset.epoch_till_refinement} epochs <<<")
+                self._enter_refinement(epoch)
             return epoch
         
-        # Refinement regeneration (terminal or early-time)
+        # Refinement regeneration
         if time_interval_length >= self.dataset.tMax and epoch % self.dataset.epoch_till_refinement == 0 and self.dataset.use_MPC:
-            # in case we want a long finetuning phase, we regenerate the dataset every epoch_till_refinement epochs
             self.dataset.policy = self.model
-
-            if self.dataset.refinement_mode == 'early_time':
-                tqdm.write(f"\n>>> EARLY-TIME MPC REGENERATION at epoch {epoch} (penalty_scale={self.mpc_penalty_scale:.4f}) <<<")
-                for g in self.optim.param_groups:
-                    g['lr'] = self.early_time_lr
-                self.dataset.use_early_time_MPC()
-                self.dataset.generate_MPC_dataset(
-                    self.dataset.tMax, 0.0, style="early_time")
-                # Reset loss weights to let EMA recalibrate on fresh data
-                self.loss_weights['mpc_loss'] = 1.0
-                self.loss_weights['dirichlet'] = 1.0
-            else:
-                for g in self.optim.param_groups:
-                    g['lr'] = 1e-6
-                self.mpc_penalty_scale = 1.0
-                self.dataset.use_terminal_MPC()
-                self.dataset.generate_MPC_dataset(
-                    self.dataset.tMax, self.dataset.tMax, style="terminal")
-            
-            # Recompute sorted indices after dataset regeneration
-            self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
+            tqdm.write(f"\n>>> Refinement MPC Regeneration at epoch {epoch} <<<")
+            self._enter_refinement(epoch)
             return epoch
         return epoch
 

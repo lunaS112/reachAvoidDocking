@@ -14,6 +14,8 @@ Usage:
     result = controller.simulate_docking(initial_state, max_sim_time=30.0)
 """
 
+import time as _time
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -21,8 +23,8 @@ import pickle
 import os
 import sys
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path (3 levels up: controllers -> utils -> project_root)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
 from utils import modules
 from utils import diff_operators
@@ -95,6 +97,11 @@ class BRTController:
         
         self.dynamics = dynamics_class(**kwargs)
         self.dynamics.set_model(self.orig_opt.deepReach_model)
+
+        # Fallback: ensure normalization matches training even if
+        # state_range was not passed through the constructor
+        if hasattr(self.orig_opt, 'state_range') and self.orig_opt.state_range is not None:
+            self.dynamics.override_state_range(self.orig_opt.state_range)
         
         # Create model with same architecture as training
         self.model = modules.SingleBVPNet(
@@ -383,11 +390,9 @@ class BRTController:
                         'new_time': new_time,
                         'value_before': value
                     })
-                    print(f"BRT reacquisition at t={sim_time:.2f}s: t_remaining {old_query_time:.2f} -> {new_time:.2f}")
                 else:
                     # Search failed: fall back to Phase 1
                     self.in_brt_phase = False
-                    print(f"BRT search failed at t={sim_time:.2f}s, falling back to Phase 1")
             
         if self.in_brt_phase:
             query_time = max(self.t_remaining, 0.01)
@@ -433,6 +438,7 @@ class BRTController:
                 - phase_transition_time: time when entered BRT (or None)
         """
         self.reset()
+        t_wall_start = _time.perf_counter()
         
         # Initialize
         state = np.array(initial_state, dtype=np.float64)
@@ -445,6 +451,9 @@ class BRTController:
         print(f"Starting simulation from state: {state}")
         print(f"Initial V(x, tMax): {self.get_value(state, self.tMax):.4f}")
         
+        docked = False
+        collided = False
+        
         # Simulation loop
         for step in range(num_steps):
             sim_time = step * self.dt
@@ -454,10 +463,12 @@ class BRTController:
             
             # Check termination conditions
             if self._check_docked(state):
+                docked = True
                 print(f"Docking successful at t={sim_time:.2f}s")
                 break
                 
             if self._check_collision(state):
+                collided = True
                 print(f"Collision detected at t={sim_time:.2f}s")
                 break
             
@@ -467,20 +478,34 @@ class BRTController:
             
             # Wrap theta to [-pi, pi]
             state[4] = np.arctan2(np.sin(state[4]), np.cos(state[4]))
-            
-        # Package results
+        
+        wall_time = _time.perf_counter() - t_wall_start
+        
+        # Compute control effort: sum(||u_k||_2 * dt)
+        controls_arr = np.array(self.control_history)
+        control_effort = float(
+            np.sum(np.linalg.norm(controls_arr, axis=-1)) * self.dt)
+        
+        # Package results (original fields + shared comparison fields)
         result = {
+            # --- original BRT fields ---
             'trajectory': np.array(self.state_history),
-            'controls': np.array(self.control_history),
+            'controls': controls_arr,
             'values': np.array(self.value_history),
             'phases': np.array(self.phase_history),
             't_remaining': np.array(self.t_remaining_history),
             'times': np.array(self.sim_time_history),
-            'success': self._check_docked(state),
+            'success': docked and not collided,
             'phase_transition_time': self.phase_transition_time,
             'final_state': state,
             'brt_reacquisition_count': self.brt_reacquisition_count,
-            'brt_time_adjustments': self.brt_time_adjustments
+            'brt_time_adjustments': self.brt_time_adjustments,
+            # --- shared comparison fields ---
+            'collision': collided,
+            'docked': docked,
+            'controller_type': 'brt',
+            'control_effort': control_effort,
+            'wall_time': wall_time,
         }
         
         return result
@@ -514,14 +539,12 @@ class BRTController:
         return pos_ok and vel_ok and theta_ok and omega_ok
     
     def _check_collision(self, state):
-        """Check if state is in collision with target spacecraft."""
-        px, py = state[0], state[1]
-        
-        # Use dynamics avoid_fn (negative = collision)
-        state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
-        avoid_value = self.dynamics.avoid_fn(state_tensor).item()
-        
-        return avoid_value < 0
+        """Check if state is in collision with target spacecraft.
+
+        Uses the orientation-aware check (actual chaser corners) rather
+        than the conservative circular-buffer ``avoid_fn``.
+        """
+        return self.dynamics.check_collision_oriented(state)
     
     def get_value_grid(self, time, x_range=(-15, 15), y_range=(-15, 15), 
                        resolution=50, fixed_state=None):

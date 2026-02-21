@@ -333,8 +333,6 @@ class MPC:
  
         if self.style == 'receding':
             # generating MPC dataset: {..., (t, x, J, u), ...}
-            # if style=='terminal': # only generate terminal time samples
-            #     num_iters=1
             coords=torch.zeros(self.batch_size* num_iters, self.dynamics_.state_dim+1).to(self.device)
             value_labels=torch.zeros(self.batch_size* num_iters).to(self.device)
             for i in range(num_iters):
@@ -367,8 +365,6 @@ class MPC:
         elif self.style == 'direct':
 
             # generating MPC dataset: {..., (t, x, J, u), ...} NEW
-            # if style=='terminal': # only generate terminal time samples
-            #     num_iters=1
             coords=torch.empty(0, self.dynamics_.state_dim+1).to(self.device)
             value_labels=torch.empty(0).to(self.device)
             if self.dynamics_.set_mode in ['avoid', 'reach']: # bootstrapping will be accurate up until the min l(x) occur
