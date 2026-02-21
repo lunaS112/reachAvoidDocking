@@ -417,7 +417,7 @@ class Experiment(ExperimentVizMixin, ABC):
                     # update wandb
                     if not total_steps % steps_til_summary:
                         tqdm.write("Epoch %d, Total loss %0.6f, iteration time %0.6f" % (
-                            epoch, train_loss, time.time() - start_time))
+                            epoch, train_loss.item(), time.time() - start_time))
                         if self.use_wandb:
                             wandb.log({
                                 'train_loss': train_loss,

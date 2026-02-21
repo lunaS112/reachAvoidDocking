@@ -228,8 +228,9 @@ class ReachabilityDataset(Dataset):
             "./data/MPC_inputs_gpu%s.npy" % device_id, mmap_mode="r")
         MPC_values_mmap = np.load(
             "./data/MPC_values_gpu%s.npy" % device_id, mmap_mode="r")
-        self.MPC_inputs = torch.from_numpy(MPC_inputs_mmap).detach()
-        self.MPC_values = torch.from_numpy(MPC_values_mmap).detach()
+        # Copy to make array writable before converting to torch tensor
+        self.MPC_inputs = torch.from_numpy(MPC_inputs_mmap.copy()).detach()
+        self.MPC_values = torch.from_numpy(MPC_values_mmap.copy()).detach()
 
         print("Generated %d labels" % MPC_inputs.shape[0])
 

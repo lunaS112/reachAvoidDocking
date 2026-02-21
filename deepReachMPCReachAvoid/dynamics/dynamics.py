@@ -1134,8 +1134,11 @@ class Docking13D(Dynamics):
         # angle of q_rel = q_goal^{-1} ⊗ q
         q_rel = self.quat_mul(self.quat_conj(q_goal), q)
         # shortest angle: 2*acos(|q0|)
-        q0 = torch.clamp(torch.abs(q_rel[...,0]), 0.0, 1.0)
-        return 2.0 * torch.acos(q0)
+        # Use atan2-based formula to avoid gradient explosion at q0=1
+        # angle = 2*atan2(||q_vec||, |q0|) which is numerically stable
+        q0 = torch.abs(q_rel[...,0])
+        qv_norm = torch.sqrt(q_rel[...,1]**2 + q_rel[...,2]**2 + q_rel[...,3]**2 + 1e-8)
+        return 2.0 * torch.atan2(qv_norm, q0)
 
     # ---------- Interface required by your base class ----------
     def control_range(self, state):
@@ -1340,10 +1343,11 @@ class Docking13D(Dynamics):
         qg = self.q_goal.to(state.device)
         omegag = goal[10:13]
 
-        pos_dist = torch.sqrt((x-xg)**2 + (y-yg)**2 + (z-zg)**2) - self.eps_p
-        vel_dist = torch.sqrt((vx-vxg)**2 + (vy-vyg)**2 + (vz-vzg)**2) - self.eps_v
+        # Add epsilon inside sqrt to prevent gradient explosion at origin
+        pos_dist = torch.sqrt((x-xg)**2 + (y-yg)**2 + (z-zg)**2 + 1e-8) - self.eps_p
+        vel_dist = torch.sqrt((vx-vxg)**2 + (vy-vyg)**2 + (vz-vzg)**2 + 1e-8) - self.eps_v
         att_dist = self.quat_error_angle(q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg) - self.eps_q
-        omg_dist = torch.norm(omega - omegag, dim=-1) - self.eps_omega
+        omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
 
         # Keep your shaping idea (I won’t over-tune; same spirit)
         pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
@@ -1377,7 +1381,8 @@ class Docking13D(Dynamics):
 
         # --- Hemispherical cutout (centered at origin, y >= 0) ---
         effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
-        dist_sphere = torch.sqrt(x**2 + y**2 + z**2) - effective_rad
+        # Add epsilon inside sqrt to prevent gradient explosion at origin
+        dist_sphere = torch.sqrt(x**2 + y**2 + z**2 + 1e-8) - effective_rad
         s_hemi = torch.maximum(-y, dist_sphere)
 
         # Collision region: box minus hemispherical cutout
@@ -1386,7 +1391,8 @@ class Docking13D(Dynamics):
         # --- Cylindrical cutout to prevent failure set from encapsulating target ---
         # Creates a safe approach corridor in negative y direction
         # The cylinder extends from y <= 0 with radius = effective_rad in the x-z plane
-        dist_cyl_xz = torch.sqrt(x**2 + z**2) - effective_rad  # distance from cylinder axis
+        # Add epsilon inside sqrt to prevent gradient explosion when x=z=0
+        dist_cyl_xz = torch.sqrt(x**2 + z**2 + 1e-8) - effective_rad
         s_cutout = torch.maximum(dist_cyl_xz, 
                                  torch.maximum(-(y + self.chaser_buffer_xy), y))
 
