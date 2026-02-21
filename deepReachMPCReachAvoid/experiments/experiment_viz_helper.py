@@ -118,14 +118,17 @@ class ExperimentVizMixin:
         return fig
 
     def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times,
-                         delta_level=None, quat_slice=None, theta_yaw=None):
+                         delta_level=None, quat_slice=None, theta_yaw=None, z_values=None):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
         z_min, z_max = state_test_range[plot_config['z_axis_idx']]
 
         xs = torch.linspace(x_min, x_max, x_resolution)
         ys = torch.linspace(y_min, y_max, y_resolution)
-        zs = torch.linspace(z_min, z_max, z_resolution)
+        if z_values is not None:
+            zs = torch.tensor(z_values, dtype=torch.float32)
+        else:
+            zs = torch.linspace(z_min, z_max, z_resolution)
         xys = torch.cartesian_prod(xs, ys)
 
         fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
@@ -693,21 +696,14 @@ class ExperimentVizMixin:
         state_slices = plot_config['state_slices']
 
         if len(times) > 1:
-            time_tol = (times[1] - times[0]).item() / 10.0
+            time_tol = (times[1] - times[0]).item() * 0.5
         else:
-            time_tol = 0.01
+            time_tol = 0.05
 
         if len(zs) > 1:
-            z_tol = (zs[1] - zs[0]).item() / 10.0
+            z_tol = (zs[1] - zs[0]).item() * 0.5
         else:
-            z_tol = 0.1
-
-        other_dim_tols = {}
-        for dim in range(self.dataset.dynamics.state_dim):
-            if dim in [x_axis_idx, y_axis_idx, z_axis_idx, 6, 7, 8, 9]:
-                continue
-            dim_range = state_test_range[dim][1] - state_test_range[dim][0]
-            other_dim_tols[dim] = dim_range * 0.3
+            z_tol = 0.25
 
         xs_grid = np.linspace(x_min, x_max, x_resolution)
         ys_grid = np.linspace(y_min, y_max, y_resolution)
@@ -723,13 +719,7 @@ class ExperimentVizMixin:
                 time_mask = np.abs(mpc_times - t_val) < time_tol
                 z_mask = np.abs(mpc_z - z_val) < z_tol
 
-                other_masks = np.ones(len(mpc_times), dtype=bool)
-                for dim, tol in other_dim_tols.items():
-                    dim_vals = mpc_inputs_real_np[:, 1 + dim]
-                    slice_val = state_slices[dim]
-                    other_masks &= np.abs(dim_vals - slice_val) < tol
-
-                combined_mask = time_mask & z_mask & other_masks & quat_mask
+                combined_mask = time_mask & z_mask & quat_mask
 
                 slice_x = mpc_x[combined_mask]
                 slice_y = mpc_y[combined_mask]

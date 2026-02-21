@@ -1161,6 +1161,7 @@ class Experiment(ExperimentVizMixin, ABC):
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         fig = None
         if self.dataset.dynamics.name == 'Docking13D':
+            z_values = [-2.0, -1.0, 0.0, 1.0, 2.0]
             base_quat = [1.0, 0.0, 0.0, 0.0]
             base_yaw = self._quat_to_yaw(base_quat)
             base_cfg = dict(plot_config)
@@ -1175,7 +1176,7 @@ class Experiment(ExperimentVizMixin, ABC):
             else:
                 fig = self.plotMultipleFigs(
                     state_test_range, base_cfg, x_resolution, y_resolution, z_resolution, times,
-                    quat_slice=base_quat, theta_yaw=base_yaw)
+                    quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values)
         else:
             if plot_config['z_axis_idx'] == -1:
                 fig = self.plotSingleFig(
@@ -1215,7 +1216,7 @@ class Experiment(ExperimentVizMixin, ABC):
                 else:
                     fig_q = self.plotMultipleFigs(
                         state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
-                        quat_slice=quat, theta_yaw=yaw)
+                        quat_slice=quat, theta_yaw=yaw, z_values=z_values)
 
                 wandb.log({
                     'step': epoch,
