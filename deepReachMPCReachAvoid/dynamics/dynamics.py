@@ -1381,7 +1381,16 @@ class Docking13D(Dynamics):
         s_hemi = torch.maximum(-y, dist_sphere)
 
         # Collision region: box minus hemispherical cutout
-        s_fail = torch.maximum(s_box, -s_hemi + 0.02)
+        s_bubble = torch.maximum(s_box, -s_hemi + 0.02)
+
+        # --- Cylindrical cutout to prevent failure set from encapsulating target ---
+        # Creates a safe approach corridor in negative y direction
+        # The cylinder extends from y <= 0 with radius = effective_rad in the x-z plane
+        dist_cyl_xz = torch.sqrt(x**2 + z**2) - effective_rad  # distance from cylinder axis
+        s_cutout = torch.maximum(dist_cyl_xz, 
+                                 torch.maximum(-(y + self.chaser_buffer_xy), y))
+
+        s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
         s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
         return s_fail
