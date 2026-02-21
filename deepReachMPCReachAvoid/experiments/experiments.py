@@ -1162,7 +1162,9 @@ class Experiment(ExperimentVizMixin, ABC):
         fig = None
         if self.dataset.dynamics.name == 'Docking13D':
             z_values = [-2.0, -1.0, 0.0, 1.0, 2.0]
-            base_quat = [1.0, 0.0, 0.0, 0.0]
+            # Use goal quaternion from dynamics (90° yaw) so reach set shows up
+            q_goal = self.dataset.dynamics.q_goal.cpu()
+            base_quat = [float(q_goal[0]), float(q_goal[1]), float(q_goal[2]), float(q_goal[3])]
             base_yaw = self._quat_to_yaw(base_quat)
             base_cfg = dict(plot_config)
             base_slices = list(base_cfg['state_slices'])
@@ -1193,12 +1195,15 @@ class Experiment(ExperimentVizMixin, ABC):
         if fig is not None:
             plt.close(fig)
 
-        # Docking13D: add plots with small quaternion perturbations
+        # Docking13D: add plots with small quaternion perturbations from goal
         if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
+            # Get goal quaternion and create perturbations from it
+            q_goal = self.dataset.dynamics.q_goal.cpu()
+            q0, q1, q2, q3 = float(q_goal[0]), float(q_goal[1]), float(q_goal[2]), float(q_goal[3])
             quat_slices = [
-                [1.0, 0.2, 0.0, 0.0],
-                [1.0, 0.0, 0.2, 0.0],
-                [1.0, 0.0, 0.0, 0.2],
+                [q0, q1 + 0.2, q2, q3],  # Perturb qx
+                [q0, q1, q2 + 0.2, q3],  # Perturb qy
+                [q0, q1, q2, q3 + 0.2],  # Perturb qz
             ]
             for idx, quat in enumerate(quat_slices):
                 norm = math.sqrt(quat[0]**2 + quat[1]**2 + quat[2]**2 + quat[3]**2)

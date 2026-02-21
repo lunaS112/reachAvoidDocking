@@ -1454,8 +1454,14 @@ class Docking13D(Dynamics):
         return 0
 
     def plot_config(self):
+        # Use goal quaternion (90° yaw) so reach set shows up in position slices
+        # q_goal = [cos(π/4), 0, 0, sin(π/4)] for 90° rotation about z-axis
+        q0 = float(self.q_goal[0].cpu()) if self.q_goal[0].is_cuda else float(self.q_goal[0])
+        q1 = float(self.q_goal[1].cpu()) if self.q_goal[1].is_cuda else float(self.q_goal[1])
+        q2 = float(self.q_goal[2].cpu()) if self.q_goal[2].is_cuda else float(self.q_goal[2])
+        q3 = float(self.q_goal[3].cpu()) if self.q_goal[3].is_cuda else float(self.q_goal[3])
         return {
-            'state_slices': [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
             'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,
