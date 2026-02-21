@@ -49,13 +49,23 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
  --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_MedData --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
-# Early time refinement
-python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000 \
- --pretrain_iters 1000 --num_epochs 160000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
- --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 15 \
- --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
- --refinement_mode early_time --early_time_range 2 --early_time_penalty_max 0.15 --early_time_lr 2e-6 --epoch_till_refinement 7500\
- --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_EarlyTime_V2 --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+# Post-curriculum refinement with false-positive penalty 
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA_15sec-fine --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000 \
+ --pretrain_iters 1000 --num_epochs 200000 --pause_epochs 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 0 \
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.05 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --refinement_penalty_max 0.0 --epoch_till_refinement 10000 --refinement_dt 0.05 --refinement_lr 2e-6 \
+ --use_wandb --wandb_project Docking6D_final --wandb_name Docking6D_15sec_fine --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+
+# Inner BRT with tolerances and state range for precision docking
+python3 run_experiment.py --mode train --experiment_name Docking6D_Inner_3sec --dynamics_class Docking6D --tMax 3 \
+ --pretrain --num_target_samples 5000 --pretrain_iters 1000 --num_epochs 100000 --pause_epochs 2000 --counter_end 80000 \
+ --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 \
+ --num_MPC_data_samples 10000 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.05 \
+ --deepReach_model exact --time_till_refinement 0.25 --cost_type reachability --refinement_penalty_max 0.15 \
+ --state_range '[[-4,4],[-4,4],[-1.0,1.0],[-1.0,1.0],[-3.14159,3.14159],[-0.75,0.75]]' \
+ --eps_p 0.1 --eps_v 0.05 --eps_theta 0.05 --eps_omega 0.0035 \
+ --use_wandb --wandb_project Docking6D_3sec --wandb_name Docking6D_Inner_3sec --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 ############################################## Quadrotor ##########################################
 # To train (exp time: 3h on RTX 4090)
