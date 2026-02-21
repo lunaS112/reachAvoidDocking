@@ -1,16 +1,16 @@
 """
 MPC-Only Controller for Docking6D
 
-Receding-horizon MPC controller using random-shooting optimization with the
+Direct-style MPC controller using random-shooting optimization with the
 reachability cost function. No learned value function is used -- this serves
 as a pure-MPC baseline for comparison against the BRT controller.
 
-The MPC operates at a coarser planning timestep (mpc_dt, default 0.5 s) while
-the simulation integrates at a finer timestep (dt, default 0.1 s).  Between
-MPC replanning steps the control is held constant.
-
-Configuration matches the working MPC setup in MPC_values_viz.py:
-  style='receding', receding_horizon=1, dT=0.5, T=20.
+At each simulation step the controller:
+  1. Rolls out `num_samples` perturbed control sequences over the full
+     planning horizon using `rollout_dynamics`.
+  2. Evaluates the analytical reachability cost for each sample trajectory.
+  3. Selects the best sample and updates the control plan.
+  4. Warm-starts the next step by shifting the control sequence.
 
 Usage:
     controller = MPCController(
@@ -38,18 +38,14 @@ from dynamics import dynamics as dynamics_module
 
 class MPCController:
     """
-    Receding-horizon MPC controller using random-shooting optimization.
+    Direct-style MPC controller using random-shooting optimization.
 
-    At each MPC planning step the controller calls ``get_opt_trajs`` which
-    builds up an optimised trajectory step-by-step (receding style):
-      1. At each planning step, roll out ``num_samples`` perturbed control
-         sequences over the remaining horizon.
-      2. Select the best sample and commit its first control.
-      3. Advance the internal trajectory and repeat for the full horizon.
-
-    Only the *first* control from the resulting trajectory is applied to the
-    simulation.  The simulation integrates at the finer ``dt`` while the MPC
-    replans every ``mpc_dt`` seconds.
+    At each simulation step the controller:
+      1. Rolls out ``num_samples`` perturbed control sequences over the full
+         ``planning_horizon_steps`` horizon via ``rollout_dynamics``.
+      2. Evaluates the analytical reachability cost for each trajectory.
+      3. Selects the best sample and updates the control plan.
+      4. Applies the first control and warm-starts the next step.
 
     No learned value function is used; cost evaluation relies solely on the
     analytical reach_fn / avoid_fn defined in the dynamics class.
@@ -75,13 +71,11 @@ class MPCController:
         self.planning_horizon_sec = planning_horizon_sec
         self.mpc_dt = mpc_dt
         self.dt = dt
+        self.planning_horizon_steps = int(planning_horizon_sec / mpc_dt)
         self.num_samples = num_samples
         self.num_refinement = num_refinement
         self.device = device
         self.cost_type = cost_type
-
-        # How many simulation steps between MPC replans
-        self.mpc_steps_per_sim = max(1, round(mpc_dt / dt))
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
@@ -90,17 +84,17 @@ class MPCController:
         # Load dynamics
         self._load_dynamics()
 
-        # Instantiate the MPC engine (matching MPC_values_viz.py configuration)
+        # Instantiate the MPC engine (direct style: rollout full horizon)
         self.mpc = MPC(
             dT=self.mpc_dt,
-            horizon=None,              # set internally by get_opt_trajs
-            receding_horizon=1,        # commit one planning step at a time
+            horizon=self.planning_horizon_steps,
+            receding_horizon=1,
             num_samples=self.num_samples,
             dynamics_=self.dynamics,
             device=self.device,
             mode='MPC',
             sample_mode='gaussian',
-            style='receding',          # receding, not direct
+            style='direct',
             num_iterative_refinement=self.num_refinement,
             cost_type=self.cost_type,
         )
@@ -110,6 +104,7 @@ class MPCController:
 
         print(f"MPCController initialised  |  horizon={self.planning_horizon_sec}s  "
               f"mpc_dt={self.mpc_dt}s  sim_dt={self.dt}s  "
+              f"horizon_steps={self.planning_horizon_steps}  "
               f"samples={self.num_samples}  refinements={self.num_refinement}")
 
     # ------------------------------------------------------------------
@@ -143,6 +138,7 @@ class MPCController:
         self.control_history = []
         self.value_history = []
         self.sim_time_history = []
+        self._warm_started = False
 
     # ------------------------------------------------------------------
     # Simulation
@@ -150,10 +146,9 @@ class MPCController:
 
     def simulate_docking(self, initial_state, max_sim_time, dynamics_fn=None):
         """
-        Run a full docking simulation using receding-horizon MPC.
+        Run a full docking simulation using direct-style MPC.
 
-        The MPC replans every ``mpc_dt`` seconds.  Between replans the control
-        is held constant while the simulation integrates at the finer ``dt``.
+        The MPC replans at every simulation step (dt).
 
         Args:
             initial_state: Initial state [px, py, vx, vy, theta, omega].
@@ -177,20 +172,17 @@ class MPCController:
 
         docked = False
         collided = False
-        current_control = np.zeros(self.dynamics.control_dim)
-        current_cost = 0.0
 
         for step in range(num_steps):
             sim_time = step * self.dt
 
-            # --- MPC replan at the coarser mpc_dt cadence ---
-            if step % self.mpc_steps_per_sim == 0:
-                current_control, current_cost = self._mpc_step(state)
+            # --- MPC replan every step ---
+            control, cost_val = self._mpc_step(state)
 
             # Record history
             self.state_history.append(state.copy())
-            self.control_history.append(current_control.copy())
-            self.value_history.append(current_cost)
+            self.control_history.append(control.copy())
+            self.value_history.append(cost_val)
             self.sim_time_history.append(sim_time)
 
             # Termination checks
@@ -205,7 +197,7 @@ class MPCController:
                 break
 
             # Integrate dynamics at fine dt (Euler)
-            state_dot = dynamics_fn(state, current_control)
+            state_dot = dynamics_fn(state, control)
             state = state + self.dt * state_dot
             state[4] = np.arctan2(np.sin(state[4]), np.cos(state[4]))
 
@@ -232,39 +224,58 @@ class MPCController:
         return result
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Core MPC logic (direct style)
     # ------------------------------------------------------------------
 
     def _mpc_step(self, state):
         """
-        Run a full receding-horizon trajectory optimisation from *state* and
-        return the first control along with the reach-avoid cost.
+        Run one direct-style MPC optimisation step and return
+        (first_control, best_cost).
 
-        This mirrors how ``MPC_values_viz.py`` calls ``get_opt_trajs``.
+        Rolls out the full planning horizon, selects the best sample,
+        and warm-starts the next step.
         """
         state_tensor = torch.tensor(
             state, dtype=torch.float32, device=self.device).unsqueeze(0)
 
-        # Configure MPC for this call (get_opt_trajs reads these attributes)
-        self.mpc.T = self.planning_horizon_sec
         self.mpc.batch_size = 1
+        self.mpc.horizon = self.planning_horizon_steps
 
-        # Run receding-style trajectory optimisation
-        with torch.no_grad():
-            state_trajs, avoid_values, reach_values, num_iters = \
-                self.mpc.get_opt_trajs(state_tensor, policy=None, t=0.0)
+        if not self._warm_started:
+            self.mpc.init_control_tensors()
+            self._warm_started = True
+        else:
+            # Shift and pad (warm-start)
+            shifted = self.mpc.control_tensors[:, 1:, :].clone()
+            pad = torch.zeros(
+                1, 1, self.dynamics.control_dim, device=self.device)
+            self.mpc.control_tensors = torch.cat([shifted, pad], dim=1)
 
-        # Extract the first control (committed at the first planning step)
+        best_cost_val = float('inf')
+        for _ in range(self.num_refinement):
+            # Roll out num_samples perturbed trajectories over full horizon
+            # state_trajs: (1, N, H+1, D),  permuted_controls: (1, N, H, D_u)
+            state_trajs, permuted_controls = self.mpc.rollout_dynamics(
+                state_tensor, start_iter=0,
+                rollout_horizon=self.planning_horizon_steps)
+
+            # Analytical reachability cost (no learned terminal cost)
+            costs = self.dynamics.cost_fn(state_trajs)  # (1, N)
+
+            # Select best sample (argmin for reach / reach_avoid)
+            best_costs, best_idx = costs.min(dim=1)     # (1,)
+            best_cost_val = best_costs.item()
+
+            # Update control tensors with the best sample's controls
+            idx_ctrl = best_idx.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            idx_ctrl = idx_ctrl.expand(
+                -1, -1, permuted_controls.size(2), permuted_controls.size(3))
+            best_controls = torch.gather(
+                permuted_controls, dim=1, index=idx_ctrl).squeeze(1)  # (1,H,Du)
+            self.mpc.control_tensors = best_controls.clone()
+
         first_control = self.mpc.control_tensors[0, 0, :].detach().cpu().numpy()
-
-        # Compute reach-avoid cost (same formula as get_batch_data line 61)
-        cost = torch.min(
-            torch.maximum(
-                reach_values,
-                torch.cummax(-avoid_values, dim=-1).values),
-            dim=-1).values[0].item()
-
-        return first_control, cost
+        return first_control, best_cost_val
 
     def _default_dynamics_fn(self, state, control):
         """Evaluate Docking6D CW equations."""

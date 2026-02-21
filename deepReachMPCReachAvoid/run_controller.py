@@ -47,6 +47,8 @@ from utils.controllers.controller_animation import (
 from utils.controllers.brt_animation import (
     create_deepreach_animation,
     create_cascaded_deepreach_animation,
+    create_mpc_terminal_animation,
+    create_cascaded_mpc_terminal_animation,
     plot_trajectory_static as brt_plot_trajectory_static,
     plot_simulation_data   as brt_plot_simulation_data,
 )
@@ -83,6 +85,10 @@ def build_controller(name, args):
             num_samples=args.num_samples,
             num_refinement=args.num_refinement,
             device=args.device,
+            effort_weight=args.effort_weight,
+            exploration_factor=args.exploration_factor,
+            exploration_patience=args.exploration_patience,
+            escape_thresh=args.escape_thresh,
         )
     elif name == 'cascaded_brt':
         return CascadedBRTController(
@@ -104,6 +110,10 @@ def build_controller(name, args):
             num_samples=args.num_samples,
             num_refinement=args.num_refinement,
             device=args.device,
+            effort_weight=args.effort_weight,
+            exploration_factor=args.exploration_factor,
+            exploration_patience=args.exploration_patience,
+            escape_thresh=args.escape_thresh,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -173,15 +183,19 @@ def compute_metrics(all_results):
     goals      = sum(1 for r in all_results if r['docked'])
     collisions = sum(1 for r in all_results if r['collision'])
     successes  = sum(1 for r in all_results if r['success'])
-    efforts    = [r['control_effort'] for r in all_results]
     times      = [r['wall_time'] for r in all_results]
+
+    # Control effort only for successful trajectories
+    success_efforts = [r['control_effort'] for r in all_results if r['success']]
+
     return {
         'n': n,
         'goal_rate':            goals / n,
         'collision_rate':       collisions / n,
         'success_rate':         successes / n,
-        'mean_control_effort':  float(np.mean(efforts)),
-        'std_control_effort':   float(np.std(efforts)),
+        'mean_control_effort':  float(np.mean(success_efforts)) if success_efforts else 0.0,
+        'std_control_effort':   float(np.std(success_efforts)) if success_efforts else 0.0,
+        'n_success_effort':     len(success_efforts),
         'mean_wall_time':       float(np.mean(times)),
         'std_wall_time':        float(np.std(times)),
     }
@@ -189,8 +203,8 @@ def compute_metrics(all_results):
 
 def print_comparison_table(metrics_by_controller):
     """Print a formatted comparison table to stdout."""
-    header = (f"{'Controller':<18} {'Goal%':>7} {'Coll%':>7} {'Succ%':>7} "
-              f"{'Effort':>14} {'Time (s)':>14}")
+    header = (f"{'Controller':<22} {'Goal%':>7} {'Coll%':>7} {'Succ%':>7} "
+              f"{'Effort (succ)':>18} {'Time (s)':>14}")
     sep = '-' * len(header)
     print('\n' + sep)
     print('CONTROLLER COMPARISON')
@@ -198,12 +212,16 @@ def print_comparison_table(metrics_by_controller):
     print(header)
     print(sep)
     for name, m in metrics_by_controller.items():
-        effort_str = f"{m['mean_control_effort']:.1f} +/- {m['std_control_effort']:.1f}"
+        n_succ = m.get('n_success_effort', 0)
+        if n_succ > 0:
+            effort_str = f"{m['mean_control_effort']:.1f} +/- {m['std_control_effort']:.1f} ({n_succ})"
+        else:
+            effort_str = "N/A (0)"
         time_str   = f"{m['mean_wall_time']:.2f} +/- {m['std_wall_time']:.2f}"
-        print(f"{name:<18} {m['goal_rate']*100:>6.1f}% "
+        print(f"{name:<22} {m['goal_rate']*100:>6.1f}% "
               f"{m['collision_rate']*100:>6.1f}% "
               f"{m['success_rate']*100:>6.1f}% "
-              f"{effort_str:>14} {time_str:>14}")
+              f"{effort_str:>18} {time_str:>14}")
     print(sep + '\n')
 
 
@@ -216,7 +234,7 @@ def plot_metrics_bar(metrics_by_controller, save_path=None):
     colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brt'), '#1f77b4')
               for n in names]
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.5))
     x = np.arange(n_ctrl)
 
     # Rates
@@ -230,25 +248,40 @@ def plot_metrics_bar(metrics_by_controller, save_path=None):
     axes[0].bar(x + w,
                 [metrics_by_controller[n]['success_rate'] * 100 for n in names],
                 w, label='Success %', color='#8da0cb')
-    axes[0].set_xticks(x); axes[0].set_xticklabels(names, fontsize=9)
-    axes[0].set_ylabel('Percentage (%)'); axes[0].set_title('Rates')
-    axes[0].legend(fontsize=8); axes[0].set_ylim([0, 105])
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
+    axes[0].set_ylabel('Percentage (%)')
+    axes[0].set_title('Rates')
+    axes[0].legend(fontsize=8)
+    axes[0].set_ylim([0, 105])
     axes[0].grid(axis='y', alpha=0.3)
 
-    # Control effort
+    # Control effort (successful trajectories only)
     means = [metrics_by_controller[n]['mean_control_effort'] for n in names]
     stds  = [metrics_by_controller[n]['std_control_effort']  for n in names]
-    axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
-    axes[1].set_xticks(x); axes[1].set_xticklabels(names, fontsize=9)
-    axes[1].set_ylabel('Control Effort'); axes[1].set_title('Mean Control Effort')
+    bars = axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
+    axes[1].set_ylabel('Control Effort')
+    axes[1].set_title('Mean Control Effort (Successful Only)')
     axes[1].grid(axis='y', alpha=0.3)
+    # Annotate bars with count of successful runs
+    for i, n in enumerate(names):
+        n_succ = metrics_by_controller[n].get('n_success_effort', 0)
+        n_total = metrics_by_controller[n]['n']
+        if n_succ > 0:
+            axes[1].text(i, means[i] + stds[i] + 0.02 * max(means),
+                         f'n={n_succ}/{n_total}', ha='center', va='bottom',
+                         fontsize=7)
 
     # Runtime
     means = [metrics_by_controller[n]['mean_wall_time'] for n in names]
     stds  = [metrics_by_controller[n]['std_wall_time']  for n in names]
     axes[2].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
-    axes[2].set_xticks(x); axes[2].set_xticklabels(names, fontsize=9)
-    axes[2].set_ylabel('Wall Time (s)'); axes[2].set_title('Mean Runtime per Rollout')
+    axes[2].set_xticks(x)
+    axes[2].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
+    axes[2].set_ylabel('Wall Time (s)')
+    axes[2].set_title('Mean Runtime per Rollout')
     axes[2].grid(axis='y', alpha=0.3)
 
     plt.tight_layout()
@@ -348,6 +381,27 @@ def run_single(args):
             print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
             print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
 
+    if ctrl_type == 'mpc_terminal':
+        phases = result.get('phases', np.array([]))
+        if len(phases) > 0:
+            print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
+            print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
+        if result.get('brt_entry_time') is not None:
+            print(f"Entered BRT (Phase 2) at t={result['brt_entry_time']:.2f}s")
+        else:
+            print("Never entered BRT (stayed in Phase 1)")
+
+    if ctrl_type == 'cascaded_mpc_terminal':
+        phases = result.get('phases', np.array([]))
+        if len(phases) > 0:
+            print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
+            print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
+            print(f"Time in Phase 3: {np.sum(phases == 3) * args.dt:.1f}s")
+        if result.get('outer_entry_time') is not None:
+            print(f"Entered outer BRT (Phase 2) at t={result['outer_entry_time']:.2f}s")
+        if result.get('inner_entry_time') is not None:
+            print(f"Entered inner BRT (Phase 3) at t={result['inner_entry_time']:.2f}s")
+
     # ---- Generate outputs ----
     print('\n' + '=' * 60)
     print('GENERATING OUTPUTS')
@@ -381,6 +435,26 @@ def run_single(args):
             anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
             print(f"Generating Cascaded BRT animation (with value function): {anim_path}")
             create_cascaded_deepreach_animation(
+                controller, result, anim_path,
+                skip_frames=args.skip_frames,
+                resolution=args.resolution,
+                show_value_function=True,
+            )
+        elif ctrl_type == 'mpc_terminal' and not args.no_value_function:
+            # MPC+Terminal animation with phase-aware value function
+            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
+            print(f"Generating MPC+Terminal animation (with value function): {anim_path}")
+            create_mpc_terminal_animation(
+                controller, result, anim_path,
+                skip_frames=args.skip_frames,
+                resolution=args.resolution,
+                show_value_function=True,
+            )
+        elif ctrl_type == 'cascaded_mpc_terminal' and not args.no_value_function:
+            # Cascaded MPC+Terminal animation with 3-phase value function
+            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
+            print(f"Generating Cascaded MPC+Terminal animation (with value function): {anim_path}")
+            create_cascaded_mpc_terminal_animation(
                 controller, result, anim_path,
                 skip_frames=args.skip_frames,
                 resolution=args.resolution,
@@ -599,7 +673,7 @@ def _add_shared_args(parser):
     parser.add_argument('--inner_tMax', type=float, default=3.0,
                         help='Inner BRT time horizon (cascaded controllers)')
     # MPC-specific
-    parser.add_argument('--planning_horizon', type=float, default=20.0,
+    parser.add_argument('--planning_horizon', type=float, default=3.0,
                         help='MPC-only planning horizon (s)')
     parser.add_argument('--mpc_dt', type=float, default=0.5,
                         help='MPC planning timestep (s); simulation uses --dt')
@@ -609,6 +683,23 @@ def _add_shared_args(parser):
                         help='MPC random-shooting samples')
     parser.add_argument('--num_refinement', type=int, default=10,
                         help='MPC iterative refinement passes')
+    parser.add_argument('--effort_weight', type=float, default=0.0,
+                        help='Control effort penalty weight for MPC terminal '
+                             'controllers (0.0 = disabled). Adds '
+                             'effort_weight * sum(||u||*dt) to the combined '
+                             'cost. Recommended range: 0.001 - 0.05.')
+    # Graduated stagnation-escape tuning (MPC+Terminal controllers)
+    parser.add_argument('--exploration_factor', type=float, default=3.0,
+                        help='Multiplier for MPC eps_var when in EXPLORING '
+                             'mode (default 3.0)')
+    parser.add_argument('--exploration_patience', type=int, default=1,
+                        help='Number of stagnation windows (each ~5 s) in '
+                             'EXPLORING mode before switching to BRT '
+                             'fallback (default 1)')
+    parser.add_argument('--escape_thresh', type=float, default=0.5,
+                        help='Distance improvement (m) from stagnation entry '
+                             'required to declare local min escaped and '
+                             'return to NORMAL mode (default 0.5)')
     # Animation
     parser.add_argument('--skip_frames', type=int, default=5,
                         help='Frames to skip in animation')

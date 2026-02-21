@@ -878,8 +878,8 @@ class Docking6D(Dynamics):
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
-        # Tier 1 (5%): Exact goal + tiny noise
-        n_exact = int(num_samples * 0.05)
+        # Tier 1 (10%): Exact goal + tiny noise
+        n_exact = int(num_samples * 0.1)
         noise_std = torch.tensor([
             self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
             self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
@@ -889,8 +889,8 @@ class Docking6D(Dynamics):
         samples[idx:idx + n_exact] = self.goal_state.unsqueeze(0) + torch.randn(n_exact, self.state_dim) * noise_std
         idx += n_exact
 
-        # Tier 2 (35%): Gaussian around goal with tolerance-scale std
-        n_gaussian = int(num_samples * 0.35)
+        # Tier 2 (30%): Gaussian around goal with tolerance-scale std
+        n_gaussian = int(num_samples * 0.3)
         goal_std = torch.tensor([
             self.eps_p * 2, self.eps_p * 2,
             self.eps_v * 2, self.eps_v * 2,

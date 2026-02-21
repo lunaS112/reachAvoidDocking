@@ -33,7 +33,7 @@ class Experiment(ExperimentVizMixin, ABC):
         # Rollback tracking
         self.rollback_state = {}
         self.max_partial_rollbacks = 1
-        self.max_full_rollbacks = 0
+        self.max_full_rollbacks = 1
 
         # Refinment Horizon tracking
         self.horizon_epoch_map = {}      # Epoch when horizon was reached
