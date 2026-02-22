@@ -1008,11 +1008,11 @@ class Docking13D(Dynamics):
       - Chaser attitude: quaternion q (LVLH->Body), angular velocity omega (Body, relative to LVLH)
     Controls:
       - Body-frame force Fb (N): [Fx,Fy,Fz]
+      - Body-frame torque taub (N*m): [tx,ty,tz]
+    """
 
     # Fraction of state_range width used for Tier 4 broad uniform target sampling
     tier4_fraction = 0.15
-      - Body-frame torque taub (N*m): [tx,ty,tz]
-    """
 
     def __init__(self, set_mode: str):
         goal_state = None
