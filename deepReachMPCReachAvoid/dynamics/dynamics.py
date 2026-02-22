@@ -1008,6 +1008,9 @@ class Docking13D(Dynamics):
       - Chaser attitude: quaternion q (LVLH->Body), angular velocity omega (Body, relative to LVLH)
     Controls:
       - Body-frame force Fb (N): [Fx,Fy,Fz]
+
+    # Fraction of state_range width used for Tier 4 broad uniform target sampling
+    tier4_fraction = 0.15
       - Body-frame torque taub (N*m): [tx,ty,tz]
     """
 
@@ -1078,16 +1081,16 @@ class Docking13D(Dynamics):
             [-15, 15],   # x
             [-15, 15],   # y
             [-15, 15],   # z
-            [-0.2, 0.2],  # vx
-            [-0.2, 0.2],  # vy
-            [-0.2, 0.2],  # vz
+            [-2.0, 2.0],  # vx
+            [-2.0, 2.0],  # vy
+            [-2.0, 2.0],  # vz
             [-1, 1],   # q0
             [-1, 1],   # q1
             [-1, 1],   # q2
             [-1, 1],   # q3
-            [-0.5, 0.5],  # wx
-            [-0.5, 0.5],  # wy
-            [-0.5, 0.5],  # wz
+            [-1.5, 1.5],  # wx
+            [-1.5, 1.5],  # wy
+            [-1.5, 1.5],  # wz
         ]).cuda()
 
         self.control_range_ = torch.tensor([
@@ -1229,93 +1232,90 @@ class Docking13D(Dynamics):
         # Identity transform (no periodic theta anymore)
         return input.cuda()
 
+    def sample_quat_near_goal(self, n, angle_std=0.15):
+        """Sample quaternions near the goal quaternion with given angle std."""
+        q_goal = self.q_goal.detach().cpu()
+        axis = torch.randn(n, 3)
+        axis = axis / (torch.norm(axis, dim=-1, keepdim=True) + 1e-12)
+        angle = torch.randn(n) * angle_std
+        half = 0.5 * angle
+        q0 = torch.cos(half)
+        qv = axis * torch.sin(half).unsqueeze(-1)
+        q_delta = torch.cat([q0.unsqueeze(-1), qv], dim=-1)
+        q_goal_rep = q_goal.unsqueeze(0).repeat(n, 1)
+        q = self.quat_mul(q_goal_rep, q_delta)
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        return q
+
     def sample_target_state(self, num_samples):
-        """Sample near target and failure regions; BRT boundary sampling handled elsewhere."""
+        """Multi-scale target sampling concentrated near the exact goal state.
+        
+        Matches Docking6D approach:
+        Tier 1 (10%): Exact goal + tiny noise (0.1x tolerance)
+        Tier 2 (30%): Gaussian around goal with 2x tolerance std 
+        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance 
+        Tier 4 (40%): Broader uniform sampling centered on goal 
+        """
         num_samples = int(num_samples)
-        num_goal = max(1, int(0.7 * num_samples))
-        num_fail = max(1, num_samples - num_goal)
+        samples = torch.zeros(num_samples, self.state_dim)
+        idx = 0
 
-        def sample_quat_near_goal(n, angle_std=0.15):
-            q_goal = self.q_goal.detach().cpu()
-            axis = torch.randn(n, 3)
-            axis = axis / (torch.norm(axis, dim=-1, keepdim=True) + 1e-12)
-            angle = torch.randn(n) * angle_std
-            half = 0.5 * angle
-            q0 = torch.cos(half)
-            qv = axis * torch.sin(half).unsqueeze(-1)
-            q_delta = torch.cat([q0.unsqueeze(-1), qv], dim=-1)
-            q_goal_rep = q_goal.unsqueeze(0).repeat(n, 1)
-            q = self.quat_mul(q_goal_rep, q_delta)
-            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
-            return q
+        # Tier 1 (10%): Exact goal + tiny noise
+        n_exact = int(num_samples * 0.1)
+        noise_std = torch.tensor([
+            self.eps_p * 0.1, self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
+            self.eps_v * 0.1, self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
+            0.0, 0.0, 0.0, 0.0,                                        # quaternion: handled separately
+            self.eps_omega * 0.1, self.eps_omega * 0.1, self.eps_omega * 0.1  # omega: 0.005rad/s
+        ])
+        samples[idx:idx + n_exact] = self.goal_state.unsqueeze(0) + torch.randn(n_exact, self.state_dim) * noise_std
+        samples[idx:idx + n_exact, 6:10] = self.sample_quat_near_goal(n_exact, angle_std=self.eps_q * 0.1)
+        idx += n_exact
 
-        # --- Near goal ---
-        goal_states = torch.zeros(num_goal, self.state_dim)
-        goal_states[:, 0] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.6
-        goal_states[:, 1] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.6
-        goal_states[:, 2] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.3
-        goal_states[:, 3] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
-        goal_states[:, 4] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
-        goal_states[:, 5] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.2
-        goal_states[:, 6:10] = sample_quat_near_goal(num_goal)
-        goal_states[:, 10] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
-        goal_states[:, 11] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
-        goal_states[:, 12] = (torch.rand(num_goal) * 2.0 - 1.0) * 0.1
+        # Tier 2 (30%): Gaussian around goal with tolerance-scale std
+        n_gaussian = int(num_samples * 0.3)
+        goal_std = torch.tensor([
+            self.eps_p * 2, self.eps_p * 2, self.eps_p * 2,
+            self.eps_v * 2, self.eps_v * 2, self.eps_v * 2,
+            0.0, 0.0, 0.0, 0.0,  # quaternion: handled separately
+            self.eps_omega * 2, self.eps_omega * 2, self.eps_omega * 2
+        ])
+        samples[idx:idx + n_gaussian] = self.goal_state.unsqueeze(0) + torch.randn(n_gaussian, self.state_dim) * goal_std
+        samples[idx:idx + n_gaussian, 6:10] = self.sample_quat_near_goal(n_gaussian, angle_std=self.eps_q * 2)
+        idx += n_gaussian
 
-        # --- Near failure (inside target body, outside docking cutout) ---
-        fail_states = torch.zeros(num_fail, self.state_dim)
-        w = self.w_t / 2.0 + self.chaser_buffer_xy
-        y_min = -self.chaser_buffer_xy
-        y_max = self.h_t + self.chaser_buffer_xy
-        z_max = self.d_t / 2.0 + self.chaser_buffer_z
-        effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
+        # Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance
+        # Samples on/near the reach set boundary where the value function transitions
+        n_boundary = int(num_samples * 0.20)
+        tolerances = torch.tensor([
+            self.eps_p, self.eps_p, self.eps_p,
+            self.eps_v, self.eps_v, self.eps_v,
+            0.0, 0.0, 0.0, 0.0,  # quaternion: handled separately
+            self.eps_omega, self.eps_omega, self.eps_omega
+        ])
+        # Each dimension independently at a random fraction of [0.8, 1.2]x its tolerance
+        scale_factors = 0.8 + 0.4 * torch.rand(n_boundary, self.state_dim)
+        # Random sign for each dimension (sample on both sides of goal)
+        signs = torch.sign(torch.randn(n_boundary, self.state_dim))
+        samples[idx:idx + n_boundary] = self.goal_state.unsqueeze(0) + signs * scale_factors * tolerances.unsqueeze(0)
+        # Sample quaternions at boundary angle
+        boundary_angles = 0.8 + 0.4 * torch.rand(n_boundary)  # [0.8, 1.2] * eps_q
+        samples[idx:idx + n_boundary, 6:10] = self.sample_quat_near_goal(n_boundary, angle_std=self.eps_q)
+        idx += n_boundary
 
-        collected = 0
-        max_iters = max(10, num_fail * 10)
-        iters = 0
-        while collected < num_fail and iters < max_iters:
-            batch = min(num_fail - collected, 256)
-            xs = (torch.rand(batch) * 2.0 - 1.0) * w
-            ys = y_min + torch.rand(batch) * (y_max - y_min)
-            zs = (torch.rand(batch) * 2.0 - 1.0) * z_max
+        # Tier 4 (40%): Broader uniform sampling centered on goal_state
+        # Half-width = fraction of state_range width, adapts when state_range is overridden
+        n_broad = num_samples - idx
+        sr = self.state_range_.cpu()
+        state_widths = (sr[:, 1] - sr[:, 0])
+        tier4_half_width = self.tier4_fraction * state_widths
+        tier4_lo = torch.clamp(self.goal_state - tier4_half_width, sr[:, 0], sr[:, 1])
+        tier4_hi = torch.clamp(self.goal_state + tier4_half_width, sr[:, 0], sr[:, 1])
+        samples[idx:] = tier4_lo + torch.rand(n_broad, self.state_dim) * (tier4_hi - tier4_lo)
+        # For quaternion dimensions, sample with broader angle std
+        samples[idx:, 6:10] = self.sample_quat_near_goal(n_broad, angle_std=self.tier4_fraction * math.pi)
 
-            # Hemisphere cutout: y >= 0 and inside sphere radius
-            hemi = torch.sqrt(xs**2 + ys**2 + zs**2) - effective_rad
-            in_hemi = (ys >= 0) & (hemi <= 0)
-            keep = ~in_hemi
-
-            xs = xs[keep]
-            ys = ys[keep]
-            zs = zs[keep]
-            if xs.numel() == 0:
-                iters += 1
-                continue
-
-            take = min(xs.numel(), num_fail - collected)
-            fail_states[collected:collected + take, 0] = xs[:take]
-            fail_states[collected:collected + take, 1] = ys[:take]
-            fail_states[collected:collected + take, 2] = zs[:take]
-            collected += take
-            iters += 1
-
-        if collected < num_fail:
-            fail_states = fail_states[:collected]
-
-        if collected > 0:
-            fail_states[:, 3] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
-            fail_states[:, 4] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
-            fail_states[:, 5] = (torch.rand(collected) * 2.0 - 1.0) * 0.3
-            fail_states[:, 6:10] = sample_quat_near_goal(collected, angle_std=0.3)
-            fail_states[:, 10] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
-            fail_states[:, 11] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
-            fail_states[:, 12] = (torch.rand(collected) * 2.0 - 1.0) * 0.2
-
-        sampled_states = torch.cat([goal_states, fail_states], dim=0)
-        if sampled_states.shape[0] < num_samples:
-            extra = num_samples - sampled_states.shape[0]
-            pad = goal_states[:extra].clone()
-            sampled_states = torch.cat([sampled_states, pad], dim=0)
-        return sampled_states
+        return samples
 
     def sample_target_state_refined(self, num_samples):
         """Alias for sample_target_state (kept for backwards compatibility)."""
