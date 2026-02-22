@@ -51,6 +51,24 @@ class Dynamics(ABC):
     def set_model(self, deepreach_model):
         self.deepReach_model = deepreach_model
 
+    def override_state_range(self, state_range):
+        """Override normalization parameters with a new state_range.
+
+        This updates state_range_, state_mean, and state_var consistently.
+        Must be called BEFORE any model queries so that coord_to_input /
+        io_to_value use the correct normalization.
+
+        Args:
+            state_range: (state_dim, 2) list or tensor of [[lo, hi], ...].
+        """
+        if isinstance(state_range, list):
+            state_range = torch.tensor(state_range, dtype=torch.float32)
+        self.state_range_ = state_range.cuda()
+        self.state_mean = ((self.state_range_[:, 0] + self.state_range_[:, 1]) / 2.0).cpu()
+        self.state_var  = ((self.state_range_[:, 1] - self.state_range_[:, 0]) / 2.0).cpu()
+        if hasattr(self, '_update_v_max'):
+            self._update_v_max()
+
     # MODEL-UNIT CONVERSIONS
     # convert model input (normalized) to real coord
     def input_to_coord(self, input):
@@ -507,9 +525,25 @@ class Dubins3D(Dynamics):
 
 
 class Docking6D(Dynamics):
-    def __init__(self, set_mode: str):
-        # Defineing dynamic parameters
-        goal_state = None
+    # Fraction of state_range width used for Tier 4 broad uniform target sampling
+    tier4_fraction = 0.15
+
+    def __init__(self, set_mode: str, state_range=None, goal_state=None,
+                 eps_p: float = None, eps_v: float = None,
+                 eps_theta: float = None, eps_omega: float = None):
+        """
+        Args:
+            set_mode:    'reach_avoid' (only supported mode).
+            state_range: Optional (6,2) list overriding the default state bounds.
+                         Used to restore training-time normalization when loading
+                         a model trained with different bounds.
+            goal_state:  Optional 6-element list overriding the default goal.
+            eps_p:       Optional position tolerance override.
+            eps_v:       Optional velocity tolerance override.
+            eps_theta:   Optional angular position tolerance override.
+            eps_omega:   Optional angular velocity tolerance override.
+        """
+        # Defining dynamic parameters
         self.orbit_alt = 400  # Orbital altitude (km)
         self.u_bar = 20.0  # Maximum control input
         self.u_theta_bar = 1.5  # Maximum control input for angular velocity
@@ -524,19 +558,23 @@ class Docking6D(Dynamics):
         self.jc = self.moment_of_inertia()    # Moment of inertia of chaser spacecraft (kg*m^2)
         self.n = self.mean_motion()      # Mean motion (assuming circular orbit) (rad/s)
 
-        # Define docking parameters (10x) <- to make the docking region reasonably sized
-        # TODO What should these be?
-        self.eps_p = 0.1 # Position tolerance for docking (m)
-        self.eps_v = 0.1 # Velocity tolerance for docking (m/s)
-        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
-        self.eps_omega = 0.05 # Angular velocity tolerance for docking (rad/s)
-        self.v_max = 2.5 # Used to clamp velocity in ds/dt
+        # Docking tolerances (use overrides when provided, else defaults)
+        self.eps_p     = eps_p     if eps_p     is not None else 0.1    # Position (m)
+        self.eps_v     = eps_v     if eps_v     is not None else 0.1    # Velocity (m/s)
+        self.eps_theta = eps_theta if eps_theta is not None else 0.04   # Angle (rad)
+        self.eps_omega = eps_omega if eps_omega is not None else 0.05   # Angular vel (rad/s)
 
-        # Define goal state
-        if goal_state is None:
-            self.goal_state = torch.tensor([0.0, 0.0, 0.0, 0.0, np.pi/2, 0.0])
+        # Values for 3 second inner controller
+        #self.eps_p = 0.1 
+        #self.eps_v = 0.05 
+        #self.eps_theta = 0.05 
+        #self.eps_omega = 0.0035 
+
+        # Goal state (use override when provided, else default)
+        if goal_state is not None:
+            self.goal_state = torch.tensor(goal_state, dtype=torch.float32)
         else:
-            self.goal_state = torch.tensor(goal_state)
+            self.goal_state = torch.tensor([0.0, 0.0, 0.0, 0.0, np.pi/2, 0.0])
 
         # Define target spacecraft (Planar)
         self.w_t = 6  # width of target spacecraft (m) (along x-axis)
@@ -558,16 +596,21 @@ class Docking6D(Dynamics):
         self.eps_var = torch.tensor([20, 20, 1.5]).cuda()
         self.control_init = torch.zeros(3).cuda()
         
-        # Define state/control space
+        # Define state/control space (use override when provided, else default)
         self.state_dim = 6
-        self.state_range_ = torch.tensor(
-            [[-15, 15], [-15, 15], [-2.5 , 2.5], [-2.5 , 2.5], [-math.pi, math.pi], [-1.0, 1.0]]).cuda()
+        if state_range is not None:
+            self.state_range_ = torch.tensor(state_range, dtype=torch.float32).cuda()
+        else:
+            #[[-4, 4], [-4, 4], [-1.0 , 1.0], [-1.0 , 1.0], [-math.pi, math.pi], [-0.75, 0.75]] used for 3 second inner controller
+            self.state_range_ = torch.tensor(
+                [[-15, 15], [-15, 15], [-1.5 , 1.5], [-1.5 , 1.5], [-math.pi, math.pi], [-1.0, 1.0]]).cuda()
         self.control_range_ = torch.tensor(
             [[-self.u_bar, self.u_bar], [-self.u_bar, self.u_bar], [-self.u_theta_bar, self.u_theta_bar]]).cuda()
         
         # Calculate state mean/var for normalization
         state_mean_ = (self.state_range_[:, 0]+self.state_range_[:, 1])/2.0
         state_var_ = (self.state_range_[:, 1]-self.state_range_[:, 0])/2.0
+        self._update_v_max()  # Derive v_max from velocity bounds in state_range_
 
         # Define an MPC cost weight matrix for these dynamics
         # MPC cost: sum of stage costs + terminal cost
@@ -639,7 +682,7 @@ class Docking6D(Dynamics):
         output_shape[-1] = output_shape[-1] + 1  # Add one more dimension for cos(theta)
         transformed_input = torch.zeros(output_shape)
         
-        # Copy the first 5 elements: [time, x, y, ux, uy]
+        # Copy the first 5 elements: [time, x, y, vx, vy]
         transformed_input[..., :5] = input[..., :5]
         
         # Transform the periodic angle theta (at index 4 in state, index 5 in input)
@@ -659,12 +702,16 @@ class Docking6D(Dynamics):
     # \dot \theta = \omega
     # \dot \omega = u_theta/jc
 
+    def _update_v_max(self):
+        """Derive v_max from the velocity bounds in state_range_ (indices 2, 3)."""
+        self.v_max = float(self.state_range_[2:4, 1].max().item())
+
     def dsdt(self, state, control, disturbance):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]
         dsdt[..., 1] = state[..., 3]
-        dsdt[..., 2] = 3 * self.mean_motion()**2 * state[..., 0] + 2 * self.mean_motion() * state[..., 3] + control[..., 0] / self.mc
-        dsdt[..., 3] = -2 * self.mean_motion() * state[..., 2] + control[..., 1] / self.mc
+        dsdt[..., 2] = 3 * self.n**2 * state[..., 0] + 2 * self.n * state[..., 3] + control[..., 0] / self.mc
+        dsdt[..., 3] = -2 * self.n * state[..., 2] + control[..., 1] / self.mc
 
         current_vx = state[..., 2]
         current_vy = state[..., 3]
@@ -681,7 +728,7 @@ class Docking6D(Dynamics):
             torch.zeros_like(dsdt[..., 3]),dsdt[..., 3])
 
         dsdt[..., 4] = state[..., 5]
-        dsdt[..., 5] = control[..., 2] / self.moment_of_inertia()
+        dsdt[..., 5] = control[..., 2] / self.jc
         return dsdt
 
     # L2 Norm (exact)
@@ -776,6 +823,44 @@ class Docking6D(Dynamics):
 
         return s_fail
 
+    def check_collision_oriented(self, state):
+        if isinstance(state, torch.Tensor):
+            px = state[..., 0].item()
+            py = state[..., 1].item()
+            theta = state[..., 4].item()
+        else:
+            px, py = float(state[0]), float(state[1])
+            theta = float(state[4])
+
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        hw = self.w_c / 2.0   # half-width
+        hh = self.h_c / 2.0   # half-height
+
+        # 4 corners of the chaser in world frame
+        corners = [
+            (px + hw * cos_t - hh * sin_t, py + hw * sin_t + hh * cos_t),
+            (px - hw * cos_t - hh * sin_t, py - hw * sin_t + hh * cos_t),
+            (px - hw * cos_t + hh * sin_t, py - hw * sin_t - hh * cos_t),
+            (px + hw * cos_t + hh * sin_t, py + hw * sin_t - hh * cos_t),
+        ]
+
+        for cx, cy in corners:
+            if self._point_in_target_body(cx, cy):
+                return True
+        return False
+
+    def _point_in_target_body(self, px, py):
+        # Inside the target rectangle?
+        if abs(px) > self.w_t / 2.0 or py < 0.0 or py > self.h_t:
+            return False   # outside rectangle -> no collision
+
+        # Inside the docking indentation (safe zone)?
+        if px ** 2 + py ** 2 < self.dock_rad ** 2 and py >= 0.0:
+            return False   # inside dock semicircle -> safe
+
+        return True        # inside rectangle but outside dock -> collision
+
     def boundary_fn(self, state):
         if self.set_mode in ['reach_avoid']:
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
@@ -783,42 +868,18 @@ class Docking6D(Dynamics):
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
 
     def sample_target_state(self, num_samples):
-        target_state_range = self.state_test_range()
-        target_state_range[0] = [-2.0, 2.0]
-        target_state_range[1] = [-2.0, 2.0]
-        
-        # Velocity: keep small velocities near docking
-        target_state_range[2] = [-0.5, 0.5] 
-        target_state_range[3] = [-0.5, 0.5]
-        
-        # Angular position: focus around desired docking angle (π/2)
-        target_state_range[4] = [np.pi/2 - np.pi/4, np.pi/2 + np.pi/4] 
-        
-        # Angular velocity: keep small
-        target_state_range[5] = [-0.5, 0.5] 
-        
-        # Convert to tensor
-        target_state_range = torch.tensor(target_state_range)
-        
-        # Sample uniformly within the target ranges
-        sampled_states = target_state_range[:, 0] + torch.rand(num_samples, self.state_dim) * (
-            target_state_range[:, 1] - target_state_range[:, 0]
-        )
-        return sampled_states
-
-    def sample_target_state_refined(self, num_samples):
         """Multi-scale target sampling concentrated near the exact goal state.
         
-        Tier 1 (5%):  Exact goal + tiny noise (pins the minimum location)
-        Tier 2 (35%): Gaussian around goal with tolerance-scale std (teaches gradient funnel)
-        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance (where V transitions)
-        Tier 4 (40%): Broader uniform sampling (existing behavior, for context)
+        Tier 1 (5%):  Exact goal + tiny noise
+        Tier 2 (35%): Gaussian around goal with tolerance-scale std 
+        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance 
+        Tier 4 (40%): Broader uniform sampling centered on goal 
         """
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
-        # Tier 1 (5%): Exact goal + tiny noise
-        n_exact = int(num_samples * 0.05)
+        # Tier 1 (10%): Exact goal + tiny noise
+        n_exact = int(num_samples * 0.1)
         noise_std = torch.tensor([
             self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
             self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
@@ -828,8 +889,8 @@ class Docking6D(Dynamics):
         samples[idx:idx + n_exact] = self.goal_state.unsqueeze(0) + torch.randn(n_exact, self.state_dim) * noise_std
         idx += n_exact
 
-        # Tier 2 (35%): Gaussian around goal with tolerance-scale std
-        n_gaussian = int(num_samples * 0.35)
+        # Tier 2 (30%): Gaussian around goal with tolerance-scale std
+        n_gaussian = int(num_samples * 0.3)
         goal_std = torch.tensor([
             self.eps_p * 2, self.eps_p * 2,
             self.eps_v * 2, self.eps_v * 2,
@@ -855,23 +916,28 @@ class Docking6D(Dynamics):
         samples[idx:idx + n_boundary] = self.goal_state.unsqueeze(0) + signs * scale_factors * tolerances.unsqueeze(0)
         idx += n_boundary
 
-        # Tier 4 (40%): Broader uniform sampling (existing behavior, for context)
+        # Tier 4 (40%): Broader uniform sampling centered on goal_state
+        # Half-width = fraction of state_range width, adapts when state_range is overridden
         n_broad = num_samples - idx
-        target_state_range = self.state_test_range()
-        target_state_range[0] = [-2.0, 2.0]   # px
-        target_state_range[1] = [-2.0, 2.0]   # py
-        target_state_range[2] = [-0.5, 0.5]   # vx
-        target_state_range[3] = [-0.5, 0.5]   # vy
-        target_state_range[4] = [np.pi/2 - np.pi/4, np.pi/2 + np.pi/4]  # theta
-        target_state_range[5] = [-0.5, 0.5]   # omega
-        target_state_range = torch.tensor(target_state_range)
-        samples[idx:] = target_state_range[:, 0] + torch.rand(
-            n_broad, self.state_dim) * (target_state_range[:, 1] - target_state_range[:, 0])
+        sr = self.state_range_.cpu()
+        state_widths = (sr[:, 1] - sr[:, 0])
+        tier4_half_width = self.tier4_fraction * state_widths
+        tier4_lo = torch.clamp(self.goal_state - tier4_half_width, sr[:, 0], sr[:, 1])
+        tier4_hi = torch.clamp(self.goal_state + tier4_half_width, sr[:, 0], sr[:, 1])
+        samples[idx:] = tier4_lo + torch.rand(n_broad, self.state_dim) * (tier4_hi - tier4_lo)
 
         return samples
 
+    def sample_target_state_refined(self, num_samples):
+        """Alias for sample_target_state (kept for backwards compatibility)."""
+        return self.sample_target_state(num_samples)
+
     def cost_fn(self, state_traj):
-        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+        # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
+        # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
+        reach_values = self.reach_fn(state_traj)
+        avoid_values = self.avoid_fn(state_traj)
+        return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
     
     def hamiltonian(self, state, dvds):
         if self.set_mode == 'reach_avoid':
@@ -1250,6 +1316,10 @@ class Docking13D(Dynamics):
             pad = goal_states[:extra].clone()
             sampled_states = torch.cat([sampled_states, pad], dim=0)
         return sampled_states
+
+    def sample_target_state_refined(self, num_samples):
+        """Alias for sample_target_state (kept for backwards compatibility)."""
+        return self.sample_target_state(num_samples)
     
     # ---------- 13D dynamics ----------
     def dsdt(self, state, control, disturbance):
@@ -1454,8 +1524,14 @@ class Docking13D(Dynamics):
         return 0
 
     def plot_config(self):
+        # Use goal quaternion (90° yaw) so reach set shows up in position slices
+        # q_goal = [cos(π/4), 0, 0, sin(π/4)] for 90° rotation about z-axis
+        q0 = float(self.q_goal[0].cpu()) if self.q_goal[0].is_cuda else float(self.q_goal[0])
+        q1 = float(self.q_goal[1].cpu()) if self.q_goal[1].is_cuda else float(self.q_goal[1])
+        q2 = float(self.q_goal[2].cpu()) if self.q_goal[2].is_cuda else float(self.q_goal[2])
+        q3 = float(self.q_goal[3].cpu()) if self.q_goal[3].is_cuda else float(self.q_goal[3])
         return {
-            'state_slices': [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
             'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,
