@@ -68,14 +68,15 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_Inner_3sec --
  --use_wandb --wandb_project Docking6D_3sec --wandb_name Docking6D_Inner_3sec --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 ############################################# Docking13D Reach_avoid problem ##########################################
-python3 run_experiment.py --mode train --experiment_name Docking13D_RA --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 2500\
+# Note: 13D uses aggressive targeted sampling (10K samples, tier4_fraction=0.30, 35% boundary tier)
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 10000\
  --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
  --num_iterative_refinement 10 --MPC_batch_size 750 --num_MPC_batches 100 --num_MPC_data_samples 5000 --numpoints 50000 --mpc_ground_truth_frequency 15\
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
  --use_wandb --wandb_project Docking13D_test_Fixed_GoalSet --wandb_name Docking13D_10s --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
 
 # 15s quick test (reduced MPC rollouts for faster iteration)
-python3 run_experiment.py --mode train --experiment_name Docking13D_RA_test_15s_fastish --dynamics_class Docking13D --tMax 15 --pretrain --pretrain_iters 1000 --num_epochs 130000 --pause_epochs 1000 --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 1500 --num_MPC_batches 50 --num_MPC_data_samples 7500 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D --wandb_name Docking13D_test_15s_fastish --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA_test_15s_fastish --dynamics_class Docking13D --tMax 15 --pretrain --num_target_samples 10000 --pretrain_iters 1000 --num_epochs 130000 --pause_epochs 1000 --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 1500 --num_MPC_batches 50 --num_MPC_data_samples 7500 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D --wandb_name Docking13D_test_15s_fastish --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
 
 ############################################## Quadrotor ##########################################
 # To train (exp time: 3h on RTX 4090)
