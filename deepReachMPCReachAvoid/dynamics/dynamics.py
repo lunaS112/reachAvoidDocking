@@ -1012,8 +1012,7 @@ class Docking13D(Dynamics):
     """
 
     # Fraction of state_range width used for Tier 4 broad uniform target sampling
-    # Higher value for 13D to combat curse of dimensionality
-    tier4_fraction = 0.30
+    tier4_fraction = 0.15
 
     def __init__(self, set_mode: str):
         goal_state = None
@@ -1275,18 +1274,18 @@ class Docking13D(Dynamics):
     def sample_target_state(self, num_samples):
         """Multi-scale target sampling concentrated near the exact goal state.
         
-        Aggressive sampling for 13D - boosted to combat curse of dimensionality:
+        Matches Docking6D approach:
         Tier 1 (10%): Exact goal + tiny noise (0.1x tolerance)
-        Tier 2 (25%): Gaussian around goal with 2x tolerance std 
-        Tier 3 (35%): Boundary-focused sampling at 0.8-1.2x tolerance (BOOSTED from 20%)
-        Tier 4 (30%): Broader uniform sampling centered on goal 
+        Tier 2 (30%): Gaussian around goal with 2x tolerance std 
+        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance 
+        Tier 4 (40%): Broader uniform sampling centered on goal 
         """
         num_samples = int(num_samples)
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
         # Tier 1 (10%): Exact goal + tiny noise
-        n_exact = int(num_samples * 0.10)
+        n_exact = int(num_samples * 0.1)
         noise_std = torch.tensor([
             self.eps_p * 0.1, self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
             self.eps_v * 0.1, self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
@@ -1297,8 +1296,8 @@ class Docking13D(Dynamics):
         samples[idx:idx + n_exact, 6:10] = self.sample_quat_near_goal(n_exact, angle_std=self.eps_q * 0.1)
         idx += n_exact
 
-        # Tier 2 (25%): Gaussian around goal with tolerance-scale std
-        n_gaussian = int(num_samples * 0.25)
+        # Tier 2 (30%): Gaussian around goal with tolerance-scale std
+        n_gaussian = int(num_samples * 0.3)
         goal_std = torch.tensor([
             self.eps_p * 2, self.eps_p * 2, self.eps_p * 2,
             self.eps_v * 2, self.eps_v * 2, self.eps_v * 2,
@@ -1309,9 +1308,9 @@ class Docking13D(Dynamics):
         samples[idx:idx + n_gaussian, 6:10] = self.sample_quat_near_goal(n_gaussian, angle_std=self.eps_q * 2)
         idx += n_gaussian
 
-        # Tier 3 (35%): Boundary-focused sampling at 0.8-1.2x tolerance (BOOSTED)
+        # Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance
         # Samples on/near the reach set boundary where the value function transitions
-        n_boundary = int(num_samples * 0.35)
+        n_boundary = int(num_samples * 0.20)
         tolerances = torch.tensor([
             self.eps_p, self.eps_p, self.eps_p,
             self.eps_v, self.eps_v, self.eps_v,
