@@ -1027,8 +1027,8 @@ class Docking13D(Dynamics):
         self.w_c = 1.0  # x-dim (m)
         self.h_c = 1.0  # y-dim (m)
         self.d_c = 1.0  # z-dim (m)
-        self.chaser_buffer_xy = math.sqrt(self.w_c**2 + self.h_c**2) / 2.0
-        self.chaser_buffer_z = self.d_c / 2.0
+        # Fix #7: Use single 3D bounding-sphere radius for consistent collision buffer
+        self.chaser_buffer = math.sqrt(self.w_c**2 + self.h_c**2 + self.d_c**2) / 2.0
 
         # Derived
         self.n = self.mean_motion()
@@ -1104,8 +1104,10 @@ class Docking13D(Dynamics):
         ]).cuda()
 
         # MPC initialization parameters
+        # Fix #4: Reduce torque perturbation noise — sqrt(1.5)≈1.22 was 82% of tau_bar,
+        # sqrt(0.3)≈0.55 is ~37% per axis, more reasonable for 3-axis exploration
         self.eps_var = torch.tensor([self.F_bar, self.F_bar, self.F_bar, 
-                                     self.tau_bar, self.tau_bar, self.tau_bar]).cuda()
+                                     0.3, 0.3, 0.3]).cuda()
         self.control_init = torch.zeros(6).cuda()  # Initial control guess for MPC
 
         # Normalization
@@ -1134,7 +1136,10 @@ class Docking13D(Dynamics):
             state_var=state_var_.cpu().tolist(),
             value_mean=0.5,
             value_var=1,
-            value_normto=0.02,
+            # Fix #2: Increase value_normto from 0.02 to 0.05 to reduce the effective
+            # output multiplier (1/value_normto) from 50x to 20x, making the network
+            # less sensitive to individual MPC samples and reducing overfitting
+            value_normto=0.05,
             deepReach_model='exact'
         )
 
@@ -1253,8 +1258,15 @@ class Docking13D(Dynamics):
         return wrapped
 
     def periodic_transform_fn(self, input):
-        # Identity transform (no periodic theta anymore)
-        return input.cuda()
+        # Fix #3: Resolve quaternion q ↔ -q ambiguity by enforcing canonical form (q0 >= 0).
+        # In the input tensor, index 0 is time, indices 1-13 are states.
+        # Quaternion q0 is at state index 6, i.e. input index 7.
+        output = input.clone()
+        q0 = output[..., 7:8]  # q0 component
+        sign = torch.sign(q0)
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        output[..., 7:11] = output[..., 7:11] * sign  # flip all 4 quat components
+        return output.cuda()
 
     def sample_quat_near_goal(self, n, angle_std=0.15):
         """Sample quaternions near the goal quaternion with given angle std."""
@@ -1456,9 +1468,12 @@ class Docking13D(Dynamics):
         omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
 
         # Keep your shaping idea (I won’t over-tune; same spirit)
-        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
+        # Fix #1: Increase outer shaping weights for position (0.1→0.5) and attitude (0.1→0.5)
+        # to provide stronger PDE gradient signal outside the reach set in the 13D space,
+        # reducing the network's tendency to overfit to sparse MPC samples
+        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.5)
         vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
-        att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.1)
+        att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.5)
         omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
 
         goal = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
@@ -1474,19 +1489,19 @@ class Docking13D(Dynamics):
         y = state[...,1]
         z = state[...,2]
 
-        # --- Rectangular prism SDF ---
-        half_w = self.w_t / 2.0 + self.chaser_buffer_xy
-        half_z = self.d_t / 2.0 + self.chaser_buffer_z
+        # --- Rectangular prism SDF (Fix #7: use single consistent 3D buffer) ---
+        half_w = self.w_t / 2.0 + self.chaser_buffer
+        half_z = self.d_t / 2.0 + self.chaser_buffer
         s_box = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + self.chaser_buffer_xy), y - (self.h_t + self.chaser_buffer_xy)),
+                torch.maximum(-(y + self.chaser_buffer), y - (self.h_t + self.chaser_buffer)),
                 torch.abs(z) - half_z
             )
         )
 
         # --- Hemispherical cutout (centered at origin, y >= 0) ---
-        effective_rad = max(self.dock_rad - self.chaser_buffer_xy, 1e-6)
+        effective_rad = max(self.dock_rad - self.chaser_buffer, 1e-6)
         # Add epsilon inside sqrt to prevent gradient explosion at origin
         dist_sphere = torch.sqrt(x**2 + y**2 + z**2 + 1e-8) - effective_rad
         s_hemi = torch.maximum(-y, dist_sphere)
@@ -1500,7 +1515,7 @@ class Docking13D(Dynamics):
         # Add epsilon inside sqrt to prevent gradient explosion when x=z=0
         dist_cyl_xz = torch.sqrt(x**2 + z**2 + 1e-8) - effective_rad
         s_cutout = torch.maximum(dist_cyl_xz, 
-                                 torch.maximum(-(y + self.chaser_buffer_xy), y))
+                                 torch.maximum(-(y + self.chaser_buffer), y))
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
