@@ -1,4 +1,4 @@
-absl-py==2.3.1
+absl-py==1.4.0
 annotated-types==0.7.0
 cached-property==2.0.1
 cachetools==5.5.2
@@ -59,7 +59,6 @@ orbax-checkpoint==0.2.3
 packaging==25.0
 pandas==2.0.3
 pillow==10.4.0
-pkg_resources==0.0.0
 platformdirs==4.3.6
 protobuf==5.29.5
 pyasn1==0.6.1
