@@ -304,7 +304,37 @@ class BRTController:
         values = self.dynamics.io_to_value(model_input, output)
         
         return values.cpu().numpy()
-    
+
+    def get_values_batch_states(self, states, time):
+        """
+        Query V(x, t) for multiple states at a single fixed time in one forward pass.
+
+        Args:
+            states: (N, state_dim) numpy array or torch tensor of state vectors
+            time: scalar time value to query
+
+        Returns:
+            numpy array of shape (N,): V(x_i, t) for each state
+        """
+        if isinstance(states, np.ndarray):
+            states = torch.tensor(states, dtype=torch.float32)
+        states = states.to(self.device)
+        if states.dim() == 1:
+            states = states.unsqueeze(0)
+
+        n = states.shape[0]
+        time_col = torch.full((n, 1), time, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states], dim=-1)          # (N, 1+state_dim)
+
+        model_input = self.dynamics.coord_to_input(coords)
+
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)            # (N,)
+
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.cpu().numpy()
+
     def _search_brt_time(self, state, current_time):
         """
         Search for the minimum time t where V(x, t) <= 0 (tightest BRT containing state).

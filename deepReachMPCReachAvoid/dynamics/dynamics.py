@@ -1523,6 +1523,72 @@ class Docking13D(Dynamics):
     def optimal_disturbance(self, state, dvds):
         return 0
 
+    # ---------- 3D oriented collision check ----------
+    def _quat_to_R_np(self, q):
+        """Numpy rotation matrix (LVLH-to-body) from scalar-first quaternion."""
+        q0, q1, q2, q3 = q
+        return np.array([
+            [1 - 2*(q2*q2 + q3*q3), 2*(q1*q2 + q0*q3),     2*(q1*q3 - q0*q2)],
+            [2*(q1*q2 - q0*q3),     1 - 2*(q1*q1 + q3*q3),  2*(q2*q3 + q0*q1)],
+            [2*(q1*q3 + q0*q2),     2*(q2*q3 - q0*q1),      1 - 2*(q1*q1 + q2*q2)],
+        ])
+
+    def check_collision_oriented_3d(self, state):
+        """8-corner oriented box collision check for 3D chaser against target body.
+
+        Transforms all 8 corners of the chaser cube from body frame to LVLH
+        and checks each against the 3D target geometry (box minus docking
+        cutouts).
+        """
+        if isinstance(state, torch.Tensor):
+            pos = state[..., :3].detach().cpu().numpy().flatten()
+            q = state[..., 6:10].detach().cpu().numpy().flatten()
+        else:
+            pos = np.array(state[:3], dtype=np.float64)
+            q = np.array(state[6:10], dtype=np.float64)
+
+        q_norm = np.linalg.norm(q)
+        if q_norm > 1e-12:
+            q = q / q_norm
+
+        R = self._quat_to_R_np(q)  # LVLH-to-body
+
+        hw, hh, hd = self.w_c / 2.0, self.h_c / 2.0, self.d_c / 2.0
+        # 8 body-frame corners
+        body_corners = np.array([
+            [sx * hw, sy * hh, sz * hd]
+            for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)
+        ])  # (8, 3)
+
+        # R is LVLH-to-body  =>  R^T maps body-to-LVLH
+        lvlh_corners = (R.T @ body_corners.T).T + pos  # (8, 3)
+
+        for cx, cy, cz in lvlh_corners:
+            if self._point_in_target_body_3d(cx, cy, cz):
+                return True
+        return False
+
+    def _point_in_target_body_3d(self, px, py, pz):
+        """True if a point lies inside the collision region of the 3D target.
+
+        Collision region = rectangular prism  minus  hemispherical dock cutout.
+        The target body spans [0, h_t] in y, so the approach corridor (y < 0)
+        is inherently safe and does not need an explicit cylinder cutout.
+        """
+        half_w = self.w_t / 2.0
+        half_d = self.d_t / 2.0
+
+        # Outside bounding box -> no collision
+        if abs(px) > half_w or py < 0.0 or py > self.h_t or abs(pz) > half_d:
+            return False
+
+        # Inside hemispherical docking cutout (safe zone, y >= 0)
+        r_sq = px * px + py * py + pz * pz
+        if r_sq < self.dock_rad ** 2:
+            return False
+
+        return True  # Inside box, outside all safe cutouts -> collision
+
     def plot_config(self):
         # Use goal quaternion (90° yaw) so reach set shows up in position slices
         # q_goal = [cos(π/4), 0, 0, sin(π/4)] for 90° rotation about z-axis

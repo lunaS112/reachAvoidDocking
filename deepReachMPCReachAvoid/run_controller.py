@@ -59,6 +59,11 @@ from dynamics import dynamics as dynamics_module
 
 def build_controller(name, args):
     """Instantiate a controller by name string."""
+    # Validate inner checkpoint for cascaded controllers
+    if name.startswith('cascaded') and not args.inner_checkpoint_path:
+        raise ValueError(
+            f"Controller '{name}' requires --inner_checkpoint_path but none was provided.")
+
     if name == 'brt':
         return BRTController(
             checkpoint_path=args.checkpoint_path,
@@ -127,7 +132,8 @@ SAMPLING_STATE_RANGE = np.array([
     [ -0.75,  0.75],   # omega (rad/s)
 ])
 
-def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
+def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
+                              value_filter_fn=None):
     """
     Sample *n* valid initial conditions uniformly from a feasible
     sub-region of the state space.
@@ -140,6 +146,16 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
       - Within sampling bounds.
       - Not inside the failure set (avoid_fn > 0).
       - Not already docked (reach_fn > 0).
+      - (optional) Inside the learned BRAT (value_filter_fn(states) <= 0).
+
+    Args:
+        dynamics: Dynamics instance with avoid_fn() and reach_fn().
+        n: Number of ICs to sample.
+        device: Torch device for dynamics queries.
+        seed: Random seed.
+        value_filter_fn: Optional callable  (N,6) np.array -> (N,) np.array
+            returning V(x, tMax) for each state.  States with V <= 0 are
+            kept (inside the BRAT).  ``None`` disables this filter.
     """
     rng = np.random.RandomState(seed)
 
@@ -151,7 +167,9 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
 
     samples = []
     attempts = 0
-    max_attempts = n * 200
+    max_attempts = n * 500  # increase headroom for stricter BRT filter
+    n_rejected_geom = 0
+    n_rejected_brt  = 0
 
     while len(samples) < n and attempts < max_attempts:
         batch_size = min(n * 10, 5000)
@@ -161,8 +179,20 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
         avoid_vals = dynamics.avoid_fn(batch_t).cpu().numpy()
         reach_vals = dynamics.reach_fn(batch_t).cpu().numpy()
 
-        valid = (avoid_vals > 0) & (reach_vals > 0)
-        for s in batch[valid]:
+        geom_valid = (avoid_vals > 0) & (reach_vals > 0)
+        n_rejected_geom += int((~geom_valid).sum())
+
+        if value_filter_fn is not None and geom_valid.any():
+            # Apply BRT filter only to geometrically valid candidates
+            geom_batch = batch[geom_valid]
+            values = value_filter_fn(geom_batch)
+            brt_valid = values <= 0
+            n_rejected_brt += int((~brt_valid).sum())
+            accepted = geom_batch[brt_valid]
+        else:
+            accepted = batch[geom_valid]
+
+        for s in accepted:
             if len(samples) >= n:
                 break
             samples.append(s)
@@ -172,30 +202,41 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
         print(f"WARNING: only sampled {len(samples)}/{n} valid ICs "
               f"after {attempts} attempts.")
 
+    if value_filter_fn is not None:
+        total_checked = attempts
+        print(f"  IC sampling stats:  checked={total_checked}  "
+              f"rejected_geom={n_rejected_geom}  rejected_brt={n_rejected_brt}  "
+              f"accepted={len(samples)}")
+
     return np.array(samples[:n])
 
 
 def compute_metrics(all_results):
-    """Aggregate metrics from a list of result dicts."""
+    """Aggregate metrics from a list of result dicts.
+
+    Docking  = reached goal without collision (docked & ~collision)
+    Failure  = collision occurred
+    Timeout  = never reached goal and no collision
+    """
     n = len(all_results)
     if n == 0:
         return {}
-    goals      = sum(1 for r in all_results if r['docked'])
-    collisions = sum(1 for r in all_results if r['collision'])
-    successes  = sum(1 for r in all_results if r['success'])
+    dockings   = sum(1 for r in all_results if r['success'])   # docked & not collided
+    failures   = sum(1 for r in all_results if r['collision'])
+    timeouts   = n - dockings - failures
     times      = [r['wall_time'] for r in all_results]
 
-    # Control effort only for successful trajectories
-    success_efforts = [r['control_effort'] for r in all_results if r['success']]
+    # Control effort only for successful (docking) trajectories
+    docking_efforts = [r['control_effort'] for r in all_results if r['success']]
 
     return {
         'n': n,
-        'goal_rate':            goals / n,
-        'collision_rate':       collisions / n,
-        'success_rate':         successes / n,
-        'mean_control_effort':  float(np.mean(success_efforts)) if success_efforts else 0.0,
-        'std_control_effort':   float(np.std(success_efforts)) if success_efforts else 0.0,
-        'n_success_effort':     len(success_efforts),
+        'docking_rate':         dockings / n,
+        'failure_rate':         failures / n,
+        'timeout_rate':         timeouts / n,
+        'mean_control_effort':  float(np.mean(docking_efforts)) if docking_efforts else 0.0,
+        'std_control_effort':   float(np.std(docking_efforts)) if docking_efforts else 0.0,
+        'n_docking_effort':     len(docking_efforts),
         'mean_wall_time':       float(np.mean(times)),
         'std_wall_time':        float(np.std(times)),
     }
@@ -203,8 +244,8 @@ def compute_metrics(all_results):
 
 def print_comparison_table(metrics_by_controller):
     """Print a formatted comparison table to stdout."""
-    header = (f"{'Controller':<22} {'Goal%':>7} {'Coll%':>7} {'Succ%':>7} "
-              f"{'Effort (succ)':>18} {'Time (s)':>14}")
+    header = (f"{'Controller':<22} {'Dock%':>7} {'Fail%':>7} {'Time%':>7} "
+              f"{'Effort (dock)':>18} {'Time (s)':>14}")
     sep = '-' * len(header)
     print('\n' + sep)
     print('CONTROLLER COMPARISON')
@@ -212,15 +253,15 @@ def print_comparison_table(metrics_by_controller):
     print(header)
     print(sep)
     for name, m in metrics_by_controller.items():
-        n_succ = m.get('n_success_effort', 0)
-        if n_succ > 0:
-            effort_str = f"{m['mean_control_effort']:.1f} +/- {m['std_control_effort']:.1f} ({n_succ})"
+        n_dock = m.get('n_docking_effort', 0)
+        if n_dock > 0:
+            effort_str = f"{m['mean_control_effort']:.1f} +/- {m['std_control_effort']:.1f} ({n_dock})"
         else:
             effort_str = "N/A (0)"
         time_str   = f"{m['mean_wall_time']:.2f} +/- {m['std_wall_time']:.2f}"
-        print(f"{name:<22} {m['goal_rate']*100:>6.1f}% "
-              f"{m['collision_rate']*100:>6.1f}% "
-              f"{m['success_rate']*100:>6.1f}% "
+        print(f"{name:<22} {m['docking_rate']*100:>6.1f}% "
+              f"{m['failure_rate']*100:>6.1f}% "
+              f"{m['timeout_rate']*100:>6.1f}% "
               f"{effort_str:>18} {time_str:>14}")
     print(sep + '\n')
 
@@ -240,14 +281,14 @@ def plot_metrics_bar(metrics_by_controller, save_path=None):
     # Rates
     w = 0.25
     axes[0].bar(x - w,
-                [metrics_by_controller[n]['goal_rate'] * 100 for n in names],
-                w, label='Goal %', color='#66c2a5')
+                [metrics_by_controller[n]['docking_rate'] * 100 for n in names],
+                w, label='Docking %', color='#66c2a5')
     axes[0].bar(x,
-                [metrics_by_controller[n]['collision_rate'] * 100 for n in names],
-                w, label='Collision %', color='#fc8d62')
+                [metrics_by_controller[n]['failure_rate'] * 100 for n in names],
+                w, label='Failure %', color='#fc8d62')
     axes[0].bar(x + w,
-                [metrics_by_controller[n]['success_rate'] * 100 for n in names],
-                w, label='Success %', color='#8da0cb')
+                [metrics_by_controller[n]['timeout_rate'] * 100 for n in names],
+                w, label='Timeout %', color='#8da0cb')
     axes[0].set_xticks(x)
     axes[0].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
     axes[0].set_ylabel('Percentage (%)')
@@ -256,22 +297,22 @@ def plot_metrics_bar(metrics_by_controller, save_path=None):
     axes[0].set_ylim([0, 105])
     axes[0].grid(axis='y', alpha=0.3)
 
-    # Control effort (successful trajectories only)
+    # Control effort (docking trajectories only)
     means = [metrics_by_controller[n]['mean_control_effort'] for n in names]
     stds  = [metrics_by_controller[n]['std_control_effort']  for n in names]
     bars = axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
     axes[1].set_ylabel('Control Effort')
-    axes[1].set_title('Mean Control Effort (Successful Only)')
+    axes[1].set_title('Mean Control Effort (Docking Only)')
     axes[1].grid(axis='y', alpha=0.3)
-    # Annotate bars with count of successful runs
+    # Annotate bars with count of docking runs
     for i, n in enumerate(names):
-        n_succ = metrics_by_controller[n].get('n_success_effort', 0)
+        n_dock = metrics_by_controller[n].get('n_docking_effort', 0)
         n_total = metrics_by_controller[n]['n']
-        if n_succ > 0:
+        if n_dock > 0:
             axes[1].text(i, means[i] + stds[i] + 0.02 * max(means),
-                         f'n={n_succ}/{n_total}', ha='center', va='bottom',
+                         f'n={n_dock}/{n_total}', ha='center', va='bottom',
                          fontsize=7)
 
     # Runtime
@@ -485,10 +526,26 @@ def run_compare(args):
     # Load dynamics for IC sampling
     dynamics = load_dynamics(args.checkpoint_path)
 
+    # Optionally build a value-function filter for BRT-based IC sampling
+    value_filter_fn = None
+    if getattr(args, 'sampling_method', 'uniform') == 'brt':
+        print(f"\nLoading model for BRT IC filtering (tMax={args.tMax}) ...")
+        query_ctrl = BRTController(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            device=args.device,
+        )
+        value_filter_fn = lambda states: query_ctrl.get_values_batch_states(
+            states, args.tMax)
+        print(f"  BRT filter ready — ICs will satisfy V(x, {args.tMax}) <= 0")
+
     # Sample initial conditions
-    print(f"\nSampling {args.n_rollouts} initial conditions (seed={args.seed}) ...")
+    sampling_label = getattr(args, 'sampling_method', 'uniform')
+    print(f"\nSampling {args.n_rollouts} initial conditions "
+          f"(seed={args.seed}, method={sampling_label}) ...")
     ics = sample_initial_conditions(
-        dynamics, args.n_rollouts, device=args.device, seed=args.seed)
+        dynamics, args.n_rollouts, device=args.device, seed=args.seed,
+        value_filter_fn=value_filter_fn)
     print(f"Sampled {len(ics)} valid ICs.\n")
 
     ic_path = os.path.join(args.output_dir, 'initial_conditions.npy')
@@ -536,9 +593,9 @@ def run_compare(args):
         all_results[ctrl_name] = results
         m = compute_metrics(results)
         metrics_by_name[display] = m
-        print(f"\n{display}: goal={m['goal_rate']*100:.1f}%  "
-              f"coll={m['collision_rate']*100:.1f}%  "
-              f"succ={m['success_rate']*100:.1f}%  "
+        print(f"\n{display}: dock={m['docking_rate']*100:.1f}%  "
+              f"fail={m['failure_rate']*100:.1f}%  "
+              f"timeout={m['timeout_rate']*100:.1f}%  "
               f"effort={m['mean_control_effort']:.1f}  "
               f"time={m['mean_wall_time']:.2f}s")
 
@@ -614,7 +671,15 @@ def run_compare(args):
 
     # ---- Build and save JSON ----
     json_path = os.path.join(args.output_dir, 'comparison_results.json')
-    json_data = {}
+    json_data = {
+        '_metadata': {
+            'sampling_method': getattr(args, 'sampling_method', 'uniform'),
+            'n_rollouts': args.n_rollouts,
+            'seed': args.seed,
+            'tMax': args.tMax,
+            'checkpoint_path': args.checkpoint_path,
+        }
+    }
     for k, v in metrics_by_name.items():
         json_data[k] = {kk: (float(vv) if isinstance(vv, (np.floating, float))
                               else int(vv))
@@ -753,6 +818,11 @@ def main():
                             help='Number of rollouts per controller')
     sp_compare.add_argument('--seed', type=int, default=1,
                             help='Random seed for IC sampling')
+    sp_compare.add_argument('--sampling_method', type=str, default='uniform',
+                            choices=['uniform', 'brt'],
+                            help='IC sampling method: "uniform" = geometric '
+                                 'constraints only; "brt" = additionally '
+                                 'require V(x, tMax) <= 0 (inside learned BRAT)')
     sp_compare.add_argument('--animate', action='store_true',
                             help='Generate comparison animation for first IC')
 

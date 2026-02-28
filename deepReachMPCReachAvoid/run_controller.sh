@@ -3,6 +3,7 @@
 CKPT="runs/Docking6D_RA_15_114000/training/checkpoints/model_epoch_114000.pth"
 CKPT="runs/Docking6D_RA_15_145000/training/checkpoints/model_epoch_145000.pth"
 CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_epoch_138000.pth"
 CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"
 
 ########################### Single controller runs ###########################
@@ -13,6 +14,12 @@ python run_controller.py single --controller brt \
    --initial_px -8.1572345 --initial_theta -0.50771584 --initial_py -4.0154211\
    --initial_vx -0.20646505 --initial_vy 0.07763347 --initial_omega 0.27782925\
   --output_dir ./outputs/single_brt
+
+python run_controller.py single --controller brt \
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
+  --initial_px 0 --initial_py 0.0 --initial_theta -3 \
+  --initial_vx 0.0 --initial_vy 0.0 --initial_omega 0.375 \
+  --output_dir ./outputs/odd3_brt
 
 # MPC single run
 python run_controller.py single --controller mpc \
@@ -75,22 +82,12 @@ python run_controller.py single --controller cascaded_mpc_terminal \
 ########################### Comparison runs ##################################
 
 # Quick comparison
-python run_controller.py compare --controllers brt mpc mpc_terminal cascaded_brt cascaded_mpc_terminal\
-  --checkpoint_path $CKPT --n_rollouts 3 --tMax 15.0 --max_sim_time 60.0 \
-  --output_dir ./outputs/comparison_quick --animate 
-
-# Full comparison
-python run_controller.py compare --controllers brt mpc mpc_terminal cascaded_brt cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER --n_rollouts 50 \
-  --tMax 15.0 --inner_tMax 3.0 --max_sim_time 60.0 \
-  --output_dir ./outputs/comparison_full
-
-# BRT vs MPC_terminal only
-python run_controller.py compare --controllers brt mpc_terminal cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER --n_rollouts 3 --tMax 15.0 --max_sim_time 60.0 \
-  --effort_weight 0.01 --output_dir ./outputs/comparison_brt_vs_mpc_terminal
-
-# BRT vs MPC+Terminal only
-python run_controller.py compare --controllers brt mpc_terminal \
-  --checkpoint_path $CKPT --n_rollouts 20 --tMax 14.0 --max_sim_time 30.0 \
-  --output_dir ./outputs/comparison_brt_vs_terminal
+python run_controller.py compare --controllers brt \
+  --checkpoint_path $CKPT  \
+  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 \
+  --sampling_method brt --output_dir ./outputs/comparison_BRT_IC 
+   
+# Volume comparison 
+python volume_comparison.py \
+    --checkpoint_path $CKPT \
+    --time_horizons 5 10 15 --n_monte_carlo 500000
