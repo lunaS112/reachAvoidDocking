@@ -1,3 +1,8 @@
+#!/bin/bash
+# Activate venv (provides 'python' command)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.venv/bin/activate"
+
 ############################# To verify any experiment ##################################
 # To run verification
 python run_experiment.py --mode test --experiment_name EXPNAME --checkpoint_toload -1 --data_step run_basic_recovery

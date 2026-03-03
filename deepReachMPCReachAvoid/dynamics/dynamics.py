@@ -1261,11 +1261,15 @@ class Docking13D(Dynamics):
         # Fix #3: Resolve quaternion q ↔ -q ambiguity by enforcing canonical form (q0 >= 0).
         # In the input tensor, index 0 is time, indices 1-13 are states.
         # Quaternion q0 is at state index 6, i.e. input index 7.
-        output = input.clone()
-        q0 = output[..., 7:8]  # q0 component
+        # Use torch.cat to avoid in-place ops that break autograd gradient computation.
+        q0 = input[..., 7:8]  # q0 component
         sign = torch.sign(q0)
         sign = torch.where(sign == 0, torch.ones_like(sign), sign)
-        output[..., 7:11] = output[..., 7:11] * sign  # flip all 4 quat components
+        output = torch.cat([
+            input[..., :7],           # time + position + velocity
+            input[..., 7:11] * sign,  # quaternion (canonicalized)
+            input[..., 11:],          # angular velocity
+        ], dim=-1)
         return output.cuda()
 
     def sample_quat_near_goal(self, n, angle_std=0.15):

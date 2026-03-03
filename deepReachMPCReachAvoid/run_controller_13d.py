@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Unified controller runner for Docking13D.
+Unified controller runner for 13-D spacecraft docking.
 
-Subcommands:
-    single   -- Run one controller from a specified initial condition.
-    compare  -- Run N rollouts per controller from random ICs and compare.
+Subcommands
+-----------
+single   Run one controller from a single initial condition.
+compare  Run N rollouts per controller from shared random ICs and show
+         a side-by-side comparison table.
 
-Usage:
-    python run_controller_13d.py single  --controller brt_13d   [options]
-    python run_controller_13d.py compare --controllers brt_13d mpc_terminal_13d [options]
+Examples
+--------
+  python run_controller_13d.py single  --controller brt_13d --checkpoint_path <CKPT> [opts]
+  python run_controller_13d.py compare --controllers brt_13d mpc_terminal_13d  [opts]
+
+See run_controller_13d.sh for ready-made command templates.
 """
 
 import argparse
@@ -41,7 +46,7 @@ from utils.controllers.static_plots_13d import (
 from dynamics import dynamics as dynamics_module
 
 # ------------------------------------------------------------------ #
-#  Constants
+#  Constants & helpers
 # ------------------------------------------------------------------ #
 
 CONTROLLER_LABELS = {
@@ -55,6 +60,30 @@ CONTROLLER_COLORS = {
     'mpc_13d':          '#ff7f0e',
     'mpc_terminal_13d': '#2ca02c',
 }
+
+STATE_LABELS = [
+    'x', 'y', 'z',             # position [m]
+    'vx', 'vy', 'vz',          # velocity [m/s]
+    'q0', 'q1', 'q2', 'q3',    # quaternion
+    'wx', 'wy', 'wz',          # angular velocity [rad/s]
+]
+
+
+def _fmt_state(state):
+    """Return a compact, labelled one-liner for a 13-D state."""
+    pos = f"pos=({state[0]:+.3f}, {state[1]:+.3f}, {state[2]:+.3f})"
+    vel = f"vel=({state[3]:+.3f}, {state[4]:+.3f}, {state[5]:+.3f})"
+    quat = (f"quat=({state[6]:.4f}, {state[7]:.4f}, "
+            f"{state[8]:.4f}, {state[9]:.4f})")
+    omg = f"omega=({state[10]:+.3f}, {state[11]:+.3f}, {state[12]:+.3f})"
+    return f"{pos}  {vel}  {quat}  {omg}"
+
+
+def _banner(text, width=60, char='='):
+    """Print a centred banner line."""
+    print(f"\n{char * width}")
+    print(f"  {text}")
+    print(f"{char * width}")
 
 # ------------------------------------------------------------------ #
 #  Builder
@@ -100,11 +129,27 @@ def build_controller(name, args):
 #  Initial-condition sampling
 # ------------------------------------------------------------------ #
 
-def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
+def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
+                              value_filter_fn=None):
     """Sample *n* valid 13D initial conditions.
 
     Filters out states that are already docked (reach_fn <= 0) or
     inside the failure set (avoid_fn <= 0).
+
+    Filtering:
+      - Within sampling bounds.
+      - Not inside the failure set (avoid_fn > 0).
+      - Not already docked (reach_fn > 0).
+      - (optional) Inside the learned BRAT (value_filter_fn(states) <= 0).
+
+    Args:
+        dynamics: Dynamics instance with avoid_fn() and reach_fn().
+        n: Number of ICs to sample.
+        device: Torch device for dynamics queries.
+        seed: Random seed.
+        value_filter_fn: Optional callable  (N,13) np.array -> (N,) np.array
+            returning V(x, tMax) for each state.  States with V <= 0 are
+            kept (inside the BRAT).  ``None`` disables this filter.
     """
     rng = np.random.RandomState(seed)
 
@@ -115,18 +160,35 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
     # Tighten position range for feasibility
     sample_lo = dyn_lo.copy()
     sample_hi = dyn_hi.copy()
-    sample_lo[:3] = np.maximum(sample_lo[:3], -13.0)
-    sample_hi[:3] = np.minimum(sample_hi[:3],  13.0)
-    # Tighten velocity
-    sample_lo[3:6] = np.maximum(sample_lo[3:6], -0.15)
-    sample_hi[3:6] = np.minimum(sample_hi[3:6],  0.15)
-    # Tighten omega
-    sample_lo[10:13] = np.maximum(sample_lo[10:13], -0.3)
-    sample_hi[10:13] = np.minimum(sample_hi[10:13],  0.3)
+
+    # Goal quaternion for biased sampling (used when BRAT filtering)
+    q_goal = dynamics.q_goal.cpu().numpy() if hasattr(dynamics, 'q_goal') else None
+
+    if value_filter_fn is not None:
+        # When filtering by BRAT, tighten bounds to improve acceptance
+        # rate.  Wider bounds for longer-horizon models (bigger BRAT).
+        sample_lo[:3] = np.maximum(sample_lo[:3], -1.5)
+        sample_hi[:3] = np.minimum(sample_hi[:3],  1.5)
+        sample_lo[3:6] = np.maximum(sample_lo[3:6], -0.3)
+        sample_hi[3:6] = np.minimum(sample_hi[3:6],  0.3)
+        sample_lo[10:13] = np.maximum(sample_lo[10:13], -0.3)
+        sample_hi[10:13] = np.minimum(sample_hi[10:13],  0.3)
+        # Quaternion perturbation scale (moderate = broader around goal)
+        quat_sigma = 0.3
+    else:
+        sample_lo[:3] = np.maximum(sample_lo[:3], -13.0)
+        sample_hi[:3] = np.minimum(sample_hi[:3],  13.0)
+        sample_lo[3:6] = np.maximum(sample_lo[3:6], -0.15)
+        sample_hi[3:6] = np.minimum(sample_hi[3:6],  0.15)
+        sample_lo[10:13] = np.maximum(sample_lo[10:13], -0.3)
+        sample_hi[10:13] = np.minimum(sample_hi[10:13],  0.3)
+        quat_sigma = None  # uniform on S^3
 
     samples = []
     attempts = 0
-    max_attempts = n * 500
+    max_attempts = n * 5000 if value_filter_fn is not None else n * 500
+    n_rejected_geom = 0
+    n_rejected_brt  = 0
 
     while len(samples) < n and attempts < max_attempts:
         batch_size = min(n * 10, 5000)
@@ -134,8 +196,13 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
         # Uniform sample for non-quaternion states
         batch = rng.uniform(sample_lo, sample_hi, size=(batch_size, 13))
 
-        # Quaternion: sample uniformly on S^3 then normalize
-        q_rand = rng.randn(batch_size, 4)
+        # Quaternion sampling
+        if quat_sigma is not None and q_goal is not None:
+            # Small perturbations around the goal quaternion
+            q_rand = rng.randn(batch_size, 4) * quat_sigma + q_goal
+        else:
+            # Uniform on S^3
+            q_rand = rng.randn(batch_size, 4)
         q_rand /= (np.linalg.norm(q_rand, axis=1, keepdims=True) + 1e-12)
         batch[:, 6:10] = q_rand
 
@@ -144,16 +211,40 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42):
         avoid_vals = dynamics.avoid_fn(batch_t).cpu().numpy()
         reach_vals = dynamics.reach_fn(batch_t).cpu().numpy()
 
-        valid = (avoid_vals > 0) & (reach_vals > 0)
-        for s in batch[valid]:
+        geom_valid = (avoid_vals > 0) & (reach_vals > 0)
+        n_rejected_geom += int((~geom_valid).sum())
+
+        if value_filter_fn is not None and geom_valid.any():
+            # Apply BRAT filter only to geometrically valid candidates
+            geom_batch = batch[geom_valid]
+            values = value_filter_fn(geom_batch)
+            brt_valid = values <= 0
+            n_rejected_brt += int((~brt_valid).sum())
+            accepted = geom_batch[brt_valid]
+        else:
+            accepted = batch[geom_valid]
+
+        for s in accepted:
             if len(samples) >= n:
                 break
             samples.append(s)
         attempts += batch_size
 
     if len(samples) < n:
-        print(f"WARNING: only sampled {len(samples)}/{n} valid ICs "
-              f"after {attempts} attempts.")
+        print(f"  WARNING: only found {len(samples)}/{n} valid ICs "
+              f"after {attempts:,} attempts.")
+
+    total = attempts
+    if value_filter_fn is not None:
+        accept_pct = 100 * len(samples) / max(total, 1)
+        print(f"  IC sampling: {total:,} checked | "
+              f"{n_rejected_geom:,} reject(geom) | "
+              f"{n_rejected_brt:,} reject(BRAT) | "
+              f"{len(samples)} accepted ({accept_pct:.2f}%)")
+    else:
+        print(f"  IC sampling: {total:,} checked | "
+              f"{n_rejected_geom:,} reject(geom) | "
+              f"{len(samples)} accepted")
 
     return np.array(samples[:n])
 
@@ -184,25 +275,35 @@ def compute_metrics(all_results):
 
 
 def print_comparison_table(metrics_by_controller):
-    header = (f"{'Controller':<22} {'Goal%':>7} {'Coll%':>7} {'Succ%':>7} "
-              f"{'Effort (succ)':>18} {'Time (s)':>14}")
-    sep = '-' * len(header)
-    print('\n' + sep)
-    print('13D CONTROLLER COMPARISON')
+    """Print a nicely formatted comparison table to stdout."""
+    col_w = 80
+    sep = '-' * col_w
+
+    print(f"\n{sep}")
+    print(f"  {'13D CONTROLLER COMPARISON':^{col_w - 4}}")
     print(sep)
-    print(header)
+    print(f"  {'Controller':<20} {'Goal':>6} {'Coll':>6} {'Succ':>6} "
+          f"{'Effort (succ)':>18} {'Wall time':>16}")
     print(sep)
+
     for name, m in metrics_by_controller.items():
+        if not m:  # empty dict when n=0
+            print(f"  {name:<20} {'--':>6} {'--':>6} {'--':>6} "
+                  f"{'-- (0 runs)':>18} {'--':>16}")
+            continue
         n_s = m.get('n_success_effort', 0)
         effort_str = (f"{m['mean_control_effort']:.1f}"
                       f" +/- {m['std_control_effort']:.1f} ({n_s})"
-                      if n_s > 0 else "N/A (0)")
-        time_str = f"{m['mean_wall_time']:.2f} +/- {m['std_wall_time']:.2f}"
-        print(f"{name:<22} {m['goal_rate']*100:>6.1f}% "
-              f"{m['collision_rate']*100:>6.1f}% "
-              f"{m['success_rate']*100:>6.1f}% "
-              f"{effort_str:>18} {time_str:>14}")
-    print(sep + '\n')
+                      if n_s > 0 else f"-- ({n_s})")
+        time_str = (f"{m['mean_wall_time']:.1f}"
+                    f" +/- {m['std_wall_time']:.1f} s")
+        print(f"  {name:<20} "
+              f"{m['goal_rate']*100:>5.0f}% "
+              f"{m['collision_rate']*100:>5.0f}% "
+              f"{m['success_rate']*100:>5.0f}% "
+              f"{effort_str:>18} {time_str:>16}")
+
+    print(sep)
 
 # ------------------------------------------------------------------ #
 #  Dynamics loader
@@ -231,53 +332,83 @@ def load_dynamics(checkpoint_path):
 # ------------------------------------------------------------------ #
 
 def run_single(args):
-    """Run one controller from a specified initial condition."""
+    """Run one controller from a single initial condition."""
     os.makedirs(args.output_dir, exist_ok=True)
 
     ctrl_type = args.controller
     display = CONTROLLER_LABELS.get(ctrl_type, ctrl_type)
-    print('=' * 60)
-    print(f'{display} Controller -- Single Run (13D)')
-    print('=' * 60)
+    _banner(f"{display} — Single Run")
 
     controller = build_controller(ctrl_type, args)
     dynamics = controller.dynamics
 
-    # Initial state: either supplied via CLI or a default
+    # ---- Choose initial condition ------------------------------------
+    ic_source = 'cli'
     if args.initial_state is not None:
         initial_state = np.array(json.loads(args.initial_state), dtype=np.float64)
         assert len(initial_state) == 13, \
             f"initial_state must be length 13, got {len(initial_state)}"
+    elif getattr(args, 'sampling_method', 'uniform') == 'brt':
+        ic_source = 'brt'
+        print(f"\n  Sampling 1 IC from BRAT  (tMax={args.tMax}s) ...")
+        query_ctrl = BRTController13D(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            device=args.device,
+        )
+        value_filter_fn = lambda states: query_ctrl.get_values_batch_states(
+            states, args.tMax)
+        seed = getattr(args, 'seed', 42)
+        ics = sample_initial_conditions(
+            dynamics, 1, device=args.device, seed=seed,
+            value_filter_fn=value_filter_fn)
+        assert len(ics) == 1, "Failed to find an IC inside the BRAT"
+        initial_state = ics[0]
+        v_val = value_filter_fn(initial_state[None])[0]
+        print(f"  V(x, {args.tMax}) = {v_val:.4f}  (<= 0 ✓)")
     else:
-        # Default: 10m away in x, at goal attitude, at rest
+        ic_source = 'default'
         q_goal = dynamics.q_goal.cpu().numpy()
         initial_state = np.array([
-            10.0, -5.0, 2.0,      # position
-            0.0, 0.0, 0.0,        # velocity
-            q_goal[0], q_goal[1], q_goal[2], q_goal[3],  # quaternion
-            0.0, 0.0, 0.0,        # omega
+            10.0, -5.0, 2.0,
+            0.0, 0.0, 0.0,
+            q_goal[0], q_goal[1], q_goal[2], q_goal[3],
+            0.0, 0.0, 0.0,
         ])
 
-    print(f"\nInitial state (13D): {initial_state}")
+    print(f"\n  IC source : {ic_source}")
+    print(f"  IC state  : {_fmt_state(initial_state)}")
 
-    # Run simulation
+    # ---- Run simulation ----------------------------------------------
     result = controller.simulate_docking(
         initial_state, max_sim_time=args.max_sim_time)
 
-    # Print summary
-    print(f"\nResult: docked={result['docked']}, "
-          f"collision={result['collision']}, "
-          f"effort={result['control_effort']:.2f}, "
-          f"wall_time={result['wall_time']:.2f}s")
+    # ---- Summary -----------------------------------------------------
+    _banner("Result", char='-')
+    outcome = ('DOCKED' if result['docked']
+               else 'COLLISION' if result['collision']
+               else 'TIMEOUT')
+    traj = result['trajectory']
+    final_dist = float(np.linalg.norm(traj[-1, :3]))
+    final_qerr = float(_quat_error_angle_np(
+        traj[-1, 6:10], dynamics.q_goal.cpu().numpy()))
+    print(f"  Outcome       : {outcome}")
+    print(f"  Sim time      : {result['times'][-1]:.1f} s  "
+          f"({len(traj)} steps)")
+    print(f"  Wall time     : {result['wall_time']:.1f} s")
+    print(f"  Control effort: {result['control_effort']:.2f}")
+    print(f"  Final dist    : {final_dist:.4f} m")
+    print(f"  Final quat err: {np.degrees(final_qerr):.2f} deg")
 
-    # Save trajectory
+    # ---- Save --------------------------------------------------------
     np.save(os.path.join(args.output_dir, 'trajectory.npy'),
             result['trajectory'])
     np.save(os.path.join(args.output_dir, 'controls.npy'),
             result['controls'])
+    print(f"\n  Saved to: {args.output_dir}/")
 
-    # --- Static plots (always generated) ------------------------------ #
-    print("\n[Viz] Generating static plots...")
+    # ---- Static plots (always) ----------------------------------------
+    print("  Generating plots ...")
     plot_trajectory_13d(
         result, dynamics,
         os.path.join(args.output_dir, 'trajectory.png'))
@@ -288,9 +419,8 @@ def run_single(args):
         result, dynamics,
         os.path.join(args.output_dir, 'simulation_controls.png'))
 
-    # --- Animated visualisation (optional) ----------------------------- #
+    # ---- Animated visualisation (optional) ----------------------------
     if args.viz_html or args.viz_mp4:
-        # BRT and MPC-terminal controllers have a model; MPC-only does not
         if hasattr(controller, 'model'):
             brt_viz = BRTVisualizer13D(controller, backend='plotly')
             anim = ControllerAnimation13D(
@@ -307,8 +437,7 @@ def run_single(args):
                     result, mp4_path, fps=args.viz_fps,
                     max_frames=args.viz_max_frames)
         else:
-            # MPC-only: lightweight trajectory animation (no BRT)
-            print("[Viz] Pure MPC controller — using trajectory-only animation.")
+            print("  (Pure MPC — using trajectory-only animation)")
             traj_anim = TrajectoryAnimation13D(dynamics)
             if args.viz_html:
                 html_path = os.path.join(args.output_dir, 'animation.html')
@@ -325,38 +454,65 @@ def run_compare(args):
     """Run N rollouts per controller and compare."""
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load dynamics for initial-condition sampling
-    dynamics = load_dynamics(args.checkpoint_path)
-    ics = sample_initial_conditions(
-        dynamics, args.num_rollouts, device=args.device, seed=args.seed)
-    np.save(os.path.join(args.output_dir, 'initial_conditions.npy'), ics)
-    print(f"Sampled {len(ics)} initial conditions  (seed={args.seed})")
+    sampling_label = getattr(args, 'sampling_method', 'uniform')
+    _banner(f"13D Comparison  |  {len(args.controllers)} controllers  |  "
+            f"{args.num_rollouts} rollouts  |  IC={sampling_label}")
 
+    # ---- Load dynamics for IC sampling --------------------------------
+    dynamics = load_dynamics(args.checkpoint_path)
+
+    # ---- (Optional) BRAT value-function filter ------------------------
+    value_filter_fn = None
+    if sampling_label == 'brt':
+        print(f"\n  Loading BRAT filter  (tMax={args.tMax}s) ...")
+        query_ctrl = BRTController13D(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            device=args.device,
+        )
+        value_filter_fn = lambda states: query_ctrl.get_values_batch_states(
+            states, args.tMax)
+        print(f"  Filter ready — ICs will satisfy V(x, {args.tMax}) <= 0")
+
+    # ---- Sample ICs ---------------------------------------------------
+    print(f"\n  Sampling {args.num_rollouts} ICs  "
+          f"(seed={args.seed}, method={sampling_label}) ...")
+    ics = sample_initial_conditions(
+        dynamics, args.num_rollouts, device=args.device, seed=args.seed,
+        value_filter_fn=value_filter_fn)
+    print(f"  {len(ics)} valid ICs obtained.")
+    np.save(os.path.join(args.output_dir, 'initial_conditions.npy'), ics)
+
+    # ---- Run each controller ------------------------------------------
     metrics_all = {}
     for ctrl_name in args.controllers:
         display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
-        print(f"\n{'='*50}")
-        print(f"Running: {display}  ({len(ics)} rollouts)")
-        print('='*50)
+        _banner(f"{display}  ({len(ics)} rollouts)", char='-')
 
         controller = build_controller(ctrl_name, args)
         results = []
         for i, ic in enumerate(ics):
-            print(f"\n--- Rollout {i+1}/{len(ics)} ---")
             res = controller.simulate_docking(
                 ic, max_sim_time=args.max_sim_time)
+            tag = ('DOCK' if res['docked']
+                   else 'COLL' if res['collision']
+                   else 'TOUT')
+            print(f"  [{i+1:>{len(str(len(ics)))}}/{len(ics)}] "
+                  f"{tag}  t={res['times'][-1]:5.1f}s  "
+                  f"effort={res['control_effort']:.1f}  "
+                  f"wall={res['wall_time']:.1f}s")
             results.append(res)
 
         m = compute_metrics(results)
         metrics_all[display] = m
 
+    # ---- Summary table ------------------------------------------------
     print_comparison_table(metrics_all)
 
-    # Save
     json_path = os.path.join(args.output_dir, 'comparison_results.json')
     with open(json_path, 'w') as f:
         json.dump(metrics_all, f, indent=2)
-    print(f"Metrics saved to {json_path}")
+    print(f"  Saved to: {json_path}")
 
 # ------------------------------------------------------------------ #
 #  CLI
@@ -403,6 +559,12 @@ def main():
                            choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
+    sp_single.add_argument('--sampling_method', type=str, default='uniform',
+                           choices=['uniform', 'brt'],
+                           help='IC sampling method when --initial_state is '
+                                'not provided: "brt" ensures V(x,tMax)<=0')
+    sp_single.add_argument('--seed', type=int, default=42,
+                           help='Random seed for IC sampling')
 
     # --- compare ----------------------------------------------------- #
     sp_compare = subparsers.add_parser('compare', parents=[parent])
@@ -410,6 +572,11 @@ def main():
                             choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)
     sp_compare.add_argument('--seed', type=int, default=42)
+    sp_compare.add_argument('--sampling_method', type=str, default='uniform',
+                            choices=['uniform', 'brt'],
+                            help='IC sampling method: "uniform" = geometric '
+                                 'constraints only; "brt" = additionally '
+                                 'require V(x, tMax) <= 0 (inside learned BRAT)')
 
     args = parser.parse_args()
     if args.mode == 'single':

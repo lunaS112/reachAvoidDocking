@@ -1,4 +1,8 @@
 #!/bin/bash
+# Activate venv (provides 'python' command)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.venv/bin/activate"
+
 # RUN IN TERMINAL FIRST
 CKPT="runs/Docking6D_RA_15_114000/training/checkpoints/model_epoch_114000.pth"
 CKPT="runs/Docking6D_RA_15_145000/training/checkpoints/model_epoch_145000.pth"

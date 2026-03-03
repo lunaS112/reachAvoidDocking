@@ -208,6 +208,36 @@ class BRTController13D(Docking13DControllerMixin):
         values = self.dynamics.io_to_value(model_input, output)
         return values.cpu().numpy()
 
+    def get_values_batch_states(self, states, time):
+        """
+        Query V(x, t) for multiple states at a single fixed time in one forward pass.
+
+        Args:
+            states: (N, state_dim) numpy array or torch tensor of state vectors
+            time: scalar time value to query
+
+        Returns:
+            numpy array of shape (N,): V(x_i, t) for each state
+        """
+        if isinstance(states, np.ndarray):
+            states = torch.tensor(states, dtype=torch.float32)
+        states = states.to(self.device)
+        if states.dim() == 1:
+            states = states.unsqueeze(0)
+
+        n = states.shape[0]
+        time_col = torch.full((n, 1), time, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states], dim=-1)          # (N, 1+state_dim)
+
+        model_input = self.dynamics.coord_to_input(coords)
+
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)            # (N,)
+
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.cpu().numpy()
+
     # ------------------------------------------------------------------
     # Optimal control (13D-specific)
     # ------------------------------------------------------------------
@@ -309,7 +339,7 @@ class BRTController13D(Docking13DControllerMixin):
                 self.in_brt_phase = True
                 self.t_remaining = self.tMax
                 self.phase_transition_time = sim_time
-                print(f"[BRT13D] Entered BRT at t={sim_time:.2f}s -> Phase 2")
+                print(f"  [BRT13D] Entered BRT at t={sim_time:.2f}s -> Phase 2")
 
         if self.in_brt_phase:
             query_time = max(self.t_remaining, 0.01)
@@ -356,22 +386,31 @@ class BRTController13D(Docking13DControllerMixin):
         else:
             self._consecutive_v_increases = 0
 
-        # Print warnings on concerning conditions
+        # Print warnings on concerning conditions (throttled to avoid spam)
         if bounds_check['out_of_domain']:
-            viol_strs = [f"{v['name']}={v['value']:.4f} "
-                         f"[{v['lo']:.2f},{v['hi']:.2f}]" 
-                         for v in bounds_check['violations']]
-            joined = "; ".join(viol_strs)
-            print(f"[BRT13D DIAG] t={sim_time:.2f}s OUT-OF-DOMAIN: {joined}")
+            if not hasattr(self, '_ood_warned'):
+                self._ood_warned = 0
+            self._ood_warned += 1
+            if self._ood_warned <= 3:  # only first 3 warnings
+                viol_strs = [f"{v['name']}={v['value']:.4f} "
+                             f"[{v['lo']:.2f},{v['hi']:.2f}]" 
+                             for v in bounds_check['violations']]
+                joined = "; ".join(viol_strs)
+                print(f"    WARN t={sim_time:.2f}s out-of-domain: {joined}")
 
         if grad_mag < 1e-6:
-            print(f"[BRT13D DIAG] t={sim_time:.2f}s DEAD GRADIENT: "
-                  f"|dV/ds|={grad_mag:.2e}")
+            if not hasattr(self, '_dead_grad_warned'):
+                self._dead_grad_warned = 0
+            self._dead_grad_warned += 1
+            if self._dead_grad_warned <= 2:
+                print(f"    WARN t={sim_time:.2f}s dead gradient "
+                      f"|dV/ds|={grad_mag:.2e}")
 
-        if self._consecutive_v_increases >= 3:
-            print(f"[BRT13D DIAG] t={sim_time:.2f}s V RISING "
-                  f"({self._consecutive_v_increases} consecutive increases, "
-                  f"V={value:.4f}, delta={v_delta:.4f})")
+        if self._consecutive_v_increases >= 5:
+            if self._consecutive_v_increases == 5:  # print once at threshold
+                print(f"    WARN t={sim_time:.2f}s V rising "
+                      f"({self._consecutive_v_increases}+ consecutive, "
+                      f"V={value:.4f})")
 
         self.diagnostic_history.append({
             'sim_time': sim_time,
@@ -423,8 +462,7 @@ class BRTController13D(Docking13DControllerMixin):
         if dynamics_fn is None:
             dynamics_fn = self._default_dynamics_fn_13d
 
-        print(f"[BRT13D] Starting from state: {state}")
-        print(f"[BRT13D] Initial V(x, tMax): {self.get_value(state, self.tMax):.4f}")
+        print(f"  [BRT13D] Starting  V(x,tMax)={self.get_value(state, self.tMax):.4f}")
 
         docked = False
         collided = False
@@ -446,11 +484,11 @@ class BRTController13D(Docking13DControllerMixin):
             if not docked and self._check_docked_13d(state):
                 docked = True
                 dock_time = sim_time
-                print(f"[BRT13D] Docking successful at t={sim_time:.2f}s")
+                print(f"  [BRT13D] Docking at t={sim_time:.2f}s")
 
             if not docked and self._check_collision_13d(state):
                 collided = True
-                print(f"[BRT13D] Collision detected at t={sim_time:.2f}s")
+                print(f"  [BRT13D] Collision at t={sim_time:.2f}s")
                 break
 
             # Euler integration
@@ -516,24 +554,24 @@ class BRTController13D(Docking13DControllerMixin):
                 'final_value': diag[-1]['value'],
             }
 
-            print("\n" + "="*65)
-            print("  BRT CONTROLLER DIAGNOSTIC SUMMARY")
-            print("="*65)
-            print(f"  Total steps:         {summary['total_steps']}")
-            print(f"  Out-of-domain steps: {summary['out_of_domain_steps']} "
+            print("\n" + "-"*60)
+            print("  BRT Diagnostic Summary")
+            print("-"*60)
+            print(f"  Steps         : {summary['total_steps']}")
+            print(f"  Out-of-domain : {summary['out_of_domain_steps']} "
                   f"({summary['out_of_domain_pct']:.1f}%)")
-            print(f"  Max |velocity|:      {summary['max_velocity_norm']:.4f} m/s  "
-                  f"(training range: {vel_range} m/s)")
-            print(f"  Max |omega|:         {summary['max_omega_norm']:.4f} rad/s  "
-                  f"(training range: [{sr[10,0]:.2f}, {sr[10,1]:.2f}])")
-            print(f"  Gradient |dV/ds|:    min={summary['grad_magnitude_min']:.2e}, "
-                  f"max={summary['grad_magnitude_max']:.2e}, "
-                  f"mean={summary['grad_magnitude_mean']:.2e}")
-            print(f"  V increasing steps:  {summary['v_increase_steps']} "
-                  f"({summary['v_increase_pct']:.1f}%)")
-            print(f"  Max consecutive V↑:  {summary['max_consecutive_v_increases']}")
-            print(f"  Final V:             {summary['final_value']:.4f}")
-            print("="*65 + "\n")
+            print(f"  Max |vel|     : {summary['max_velocity_norm']:.4f} m/s  "
+                  f"(range: {vel_range})")
+            print(f"  Max |omega|   : {summary['max_omega_norm']:.4f} rad/s  "
+                  f"(range: [{sr[10,0]:.2f}, {sr[10,1]:.2f}])")
+            print(f"  |dV/ds|       : {summary['grad_magnitude_min']:.1e} / "
+                  f"{summary['grad_magnitude_max']:.1e} / "
+                  f"{summary['grad_magnitude_mean']:.1e}  (min/max/mean)")
+            print(f"  V increasing  : {summary['v_increase_steps']} steps "
+                  f"({summary['v_increase_pct']:.1f}%), "
+                  f"max run={summary['max_consecutive_v_increases']}")
+            print(f"  Final V       : {summary['final_value']:.4f}")
+            print("-"*60)
 
             result['diagnostics'] = {
                 'history': diag,

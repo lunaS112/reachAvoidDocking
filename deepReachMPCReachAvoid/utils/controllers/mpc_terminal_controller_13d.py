@@ -146,8 +146,6 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         self.model.to(self.device)
         self.model.eval()
 
-        print(f"Loaded model from {self.checkpoint_path}")
-
     def reset(self):
         """Reset controller state for a new simulation."""
         self.state_history = []
@@ -252,8 +250,7 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                 self.in_brt = True
                 self.t_remaining = self.tMax
                 self.brt_entry_time = sim_time
-                print(f"[MPC+Terminal13D] Entered BRT at t={sim_time:.2f}s "
-                      f"-> Phase 2 (t_remaining={self.tMax:.1f}s)")
+                print(f"  [MPC+T] Entered BRT at t={sim_time:.2f}s -> Phase 2")
 
         if self.in_brt:
             t_query = max(self.t_remaining, 0.01)
@@ -311,7 +308,7 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         if dynamics_fn is None:
             dynamics_fn = self._default_dynamics_fn_13d
 
-        print(f"[MPC+Terminal13D] Starting from state: {state}")
+        print(f"[MPC+Terminal13D] Starting  dist={np.linalg.norm(state[:3]):.3f}m")
 
         docked = False
         collided = False
@@ -377,27 +374,25 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                                 self._exploration_factor = 1.0
                                 self._stagnation_count = 0
                                 self._warm_started = False
-                                print('  -> Escaped local min, returning to NORMAL')
+                                print('    -> Escaped local min, mode=NORMAL')
                     else:
                         self._stagnation_count += 1
                         if self._control_mode == 'normal':
                             self._control_mode = 'exploring'
                             self._exploration_factor = self.exploration_factor_setting
                             self._mode_entry_dist = dist
-                            print(f'  -> Switching to EXPLORING '
-                                  f'(eps_var x{self._exploration_factor})')
+                            print(f'    -> mode=EXPLORING '
+                                  f'(eps x{self._exploration_factor})')
                         elif (self._control_mode == 'exploring'
                               and self._stagnation_count >= self.exploration_patience):
                             self._control_mode = 'brt_fallback'
-                            print('  -> Exploration failed, switching to BRT_FALLBACK')
+                            print('    -> Exploration failed, mode=BRT_FALLBACK')
 
                 mode_tag = self._control_mode.upper()
                 print(
-                    f'[MPC+Terminal13D] Step {step:>4d} t={sim_time:5.1f}s '
-                    f'| Phase {phase} | {mode_tag} | dist={dist:.3f}m '
-                    f'| V(x,t)={V_now:.4f}\n'
-                    f'  best_combined={cost_val:.4f}  '
-                    f'reach_avoid={ra:.4f}  terminal={tv:.4f} '
+                    f'  [MPC+T] t={sim_time:5.1f}s  Ph{phase} {mode_tag:<12} '
+                    f'dist={dist:.3f}m  V={V_now:.4f}  '
+                    f'best={cost_val:.4f}  '
                     f'({dominates}){delta_str}{stag_flag}')
 
                 prev_log_dist = dist
@@ -407,11 +402,11 @@ class MPCTerminalController13D(Docking13DControllerMixin):
             if not docked and self._check_docked_13d(state):
                 docked = True
                 dock_time = sim_time
-                print(f"[MPC+Terminal13D] Docking successful at t={sim_time:.2f}s")
+                print(f"  [MPC+T] Docking at t={sim_time:.2f}s")
 
             if not docked and self._check_collision_13d(state):
                 collided = True
-                print(f"[MPC+Terminal13D] Collision at t={sim_time:.2f}s")
+                print(f"  [MPC+T] Collision at t={sim_time:.2f}s")
                 break
 
             # Euler integration

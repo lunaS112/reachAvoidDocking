@@ -143,7 +143,7 @@ class MPCController13D(Docking13DControllerMixin):
         if dynamics_fn is None:
             dynamics_fn = self._default_dynamics_fn_13d
 
-        print(f"[MPC13D] Starting from state: {state}")
+        print(f"  [MPC13D] Starting  dist={np.linalg.norm(state[:3]):.3f}m")
 
         docked = False
         collided = False
@@ -171,11 +171,11 @@ class MPCController13D(Docking13DControllerMixin):
             if not docked and self._check_docked_13d(state):
                 docked = True
                 dock_time = sim_time
-                print(f"[MPC13D] Docking successful at t={sim_time:.2f}s")
+                print(f"  [MPC13D] Docking at t={sim_time:.2f}s")
 
             if not docked and self._check_collision_13d(state):
                 collided = True
-                print(f"[MPC13D] Collision detected at t={sim_time:.2f}s")
+                print(f"  [MPC13D] Collision at t={sim_time:.2f}s")
                 break
 
             # Euler integration
