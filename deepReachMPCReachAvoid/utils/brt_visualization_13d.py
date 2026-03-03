@@ -129,17 +129,42 @@ def _oriented_box_mesh(center, half_dims, quaternion=None):
 
 
 def _hemisphere_points(radius, n=30):
-    """Sample surface points of a hemisphere (y >= 0) for scatter rendering."""
+    """Sample surface points of a hemisphere (y >= 0) for scatter rendering.
+    (Kept for backward compatibility; new code uses _indent_box_mesh.)
+    """
     u = np.linspace(0, 2 * np.pi, n)
     v = np.linspace(0, np.pi / 2, n // 2)
     U, V = np.meshgrid(u, v)
-    # Convention: hemisphere opens in +y (y = cos(v) >= 0)
     pts = np.column_stack([
         (radius * np.cos(U) * np.sin(V)).ravel(),
         (radius * np.cos(V)).ravel(),
         (radius * np.sin(U) * np.sin(V)).ravel(),
     ])
     return pts
+
+
+def _indent_box_mesh(hw_x, hw_z, depth, n_face=5):
+    """Return surface points of a rectangular box for Mesh3d.
+    (Legacy name kept for import compat; now also used for docking post.)
+    Box: x ∈ [-hw_x, hw_x], z ∈ [-hw_z, hw_z], y ∈ [-depth, 0]
+    """
+    pts = []
+    xs = np.linspace(-hw_x, hw_x, n_face)
+    zs = np.linspace(-hw_z, hw_z, n_face)
+    ys = np.linspace(-depth, 0, n_face)
+    # Top (y = 0)
+    X, Z = np.meshgrid(xs, zs)
+    pts.append(np.column_stack([X.ravel(), np.zeros(X.size), Z.ravel()]))
+    # Bottom (y = -depth)
+    pts.append(np.column_stack([X.ravel(), np.full(X.size, -depth), Z.ravel()]))
+    # Side walls
+    Y, Z2 = np.meshgrid(ys, zs)
+    pts.append(np.column_stack([np.full(Y.size, -hw_x), Y.ravel(), Z2.ravel()]))
+    pts.append(np.column_stack([np.full(Y.size, hw_x), Y.ravel(), Z2.ravel()]))
+    Y2, X2 = np.meshgrid(ys, xs)
+    pts.append(np.column_stack([X2.ravel(), Y2.ravel(), np.full(Y2.size, -hw_z)]))
+    pts.append(np.column_stack([X2.ravel(), Y2.ravel(), np.full(Y2.size, hw_z)]))
+    return np.vstack(pts)
 
 
 # --------------------------------------------------------------------------- #
@@ -191,12 +216,12 @@ def add_target_plotly(fig, dynamics):
         name='Target edges', showlegend=False,
     ))
 
-    pts = _hemisphere_points(d.dock_rad, n=30)
+    pts = _indent_box_mesh(d.post_hw_x, d.post_hw_z, d.post_length)
     fig.add_trace(go.Mesh3d(
         x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
-        opacity=0.25, color='limegreen',
+        opacity=0.45, color='limegreen',
         alphahull=0,
-        name='Dock cutout',
+        name='Docking post',
     ))
 
 
@@ -319,16 +344,17 @@ def add_chaser_axes_plotly(fig, dynamics, state):
 
 
 def add_dock_rim_plotly(fig, dynamics):
-    """Add dock port rim circle as a Scatter3d trace at y=0."""
+    """Add dock port rim rectangle as a Scatter3d trace at y=0."""
     import plotly.graph_objects as go
 
-    n = 60
-    theta = np.linspace(0, 2 * np.pi, n)
-    r = dynamics.dock_rad
+    hw_x = dynamics.post_hw_x
+    hw_z = dynamics.post_hw_z
+    # Rectangle at y=0 (base of post)
+    rim_x = [-hw_x, hw_x, hw_x, -hw_x, -hw_x]
+    rim_y = [0, 0, 0, 0, 0]
+    rim_z = [-hw_z, -hw_z, hw_z, hw_z, -hw_z]
     fig.add_trace(go.Scatter3d(
-        x=r * np.cos(theta),
-        y=np.zeros(n),
-        z=r * np.sin(theta),
+        x=rim_x, y=rim_y, z=rim_z,
         mode='lines',
         line=dict(color='limegreen', width=4),
         name='Dock rim',
@@ -397,12 +423,19 @@ def draw_target_mpl(ax, dynamics):
     mesh.set_edgecolor('gray')
     ax.add_collection3d(mesh)
 
-    theta = np.linspace(0, 2 * np.pi, 40)
-    for elev_frac in np.linspace(0.1, 1.0, 5):
-        r = d.dock_rad * np.sin(np.arccos(1 - elev_frac))
-        h = d.dock_rad * (1 - elev_frac)
-        ax.plot(r * np.cos(theta), np.full_like(theta, h),
-                r * np.sin(theta), color='limegreen', alpha=0.5, lw=1.0)
+    # Docking post wireframe
+    hw_x = d.post_hw_x
+    hw_z = d.post_hw_z
+    length = d.post_length
+    # Draw wireframe lines at several y-slices through the post
+    for y_frac in [0.0, 0.5, 1.0]:
+        yy = -length * y_frac
+        rim_x = [-hw_x, hw_x, hw_x, -hw_x, -hw_x]
+        rim_z = [-hw_z, -hw_z, hw_z, hw_z, -hw_z]
+        ax.plot(rim_x, [yy]*5, rim_z, color='limegreen', alpha=0.5, lw=1.0)
+    # Vertical edges of the post
+    for px, pz in [(-hw_x, -hw_z), (hw_x, -hw_z), (hw_x, hw_z), (-hw_x, hw_z)]:
+        ax.plot([px, px], [0, -length], [pz, pz], color='limegreen', alpha=0.5, lw=1.0)
 
 
 def draw_reach_sphere_mpl(ax, dynamics):
@@ -795,13 +828,14 @@ class BRTVisualizer13D:
             name='Target edges', showlegend=False,
         ))
 
-        # Trace 4: Hemisphere dock cutout
-        pts = _hemisphere_points(d.dock_rad, n=30)
+        # Trace 4: Docking post
+        pts = _indent_box_mesh(d.post_hw_x, d.post_hw_z,
+                               d.post_length)
         fig.add_trace(go.Mesh3d(
             x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
-            opacity=0.25, color='limegreen',
+            opacity=0.45, color='limegreen',
             alphahull=0,
-            name='Dock cutout',
+            name='Docking post',
         ))
 
     def _add_reach_sphere_plotly(self, fig):
@@ -985,13 +1019,17 @@ class BRTVisualizer13D:
         mesh.set_edgecolor('gray')
         ax.add_collection3d(mesh)
 
-        # Hemisphere dock: plot wireframe circles
-        theta = np.linspace(0, 2*np.pi, 40)
-        for elev_frac in np.linspace(0.1, 1.0, 5):
-            r = d.dock_rad * np.sin(np.arccos(1 - elev_frac))
-            h = d.dock_rad * (1 - elev_frac)
-            ax.plot(r * np.cos(theta), np.full_like(theta, h),
-                    r * np.sin(theta), color='limegreen', alpha=0.5, lw=1.0)
+        # Docking post wireframe
+        hw_x = d.post_hw_x
+        hw_z = d.post_hw_z
+        length = d.post_length
+        for y_frac in [0.0, 0.5, 1.0]:
+            yy = -length * y_frac
+            rim_x = [-hw_x, hw_x, hw_x, -hw_x, -hw_x]
+            rim_z = [-hw_z, -hw_z, hw_z, hw_z, -hw_z]
+            ax.plot(rim_x, [yy]*5, rim_z, color='limegreen', alpha=0.5, lw=1.0)
+        for px, pz in [(-hw_x, -hw_z), (hw_x, -hw_z), (hw_x, hw_z), (-hw_x, hw_z)]:
+            ax.plot([px, px], [0, -length], [pz, pz], color='limegreen', alpha=0.5, lw=1.0)
 
     def _draw_reach_sphere_mpl(self, ax):
         r = self.dynamics.eps_p

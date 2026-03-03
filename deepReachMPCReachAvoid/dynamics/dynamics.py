@@ -1037,26 +1037,43 @@ class Docking13D(Dynamics):
         # Docking tolerances
         self.eps_p = 0.1
         self.eps_v = 0.1
-        self.eps_q = 0.02       # radians, attitude error tolerance #TODO Validate this tolerance
+        self.eps_q = 0.20       # radians (~11.5°), attitude error tolerance
         self.eps_omega = 0.05
         self.v_max = 2.0        # Max linear velocity (m/s) - matches state_range
         self.omega_max = 1.5    # Max angular velocity (rad/s) - matches state_range
 
-        # Target geometry (still mainly planar in your code)
+        # Target geometry
         self.w_t = 6.0
         self.h_t = 3.0
-        self.d_t = 3.0          # target "thickness" in z (m) #TODO Validate this dimension
-        self.dock_rad = 1.5
+        self.d_t = 3.0          # target depth in z (m)
 
-        # Goal: position/velocity zero, attitude = yaw(pi/2), omega=0 #TODO Validate goal attitude - currently 90 deg yaw and 0 roll/pitch
+        # Docking post: rectangular peg protruding from target face in -y
+        # Sized relative to chaser (w_c=h_c=d_c=1.0m):
+        #   cross-section = 1.2× chaser → 1.2m × 1.2m
+        #   outdent       = 0.2× chaser → 0.2m
+        self.post_hw_x = 0.6         # post half-width in x (m) = 1.2*w_c/2
+        self.post_hw_z = 0.6         # post half-width in z (m) = 1.2*d_c/2
+        self.post_length = 0.2       # how far post extends in -y (m) = 0.2*h_c
+
+        # Goal region: chaser +y face within 0.1m of the post tip.
+        # Post tip at y = -post_length = -0.2.  Chaser half-height = h_c/2 = 0.5.
+        # Chaser face = center_y + 0.5, want face ∈ [tip - 0.1, tip] = [-0.3, -0.2]
+        # => center_y ∈ [-0.8, -0.7]
+        self.goal_y_min = -self.post_length - 0.1 - self.h_c / 2  # -0.8
+        self.goal_y_max = -self.post_length - self.h_c / 2          # -0.7
+        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0  # -0.75
+
+        # Goal: rotation-ALIGNED — chaser must match goal attitude.
+        # 90° yaw so chaser body -Y faces target +Y.
         self.q_goal = self.quat_from_axis_angle(
             torch.tensor([0.0, 0.0, 1.0]), math.pi / 2.0
         )
 
         if goal_state is None:
             # State: [x,y,z,vx,vy,vz,q0,q1,q2,q3,wx,wy,wz]
+            # Nominal goal: centered on post, at goal_y_center, identity-ish quat, zero vel
             self.goal_state = torch.tensor([
-                0.0, 0.0, 0.0,
+                0.0, self.goal_y_center, 0.0,
                 0.0, 0.0, 0.0,
                 float(self.q_goal[0]), float(self.q_goal[1]), float(self.q_goal[2]), float(self.q_goal[3]),
                 0.0, 0.0, 0.0
@@ -1288,63 +1305,81 @@ class Docking13D(Dynamics):
         return q
 
     def sample_target_state(self, num_samples):
-        """Multi-scale target sampling concentrated near the exact goal state.
-        
-        Matches Docking6D approach:
-        Tier 1 (10%): Exact goal + tiny noise (0.1x tolerance)
-        Tier 2 (30%): Gaussian around goal with 2x tolerance std 
-        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance 
-        Tier 4 (40%): Broader uniform sampling centered on goal 
+        """Multi-scale target sampling concentrated near the goal region.
+
+        Goal is rotation-aligned, so quaternions are sampled near q_goal.
+        Position samples focus around the post tip (x=0, y=goal_y_center, z=0).
+
+        Tier 1 (10%): Exact goal + tiny noise
+        Tier 2 (30%): Gaussian around goal with 2× tolerance std
+        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2× tolerance
+        Tier 4 (40%): Broader uniform sampling centred on goal
         """
         num_samples = int(num_samples)
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
+        def _sample_near_quat(n, sigma=0.05):
+            """Sample n quaternions near q_goal with angular noise sigma (rad)."""
+            axis = torch.randn(n, 3)
+            axis = axis / (torch.norm(axis, dim=-1, keepdim=True) + 1e-12)
+            angle = torch.randn(n, 1).abs() * sigma
+            ha = angle / 2.0
+            dq = torch.cat([torch.cos(ha), axis * torch.sin(ha)], dim=-1)
+            # Multiply: q_goal * dq  (Hamilton product, scalar-first)
+            qg = self.q_goal.cpu().unsqueeze(0).expand(n, -1)
+            a0, a1, a2, a3 = qg[:, 0], qg[:, 1], qg[:, 2], qg[:, 3]
+            b0, b1, b2, b3 = dq[:, 0], dq[:, 1], dq[:, 2], dq[:, 3]
+            q = torch.stack([
+                a0*b0 - a1*b1 - a2*b2 - a3*b3,
+                a0*b1 + a1*b0 + a2*b3 - a3*b2,
+                a0*b2 - a1*b3 + a2*b0 + a3*b1,
+                a0*b3 + a1*b2 - a2*b1 + a3*b0,
+            ], dim=-1)
+            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+            sign = torch.sign(q[:, 0:1])
+            sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+            return q * sign
+
         # Tier 1 (10%): Exact goal + tiny noise
         n_exact = int(num_samples * 0.1)
         noise_std = torch.tensor([
-            self.eps_p * 0.1, self.eps_p * 0.1, self.eps_p * 0.1,     # position: 0.01m
-            self.eps_v * 0.1, self.eps_v * 0.1, self.eps_v * 0.1,     # velocity: 0.01m/s
-            0.0, 0.0, 0.0, 0.0,                                        # quaternion: handled separately
-            self.eps_omega * 0.1, self.eps_omega * 0.1, self.eps_omega * 0.1  # omega: 0.005rad/s
+            self.eps_p * 0.1, self.eps_p * 0.1, self.eps_p * 0.1,
+            self.eps_v * 0.1, self.eps_v * 0.1, self.eps_v * 0.1,
+            0.0, 0.0, 0.0, 0.0,
+            self.eps_omega * 0.1, self.eps_omega * 0.1, self.eps_omega * 0.1
         ])
         samples[idx:idx + n_exact] = self.goal_state.unsqueeze(0) + torch.randn(n_exact, self.state_dim) * noise_std
-        samples[idx:idx + n_exact, 6:10] = self.sample_quat_near_goal(n_exact, angle_std=self.eps_q * 0.1)
+        samples[idx:idx + n_exact, 6:10] = _sample_near_quat(n_exact, sigma=self.eps_q * 0.1)
         idx += n_exact
 
-        # Tier 2 (30%): Gaussian around goal with tolerance-scale std
+        # Tier 2 (30%): Gaussian around goal
         n_gaussian = int(num_samples * 0.3)
         goal_std = torch.tensor([
             self.eps_p * 2, self.eps_p * 2, self.eps_p * 2,
             self.eps_v * 2, self.eps_v * 2, self.eps_v * 2,
-            0.0, 0.0, 0.0, 0.0,  # quaternion: handled separately
+            0.0, 0.0, 0.0, 0.0,
             self.eps_omega * 2, self.eps_omega * 2, self.eps_omega * 2
         ])
         samples[idx:idx + n_gaussian] = self.goal_state.unsqueeze(0) + torch.randn(n_gaussian, self.state_dim) * goal_std
-        samples[idx:idx + n_gaussian, 6:10] = self.sample_quat_near_goal(n_gaussian, angle_std=self.eps_q * 2)
+        samples[idx:idx + n_gaussian, 6:10] = _sample_near_quat(n_gaussian, sigma=self.eps_q * 2)
         idx += n_gaussian
 
-        # Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance
-        # Samples on/near the reach set boundary where the value function transitions
+        # Tier 3 (20%): Boundary-focused sampling
         n_boundary = int(num_samples * 0.20)
         tolerances = torch.tensor([
             self.eps_p, self.eps_p, self.eps_p,
             self.eps_v, self.eps_v, self.eps_v,
-            0.0, 0.0, 0.0, 0.0,  # quaternion: handled separately
+            0.0, 0.0, 0.0, 0.0,
             self.eps_omega, self.eps_omega, self.eps_omega
         ])
-        # Each dimension independently at a random fraction of [0.8, 1.2]x its tolerance
         scale_factors = 0.8 + 0.4 * torch.rand(n_boundary, self.state_dim)
-        # Random sign for each dimension (sample on both sides of goal)
         signs = torch.sign(torch.randn(n_boundary, self.state_dim))
         samples[idx:idx + n_boundary] = self.goal_state.unsqueeze(0) + signs * scale_factors * tolerances.unsqueeze(0)
-        # Sample quaternions at boundary angle
-        boundary_angles = 0.8 + 0.4 * torch.rand(n_boundary)  # [0.8, 1.2] * eps_q
-        samples[idx:idx + n_boundary, 6:10] = self.sample_quat_near_goal(n_boundary, angle_std=self.eps_q)
+        samples[idx:idx + n_boundary, 6:10] = _sample_near_quat(n_boundary, sigma=self.eps_q)
         idx += n_boundary
 
-        # Tier 4 (40%): Broader uniform sampling centered on goal_state
-        # Half-width = fraction of state_range width, adapts when state_range is overridden
+        # Tier 4 (40%): Broader uniform sampling
         n_broad = num_samples - idx
         sr = self.state_range_.cpu()
         state_widths = (sr[:, 1] - sr[:, 0])
@@ -1352,8 +1387,7 @@ class Docking13D(Dynamics):
         tier4_lo = torch.clamp(self.goal_state - tier4_half_width, sr[:, 0], sr[:, 1])
         tier4_hi = torch.clamp(self.goal_state + tier4_half_width, sr[:, 0], sr[:, 1])
         samples[idx:] = tier4_lo + torch.rand(n_broad, self.state_dim) * (tier4_hi - tier4_lo)
-        # For quaternion dimensions, sample with broader angle std
-        samples[idx:, 6:10] = self.sample_quat_near_goal(n_broad, angle_std=self.tier4_fraction * math.pi)
+        samples[idx:, 6:10] = _sample_near_quat(n_broad, sigma=0.5)  # wider spread
 
         return samples
 
@@ -1448,81 +1482,112 @@ class Docking13D(Dynamics):
     # ---------- Reach set ----------
     def reach_fn(self, state):
         """
+        Rotation-aligned docking-post goal.
+
         Signed distance <= 0 if within docking tolerances in:
-          - position (3D L2)
-          - velocity (3D L2)
-          - attitude (angle error)
-          - omega (3D L2)
+          - position  (x,z near post axis; y in goal band)
+          - velocity  (3D L2)
+          - attitude  (angle error vs q_goal)
+          - omega     (3D L2)
         """
-        x,y,z = state[...,0], state[...,1], state[...,2]
-        vx,vy,vz = state[...,3], state[...,4], state[...,5]
-        q = state[...,6:10]
-        omega = state[...,10:13]
+        x, y, z = state[..., 0], state[..., 1], state[..., 2]
+        vx, vy, vz = state[..., 3], state[..., 4], state[..., 5]
+        q = state[..., 6:10]
+        omega = state[..., 10:13]
 
         goal = self.goal_state.to(state.device)
-        xg,yg,zg = goal[0], goal[1], goal[2]
-        vxg,vyg,vzg = goal[3], goal[4], goal[5]
         qg = self.q_goal.to(state.device)
         omegag = goal[10:13]
 
-        # Add epsilon inside sqrt to prevent gradient explosion at origin
-        pos_dist = torch.sqrt((x-xg)**2 + (y-yg)**2 + (z-zg)**2 + 1e-8) - self.eps_p
-        vel_dist = torch.sqrt((vx-vxg)**2 + (vy-vyg)**2 + (vz-vzg)**2 + 1e-8) - self.eps_v
-        att_dist = self.quat_error_angle(q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg) - self.eps_q
+        # --- Position: x,z near post axis + y inside goal band ---
+        xz_dist = torch.sqrt(x**2 + z**2 + 1e-8) - self.eps_p
+        y_lo = torch.tensor(self.goal_y_min, device=state.device, dtype=state.dtype)
+        y_hi = torch.tensor(self.goal_y_max, device=state.device, dtype=state.dtype)
+        y_dist = torch.maximum(y_lo - y, y - y_hi)  # <=0 when inside band
+        pos_dist = torch.maximum(xz_dist, y_dist)
+
+        # --- Velocity ---
+        vel_dist = torch.sqrt(vx**2 + vy**2 + vz**2 + 1e-8) - self.eps_v
+
+        # --- Attitude ---
+        att_dist = self.quat_error_angle(
+            q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg
+        ) - self.eps_q
+
+        # --- Angular velocity ---
         omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
 
-        # Keep your shaping idea (I won’t over-tune; same spirit)
-        # Fix #1: Increase outer shaping weights for position (0.1→0.5) and attitude (0.1→0.5)
-        # to provide stronger PDE gradient signal outside the reach set in the 13D space,
-        # reducing the network's tendency to overfit to sparse MPC samples
+        # Piecewise linear shaping
         pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.5)
         vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
         att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.5)
         omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
 
-        goal = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
-        return torch.max(goal, dim=-1).values
+        goal_val = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
+        return torch.max(goal_val, dim=-1).values
 
     # ---------- Avoid set ----------
     def avoid_fn(self, state):
         """
-        3D extension of your planar avoid_fn.
-        Uncertainty: your original geometry is planar; I extrude in z.
-        """
-        x = state[...,0]
-        y = state[...,1]
-        z = state[...,2]
+        Obstacle = target body (rectangular prism y∈[0, h_t])
+                 + docking post (1.2×1.2m peg, y∈[-post_length, 0]).
+        Both inflated by chaser_buffer.  The post is wider than the chaser
+        so it IS a collision obstacle.
 
-        # --- Rectangular prism SDF (Fix #7: use single consistent 3D buffer) ---
-        half_w = self.w_t / 2.0 + self.chaser_buffer
-        half_z = self.d_t / 2.0 + self.chaser_buffer
-        s_box = torch.maximum(
+        An approach corridor aligned with the post axis is carved out so
+        the chaser can approach from -y without the inflated body face
+        blocking the path.
+
+        Returns: negative inside obstacle, positive outside (safe).
+        """
+        x = state[..., 0]
+        y = state[..., 1]
+        z = state[..., 2]
+
+        cb = self.chaser_buffer
+
+        # --- Target body SDF (rectangular prism y∈[0, h_t], inflated) ---
+        half_w = self.w_t / 2.0 + cb
+        half_z = self.d_t / 2.0 + cb
+        s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + self.chaser_buffer), y - (self.h_t + self.chaser_buffer)),
+                torch.maximum(-(y + cb), y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )
 
-        # --- Hemispherical cutout (centered at origin, y >= 0) ---
-        effective_rad = max(self.dock_rad - self.chaser_buffer, 1e-6)
-        # Add epsilon inside sqrt to prevent gradient explosion at origin
-        dist_sphere = torch.sqrt(x**2 + y**2 + z**2 + 1e-8) - effective_rad
-        s_hemi = torch.maximum(-y, dist_sphere)
+        # --- Docking post SDF (peg y∈[-post_length, 0], inflated) ---
+        post_hw_x_inf = self.post_hw_x + cb
+        post_hw_z_inf = self.post_hw_z + cb
+        s_post = torch.maximum(
+            torch.abs(x) - post_hw_x_inf,
+            torch.maximum(
+                torch.maximum(-(y + self.post_length + cb),
+                              y - cb),
+                torch.abs(z) - post_hw_z_inf
+            )
+        )
 
-        # Collision region: box minus hemispherical cutout
-        s_bubble = torch.maximum(s_box, -s_hemi + 0.02)
+        # Union of body + post (take the one we're deeper inside)
+        s_obstacle = torch.minimum(s_body, s_post)
 
-        # --- Cylindrical cutout to prevent failure set from encapsulating target ---
-        # Creates a safe approach corridor in negative y direction
-        # The cylinder extends from y <= 0 with radius = effective_rad in the x-z plane
-        # Add epsilon inside sqrt to prevent gradient explosion when x=z=0
-        dist_cyl_xz = torch.sqrt(x**2 + z**2 + 1e-8) - effective_rad
-        s_cutout = torch.maximum(dist_cyl_xz, 
-                                 torch.maximum(-(y + self.chaser_buffer), y))
+        # --- Approach corridor: carve safe channel for -y approach ---
+        # The corridor lets the chaser fly along the post axis past the
+        # inflated body face without registering a collision.
+        corr_hw_x = self.post_hw_x + cb
+        corr_hw_z = self.post_hw_z + cb
+        s_corridor = torch.maximum(
+            torch.abs(x) - corr_hw_x,
+            torch.maximum(
+                torch.abs(z) - corr_hw_z,
+                y - cb   # corridor only for y < chaser_buffer
+            )
+        )
+        # Subtract corridor from obstacle union
+        s_fail = torch.maximum(s_obstacle, -s_corridor + 0.02)
 
-        s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
-
+        # Piecewise shaping
         s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
         return s_fail
 
@@ -1589,16 +1654,18 @@ class Docking13D(Dynamics):
         return False
 
     def _point_in_target_body_3d(self, px, py, pz):
-        """Check if a 3D point is inside the target obstacle (rectangular prism minus docking hemisphere)."""
-        # Inside the target rectangular prism?
-        if abs(px) > self.w_t / 2.0 or py < 0.0 or py > self.h_t or abs(pz) > self.d_t / 2.0:
-            return False   # outside prism -> no collision
+        """Check if a 3D point is inside the target body OR the docking post."""
+        # Inside the target rectangular prism? (y ∈ [0, h_t])
+        if abs(px) <= self.w_t / 2.0 and 0.0 <= py <= self.h_t and abs(pz) <= self.d_t / 2.0:
+            return True  # collision with target body
 
-        # Inside the docking indentation (hemispherical safe zone at origin)?
-        if px**2 + py**2 + pz**2 < self.dock_rad**2 and py >= 0.0:
-            return False   # inside dock hemisphere -> safe
+        # Inside the docking post? (y ∈ [-post_length, 0])
+        if (abs(px) <= self.post_hw_x and
+                abs(pz) <= self.post_hw_z and
+                -self.post_length <= py <= 0.0):
+            return True  # collision with post
 
-        return True        # inside prism but outside dock -> collision
+        return False  # safe
 
     def hamiltonian(self, state, dvds):
         if self.set_mode != 'reach_avoid':
@@ -1690,25 +1757,20 @@ class Docking13D(Dynamics):
         return False
 
     def _point_in_target_body_3d(self, px, py, pz):
-        """True if a point lies inside the collision region of the 3D target.
-
-        Collision region = rectangular prism  minus  hemispherical dock cutout.
-        The target body spans [0, h_t] in y, so the approach corridor (y < 0)
-        is inherently safe and does not need an explicit cylinder cutout.
-        """
+        """True if a point lies inside the target body or docking post."""
+        # Inside target body? (y ∈ [0, h_t])
         half_w = self.w_t / 2.0
         half_d = self.d_t / 2.0
+        if abs(px) <= half_w and 0.0 <= py <= self.h_t and abs(pz) <= half_d:
+            return True
 
-        # Outside bounding box -> no collision
-        if abs(px) > half_w or py < 0.0 or py > self.h_t or abs(pz) > half_d:
-            return False
+        # Inside docking post? (y ∈ [-post_length, 0])
+        if (abs(px) <= self.post_hw_x and
+                abs(pz) <= self.post_hw_z and
+                -self.post_length <= py <= 0.0):
+            return True
 
-        # Inside hemispherical docking cutout (safe zone, y >= 0)
-        r_sq = px * px + py * py + pz * pz
-        if r_sq < self.dock_rad ** 2:
-            return False
-
-        return True  # Inside box, outside all safe cutouts -> collision
+        return False  # safe
 
     def plot_config(self):
         # Use goal quaternion (90° yaw) so reach set shows up in position slices
