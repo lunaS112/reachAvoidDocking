@@ -1035,7 +1035,7 @@ class Docking13D(Dynamics):
         self.I = self.inertia_tensor_body()  # 3x3 torch tensor on CUDA later
 
         # Docking tolerances
-        self.eps_p = 0.1
+        self.eps_p = 0.3
         self.eps_v = 0.1
         self.eps_q = 0.20       # radians (~11.5°), attitude error tolerance
         self.eps_omega = 0.05
@@ -1055,13 +1055,14 @@ class Docking13D(Dynamics):
         self.post_hw_z = 0.6         # post half-width in z (m) = 1.2*d_c/2
         self.post_length = 0.2       # how far post extends in -y (m) = 0.2*h_c
 
-        # Goal region: chaser +y face within 0.1m of the post tip.
-        # Post tip at y = -post_length = -0.2.  Chaser half-height = h_c/2 = 0.5.
-        # Chaser face = center_y + 0.5, want face ∈ [tip - 0.1, tip] = [-0.3, -0.2]
-        # => center_y ∈ [-0.8, -0.7]
-        self.goal_y_min = -self.post_length - 0.1 - self.h_c / 2  # -0.8
-        self.goal_y_max = -self.post_length - self.h_c / 2          # -0.7
-        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0  # -0.75
+        # Goal region: must be below the inflated post tip so it's outside the obstacle.
+        # Inflated post tip at y = -(post_length + chaser_buffer).
+        # Add clearance gap, then a wide band below.
+        goal_clearance = 0.134  # gap between inflated post tip and goal top (gives round -1.2)
+        goal_band_height = 0.4  # y-band height (increased from 0.1)
+        self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.2
+        self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.6
+        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.4
 
         # Goal: rotation-ALIGNED — chaser must match goal attitude.
         # 90° yaw so chaser body -Y faces target +Y.
@@ -1531,9 +1532,20 @@ class Docking13D(Dynamics):
         """
         Obstacle = target body (rectangular prism y∈[0, h_t])
                  + docking post (1.2×1.2m peg, y∈[-post_length, 0]).
-        Both inflated by chaser_buffer, EXCEPT the body's −y face (y=0)
-        is NOT inflated — the chaser approaches from −y, and the docking
-        post inflation already covers the face in the approach corridor.
+        Both fully inflated by chaser_buffer on ALL faces.
+
+        Body inflated bounds:
+            x ∈ [-w_t/2 - cb, w_t/2 + cb]
+            y ∈ [-cb, h_t + cb]
+            z ∈ [-d_t/2 - cb, d_t/2 + cb]
+
+        Post inflated bounds:
+            x ∈ [-post_hw_x - cb, post_hw_x + cb]
+            y ∈ [-(post_length + cb), cb]
+            z ∈ [-post_hw_z - cb, post_hw_z + cb]
+
+        The goal set is placed below the inflated post tip
+        (y < -(post_length + cb)) so it is outside the obstacle.
 
         Returns: negative inside obstacle, positive outside (safe).
         """
@@ -1543,29 +1555,26 @@ class Docking13D(Dynamics):
 
         cb = self.chaser_buffer
 
-        # --- Target body SDF (rectangular prism y∈[0, h_t]) ---
-        # Inflated by cb on ±x, +y, ±z but NOT on the −y face.
-        # The −y face stays at y=0; the docking post handles that region.
+        # --- Target body SDF (rectangular prism y∈[0, h_t], fully inflated) ---
         half_w = self.w_t / 2.0 + cb
         half_z = self.d_t / 2.0 + cb
         s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-y, y - (self.h_t + cb)),
+                torch.maximum(-(y + cb), y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )
 
-        # --- Docking post SDF (peg y∈[-post_length, 0]) ---
-        # Inflated by cb on ±x, +y, ±z but NOT on the −y face (tip).
-        # The chaser approaches from −y and docks at the tip, so the tip
-        # is not inflated.  The +y face IS inflated (connects to body).
+        # --- Docking post SDF (peg y∈[-post_length, 0], fully inflated) ---
+        # The post -y tip is inflated to y = -(post_length + cb).
+        # The post +y face inflated to y = cb merges seamlessly with body -y face.
         post_hw_x_inf = self.post_hw_x + cb
         post_hw_z_inf = self.post_hw_z + cb
         s_post = torch.maximum(
             torch.abs(x) - post_hw_x_inf,
             torch.maximum(
-                torch.maximum(-(y + self.post_length),
+                torch.maximum(-(y + self.post_length + cb),
                               y - cb),
                 torch.abs(z) - post_hw_z_inf
             )

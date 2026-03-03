@@ -113,8 +113,12 @@ def build_plotly_figure():
     post_hw_z  = 0.60                      # post half-width z  (1.2× chaser)
     post_length = 0.20                      # outdent (0.2× chaser)
     h_c_half   = 0.50                      # chaser half-height (y)
-    goal_y_min = -post_length - 0.10 - h_c_half  # -0.80  (face 0.1m past tip)
-    goal_y_max = -post_length - h_c_half          # -0.70  (face at tip)
+    chaser_buffer = math.sqrt(w_c**2 + h_c**2 + d_c**2) / 2.0  # ~0.866
+    eps_p = 0.3                             # position tolerance in x,z
+    goal_clearance = 0.134                  # gap past inflated post tip
+    goal_band_height = 0.4                  # y-band height
+    goal_y_max = -(post_length + chaser_buffer + goal_clearance)  # -1.2
+    goal_y_min = goal_y_max - goal_band_height                     # -1.6
     q_goal = [math.cos(math.pi / 4), 0, 0, math.sin(math.pi / 4)]  # 90° yaw
 
     fig = go.Figure()
@@ -166,9 +170,8 @@ def build_plotly_figure():
     ))
 
     # 2b. Goal band (translucent yellow slab, y ∈ [goal_y_min, goal_y_max]) ─
-    eps_p = 0.1
-    goal_hw_x = post_hw_x + eps_p
-    goal_hw_z = post_hw_z + eps_p
+    goal_hw_x = eps_p
+    goal_hw_z = eps_p
     goal_cy = (goal_y_min + goal_y_max) / 2
     goal_hy = (goal_y_max - goal_y_min) / 2
     gx, gy, gz, gi, gj, gk = _box_mesh(
@@ -193,8 +196,8 @@ def build_plotly_figure():
     ))
 
     # 5. Approach arrow (pointing in -y) ────────────────────────────────────
-    arrow_y0 = -3.0
-    arrow_y1 = -0.5
+    arrow_y0 = -4.0
+    arrow_y1 = goal_y_max + 0.3
     fig.add_trace(go.Scatter3d(
         x=[0, 0], y=[arrow_y0, arrow_y1], z=[0, 0],
         mode='lines',
@@ -281,8 +284,12 @@ def build_mpl_figure():
     post_hw_z  = 0.60
     post_length = 0.20
     h_c_half   = h_c / 2  # 0.5
-    goal_y_min = -post_length - 0.10 - h_c_half  # -0.80
-    goal_y_max = -post_length - h_c_half          # -0.70
+    chaser_buffer = math.sqrt(w_c**2 + h_c**2 + d_c**2) / 2.0  # ~0.866
+    eps_p = 0.3
+    goal_clearance = 0.134
+    goal_band_height = 0.4
+    goal_y_max = -(post_length + chaser_buffer + goal_clearance)  # -1.2
+    goal_y_min = goal_y_max - goal_band_height                     # -1.6
     goal_y_center = (goal_y_min + goal_y_max) / 2
     q_goal = [math.cos(math.pi / 4), 0, 0, math.sin(math.pi / 4)]
 
@@ -329,9 +336,8 @@ def build_mpl_figure():
 
     # Goal band
     goal_hy = (goal_y_max - goal_y_min) / 2
-    eps_p = 0.1
     faces_g = _box_faces((0, goal_y_center, 0),
-                         post_hw_x + eps_p, goal_hy, post_hw_z + eps_p)
+                         eps_p, goal_hy, eps_p)
     mesh_g = Poly3DCollection(faces_g, alpha=0.2, linewidths=0.5)
     mesh_g.set_facecolor('gold')
     mesh_g.set_edgecolor('goldenrod')

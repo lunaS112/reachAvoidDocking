@@ -141,9 +141,12 @@ if __name__ == "__main__":
     # Use goal quaternion so trajectories only need position change to reach goal
     q_goal = dynamics_.q_goal.cpu()
     q0, q1, q2, q3 = float(q_goal[0]), float(q_goal[1]), float(q_goal[2]), float(q_goal[3])
+    # ICs in safe space: approach from below (-y), away from target body (y>0)
+    goal_y = float(dynamics_.goal_y_center)
     interesting_ics = []
-    interesting_ics.append(torch.tensor([0.5, -0.5, 0.5, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, 0.5, -0.5, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0]).to(device))  
+    interesting_ics.append(torch.tensor([0.5, goal_y - 1.0, 0.5, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0]).to(device))  # below & offset
+    interesting_ics.append(torch.tensor([-0.5, goal_y - 2.0, -0.5, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0]).to(device))  # further below
+    interesting_ics.append(torch.tensor([2.0, goal_y, 0.0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0]).to(device))  # lateral offset at goal y
     interesting_ics_tensor = torch.stack(interesting_ics)
 
     # Generate requested plots
