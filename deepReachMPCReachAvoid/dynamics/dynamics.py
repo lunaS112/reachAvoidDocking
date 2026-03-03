@@ -1096,9 +1096,9 @@ class Docking13D(Dynamics):
         self.control_dim = 6
 
         self.state_range_ = torch.tensor([
-            [-15, 15],   # x
-            [-15, 15],   # y
-            [-15, 15],   # z
+            [-10, 10],   # x
+            [-10, 10],   # y
+            [-10, 10],   # z
             [-2.0, 2.0],  # vx
             [-2.0, 2.0],  # vy
             [-2.0, 2.0],  # vz
@@ -1531,12 +1531,9 @@ class Docking13D(Dynamics):
         """
         Obstacle = target body (rectangular prism y∈[0, h_t])
                  + docking post (1.2×1.2m peg, y∈[-post_length, 0]).
-        Both inflated by chaser_buffer.  The post is wider than the chaser
-        so it IS a collision obstacle.
-
-        An approach corridor aligned with the post axis is carved out so
-        the chaser can approach from -y without the inflated body face
-        blocking the path.
+        Both inflated by chaser_buffer, EXCEPT the body's −y face (y=0)
+        is NOT inflated — the chaser approaches from −y, and the docking
+        post inflation already covers the face in the approach corridor.
 
         Returns: negative inside obstacle, positive outside (safe).
         """
@@ -1546,46 +1543,36 @@ class Docking13D(Dynamics):
 
         cb = self.chaser_buffer
 
-        # --- Target body SDF (rectangular prism y∈[0, h_t], inflated) ---
+        # --- Target body SDF (rectangular prism y∈[0, h_t]) ---
+        # Inflated by cb on ±x, +y, ±z but NOT on the −y face.
+        # The −y face stays at y=0; the docking post handles that region.
         half_w = self.w_t / 2.0 + cb
         half_z = self.d_t / 2.0 + cb
         s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + cb), y - (self.h_t + cb)),
+                torch.maximum(-y, y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )
 
-        # --- Docking post SDF (peg y∈[-post_length, 0], inflated) ---
+        # --- Docking post SDF (peg y∈[-post_length, 0]) ---
+        # Inflated by cb on ±x, +y, ±z but NOT on the −y face (tip).
+        # The chaser approaches from −y and docks at the tip, so the tip
+        # is not inflated.  The +y face IS inflated (connects to body).
         post_hw_x_inf = self.post_hw_x + cb
         post_hw_z_inf = self.post_hw_z + cb
         s_post = torch.maximum(
             torch.abs(x) - post_hw_x_inf,
             torch.maximum(
-                torch.maximum(-(y + self.post_length + cb),
+                torch.maximum(-(y + self.post_length),
                               y - cb),
                 torch.abs(z) - post_hw_z_inf
             )
         )
 
         # Union of body + post (take the one we're deeper inside)
-        s_obstacle = torch.minimum(s_body, s_post)
-
-        # --- Approach corridor: carve safe channel for -y approach ---
-        # The corridor lets the chaser fly along the post axis past the
-        # inflated body face without registering a collision.
-        corr_hw_x = self.post_hw_x + cb
-        corr_hw_z = self.post_hw_z + cb
-        s_corridor = torch.maximum(
-            torch.abs(x) - corr_hw_x,
-            torch.maximum(
-                torch.abs(z) - corr_hw_z,
-                y - cb   # corridor only for y < chaser_buffer
-            )
-        )
-        # Subtract corridor from obstacle union
-        s_fail = torch.maximum(s_obstacle, -s_corridor + 0.02)
+        s_fail = torch.minimum(s_body, s_post)
 
         # Piecewise shaping
         s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
