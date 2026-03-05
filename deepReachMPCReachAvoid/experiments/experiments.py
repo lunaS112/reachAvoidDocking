@@ -1177,11 +1177,11 @@ class Experiment(ExperimentVizMixin, ABC):
             if base_cfg['z_axis_idx'] == -1:
                 fig = self.plotSingleFig(
                     state_test_range, base_cfg, x_resolution, y_resolution, times,
-                    quat_slice=base_quat, theta_yaw=base_yaw)
+                    quat_slice=base_quat, theta_yaw=base_yaw, draw_target_set=True)
             else:
                 fig = self.plotMultipleFigs(
                     state_test_range, base_cfg, x_resolution, y_resolution, z_resolution, times,
-                    quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values)
+                    quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values, draw_target_set=True)
         else:
             if plot_config['z_axis_idx'] == -1:
                 fig = self.plotSingleFig(
@@ -1198,42 +1198,32 @@ class Experiment(ExperimentVizMixin, ABC):
         if fig is not None:
             plt.close(fig)
 
-        # Docking13D: add plots with small quaternion perturbations from goal
+        # Docking13D: vary vx to show BRATs at different lateral velocities
         if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
-            # Get goal quaternion and create perturbations from it
-            q_goal = self.dataset.dynamics.q_goal.cpu()
-            q0, q1, q2, q3 = float(q_goal[0]), float(q_goal[1]), float(q_goal[2]), float(q_goal[3])
-            quat_slices = [
-                [q0, q1 + 0.2, q2, q3],  # Perturb qx
-                [q0, q1, q2 + 0.2, q3],  # Perturb qy
-                [q0, q1, q2, q3 + 0.2],  # Perturb qz
-            ]
-            for idx, quat in enumerate(quat_slices):
-                norm = math.sqrt(quat[0]**2 + quat[1]**2 + quat[2]**2 + quat[3]**2)
-                quat = [q / norm for q in quat]
-                yaw = self._quat_to_yaw(quat)
-                cfg = dict(plot_config)
-                slices = list(cfg['state_slices'])
-                slices[6:10] = quat
+            vx_values = [-1.5, 0.0, 1.5]
+            for idx, vx_val in enumerate(vx_values):
+                cfg = dict(base_cfg)
+                slices = list(base_cfg['state_slices'])
+                slices[3] = vx_val  # vx (state index 3)
                 cfg['state_slices'] = slices
 
                 if cfg['z_axis_idx'] == -1:
-                    fig_q = self.plotSingleFig(
+                    fig_vx = self.plotSingleFig(
                         state_test_range, cfg, x_resolution, y_resolution, times,
-                        quat_slice=quat, theta_yaw=yaw)
+                        quat_slice=base_quat, theta_yaw=base_yaw, draw_target_set=True)
                 else:
-                    fig_q = self.plotMultipleFigs(
+                    fig_vx = self.plotMultipleFigs(
                         state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
-                        quat_slice=quat, theta_yaw=yaw, z_values=z_values)
+                        quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values, draw_target_set=True)
 
                 wandb.log({
                     'step': epoch,
-                    f'val_plot_docking13d_q{idx+1}': wandb.Image(fig_q),
+                    f'val_plot_docking13d_vx{idx+1}': wandb.Image(fig_vx),
                 })
-                plt.close(fig_q)
+                plt.close(fig_vx)
 
-            self.validate_mpc_dataset_position_base_quat_scatter(
-                epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+            # self.validate_mpc_dataset_position_base_quat_scatter(
+            #     epoch, x_resolution, y_resolution, z_resolution, time_resolution)
         
         if self.dataset.dynamics.name != 'Docking13D':
             # Plot velocity slice (vx vs vy) of the learned value function

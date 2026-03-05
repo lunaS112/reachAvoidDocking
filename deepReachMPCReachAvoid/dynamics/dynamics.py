@@ -1083,8 +1083,8 @@ class Docking13D(Dynamics):
             self.goal_state = torch.tensor(goal_state)
 
         # BRAT parameters
-        self.reach_fn_weight = 5.0 #TODO Tune
-        self.avoid_fn_weight = 10.0 #TODO Tune
+        self.reach_fn_weight = 0.72
+        self.avoid_fn_weight = 0.5
         self.set_mode = set_mode
 
         if set_mode == 'reach_avoid':
@@ -1519,13 +1519,13 @@ class Docking13D(Dynamics):
         omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
 
         # Piecewise linear shaping
-        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.5)
+        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
         vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
         att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.5)
         omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
 
         goal_val = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
-        return torch.max(goal_val, dim=-1).values
+        return torch.max(goal_val, dim=-1).values * self.reach_fn_weight
 
     # ---------- Avoid set ----------
     def avoid_fn(self, state):
@@ -1585,7 +1585,7 @@ class Docking13D(Dynamics):
 
         # Piecewise shaping
         s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
-        return s_fail
+        return s_fail * self.avoid_fn_weight
 
     def boundary_fn(self, state):
         if self.set_mode == 'reach_avoid':

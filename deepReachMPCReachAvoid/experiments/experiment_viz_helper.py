@@ -51,7 +51,7 @@ class ExperimentVizMixin:
         )
 
     def plotSingleFig(self, state_test_range, plot_config, x_resolution, y_resolution, times, delta_level=None,
-                      quat_slice=None, theta_yaw=None):
+                      quat_slice=None, theta_yaw=None, draw_target_set=False):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
 
@@ -107,6 +107,14 @@ class ExperimentVizMixin:
                                              linestyles='-')
             if self.dataset.dynamics.name == 'Docking13D':
                 self._annotate_quat(ax, quat_slice, theta_yaw)
+            if draw_target_set and hasattr(self.dataset.dynamics, 'reach_fn'):
+                reach_vals = self.dataset.dynamics.reach_fn(
+                    coords.cuda()[..., 1:]).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+                try:
+                    ax.contour(X, Y, reach_vals, levels=[0.0], colors='limegreen',
+                               linewidths=1.5, linestyles='--')
+                except Exception:
+                    pass
             if delta_level is not None:
                 delta_contour = ax.contour(X,
                                            Y,
@@ -118,7 +126,7 @@ class ExperimentVizMixin:
         return fig
 
     def plotMultipleFigs(self, state_test_range, plot_config, x_resolution, y_resolution, z_resolution, times,
-                         delta_level=None, quat_slice=None, theta_yaw=None, z_values=None):
+                         delta_level=None, quat_slice=None, theta_yaw=None, z_values=None, draw_target_set=False):
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
         z_min, z_max = state_test_range[plot_config['z_axis_idx']]
@@ -187,6 +195,15 @@ class ExperimentVizMixin:
 
                 if self.dataset.dynamics.name == 'Docking13D':
                     self._annotate_quat(ax, quat_slice, theta_yaw)
+
+                if draw_target_set and hasattr(self.dataset.dynamics, 'reach_fn'):
+                    reach_vals = self.dataset.dynamics.reach_fn(
+                        coords.cuda()[..., 1:]).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+                    try:
+                        ax.contour(X, Y, reach_vals, levels=[0.0], colors='limegreen',
+                                   linewidths=1.5, linestyles='--')
+                    except Exception:
+                        pass
 
                 if delta_level is not None:
                     delta_contour = ax.contour(X,
@@ -1321,13 +1338,22 @@ class ExperimentVizMixin:
         x_axis_idx = plot_config['x_axis_idx']
         y_axis_idx = plot_config['y_axis_idx']
         z_axis_idx = plot_config['z_axis_idx']
-        
+
         # Get state ranges
         x_min, x_max = state_test_range[x_axis_idx]
         y_min, y_max = state_test_range[y_axis_idx]
-        z_min, z_max = state_test_range[z_axis_idx]
-        
-        # Create z values (theta angles)
+
+        # Docking13D: vary vx (state index 3) instead of z-position, which is not a meaningful slice
+        if self.dataset.dynamics.name == 'Docking13D':
+            z_axis_idx = 3  # vx
+            z_min, z_max = -1.5, 1.5
+            state_slices[2] = 0.0  # fix z-position to 0
+            z_label, z_units = 'vx', 'm/s'
+        else:
+            z_min, z_max = state_test_range[z_axis_idx]
+            z_label, z_units = 'θ', 'rad'
+
+        # Create slice values
         z_values = np.linspace(z_min, z_max, z_resolution)
         
         # Create figure: 1 row x z_resolution columns
@@ -1436,13 +1462,16 @@ class ExperimentVizMixin:
             ax.set_xlabel('px (m)')
             if idx == 0:
                 ax.set_ylabel('py (m)')
-            ax.set_title(f'θ={z_val:.2f} rad')
+            ax.set_title(f'{z_label}={z_val:.2f} {z_units}')
             
             # Add per-subplot colorbar
             fig.colorbar(im, ax=ax, shrink=0.8)
         
         # Add suptitle with time and fixed states
-        fixed_str = f'Fixed: vx={state_slices[2]:.2f}, vy={state_slices[3]:.2f}, ω={state_slices[5]:.2f}'
+        if self.dataset.dynamics.name == 'Docking13D':
+            fixed_str = f'Fixed: z={state_slices[2]:.2f}m, vy={state_slices[4]:.2f}, vz={state_slices[5]:.2f}, q=q_goal'
+        else:
+            fixed_str = f'Fixed: vx={state_slices[2]:.2f}, vy={state_slices[3]:.2f}, ω={state_slices[5]:.2f}'
         fig.suptitle(f'MPC Ground Truth (T={T:.2f}s, Epoch {epoch})\n{fixed_str}', fontsize=14)
         
         plt.tight_layout()
