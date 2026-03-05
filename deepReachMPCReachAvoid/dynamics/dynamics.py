@@ -588,8 +588,10 @@ class Docking6D(Dynamics):
 
         if set_mode == 'reach_avoid':
             l_type = 'brat_hjivi'
+        elif set_mode == 'avoid':
+            l_type = 'brt_hjivi'
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            raise NotImplementedError(f"set_mode '{set_mode}' is not implemented for Docking6D")
 
         # look into what we want to make these
         #self.eps_var = torch.tensor([3]).cuda() 
@@ -818,8 +820,7 @@ class Docking6D(Dynamics):
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
-        s_fail[s_fail < 0] *= 0.750
-        s_fail[s_fail > 0] *= 50.0
+        s_fail = torch.where(s_fail < 0, s_fail * 0.750, s_fail * 50.0)
 
         return s_fail
 
@@ -862,19 +863,32 @@ class Docking6D(Dynamics):
         return True        # inside rectangle but outside dock -> collision
 
     def boundary_fn(self, state):
-        if self.set_mode in ['reach_avoid']:
+        if self.set_mode == 'reach_avoid':
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+        elif self.set_mode == 'avoid':
+            return self.avoid_fn(state)
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")
 
     def sample_target_state(self, num_samples):
-        """Multi-scale target sampling concentrated near the exact goal state.
+        """Sample training points near the critical region for the current mode.
         
-        Tier 1 (5%):  Exact goal + tiny noise
-        Tier 2 (35%): Gaussian around goal with tolerance-scale std 
-        Tier 3 (20%): Boundary-focused sampling at 0.8-1.2x tolerance 
-        Tier 4 (40%): Broader uniform sampling centered on goal 
+        For avoid: concentrates positions around the obstacle geometry.
+        For reach_avoid: multi-scale sampling near the docking goal state.
         """
+        if self.set_mode == 'avoid':
+            samples = torch.zeros(num_samples, self.state_dim)
+            margin = 3.0
+            half_w = self.w_t / 2 + self.chaser_buffer + margin
+            h_max = self.h_t + self.chaser_buffer + margin
+            h_min = -(self.chaser_buffer + margin)
+            samples[:, 0] = torch.empty(num_samples).uniform_(-half_w, half_w)
+            samples[:, 1] = torch.empty(num_samples).uniform_(h_min, h_max)
+            for dim in range(2, self.state_dim):
+                lo, hi = self.state_range_[dim]
+                samples[:, dim] = torch.empty(num_samples).uniform_(lo.item(), hi.item())
+            return samples
+
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
@@ -933,21 +947,22 @@ class Docking6D(Dynamics):
         return self.sample_target_state(num_samples)
 
     def cost_fn(self, state_traj):
-        # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
-        # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
-        reach_values = self.reach_fn(state_traj)
-        avoid_values = self.avoid_fn(state_traj)
-        return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
-    
+        if self.set_mode == 'avoid':
+            return torch.min(self.boundary_fn(state_traj), dim=-1).values
+        elif self.set_mode == 'reach_avoid':
+            reach_values = self.reach_fn(state_traj)
+            avoid_values = self.avoid_fn(state_traj)
+            return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")
+
     def hamiltonian(self, state, dvds):
-        if self.set_mode == 'reach_avoid':
+        if self.set_mode in ['avoid', 'reach_avoid']:
             opt_control = self.optimal_control(state, dvds)
             dsdt_ = self.dsdt(state, opt_control, None)
-            ham = torch.sum(dvds*dsdt_, dim=-1)
-
+            ham = torch.sum(dvds * dsdt_, dim=-1)
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
-
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")
         return ham
     
     """  Anylitical Hamiltonian for reach-avoid
@@ -974,19 +989,22 @@ class Docking6D(Dynamics):
             raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D') """
    
     def optimal_control(self, state, dvds):
+        dvds_vx = dvds[..., 2]
+        dvds_vy = dvds[..., 3]
+        dvds_omega = dvds[..., 5]
+
         if self.set_mode == 'reach_avoid':
-            # Extract the relevant costate variables for control
-            dvds_vx = dvds[..., 2]    # ∂V/∂vx
-            dvds_vy = dvds[..., 3]    # ∂V/∂vy  
-            dvds_omega = dvds[..., 5] # ∂V/∂ω
-            # Optimal bang-bang control 
             u_x = torch.where(dvds_vx > 0, -self.u_bar, self.u_bar)
             u_y = torch.where(dvds_vy > 0, -self.u_bar, self.u_bar)
             u_theta = torch.where(dvds_omega > 0, -self.u_theta_bar, self.u_theta_bar)
-            
-            return torch.stack([u_x, u_y, u_theta], dim=-1)
+        elif self.set_mode == 'avoid':
+            u_x = torch.where(dvds_vx > 0, self.u_bar, -self.u_bar)
+            u_y = torch.where(dvds_vy > 0, self.u_bar, -self.u_bar)
+            u_theta = torch.where(dvds_omega > 0, self.u_theta_bar, -self.u_theta_bar)
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented for Docking6D')
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")
+
+        return torch.stack([u_x, u_y, u_theta], dim=-1)
 
     def optimal_disturbance(self, state, dvds):
         return 0

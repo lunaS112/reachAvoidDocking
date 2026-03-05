@@ -21,9 +21,9 @@ python run_controller.py single --controller brt \
 
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --initial_px 0 --initial_py 0.0 --initial_theta -3 \
-  --initial_vx 0.0 --initial_vy 0.0 --initial_omega 0.375 \
-  --output_dir ./outputs/odd3_brt
+  --initial_px -2.1317529730283447 --initial_py -1.7430535448953588 --initial_theta 0.8465610435299054 \
+  --initial_vx 0.11369411125009155 --initial_vy 0.48244044399298636 --initial_omega 0.15923194590528023 \
+  --output_dir ./outputs/col_brt
 
 # MPC single run
 python run_controller.py single --controller mpc \
