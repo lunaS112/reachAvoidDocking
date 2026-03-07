@@ -820,7 +820,10 @@ class Docking6D(Dynamics):
 
         s_fail = torch.maximum(s_bubble, -s_cutout + 0.02)
 
-        s_fail = torch.where(s_fail < 0, s_fail * 0.750, s_fail * 50.0)
+        if self.set_mode == 'reach_avoid':
+            s_fail = torch.where(s_fail < 0, s_fail * 0.750, s_fail * 50.0)
+        elif self.set_mode == 'avoid':
+            pass
 
         return s_fail
 
@@ -1010,13 +1013,24 @@ class Docking6D(Dynamics):
         return 0
 
     def plot_config(self):
-        return {
-            'state_slices': [0, 0, 0, 0, np.pi/2, 0],
-            'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
-            'x_axis_idx': 0,
-            'y_axis_idx': 1,
-            'z_axis_idx': 4,  # Use theta for the z-axis instead of vx
-        }
+        if self.set_mode == 'reach_avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, np.pi/2, 0],
+                'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 4,  # Use theta for the z-axis instead of vx
+            }
+        elif self.set_mode == 'avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, np.pi/2, 0],
+                'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 2,  # Use vx for the z-axis instead of vx
+            }
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")
 
 
 class Docking13D(Dynamics):

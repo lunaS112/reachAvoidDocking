@@ -1,10 +1,9 @@
 #!/bin/bash
 # RUN IN TERMINAL FIRST
-CKPT="runs/Docking6D_RA_15_114000/training/checkpoints/model_epoch_114000.pth"
-CKPT="runs/Docking6D_RA_15_145000/training/checkpoints/model_epoch_145000.pth"
+
 CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_final.pth"
-CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_epoch_138000.pth"
-CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"
+CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"d
+CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 ########################### Single controller runs ###########################
 
@@ -16,10 +15,10 @@ python run_controller.py single --controller brt \
   --output_dir ./outputs/single_brt
 
 python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --initial_px -2.1317529730283447 --initial_py -1.7430535448953588 --initial_theta 0.8465610435299054 \
-  --initial_vx 0.11369411125009155 --initial_vy 0.48244044399298636 --initial_omega 0.15923194590528023 \
-  --output_dir ./outputs/col_brt
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_px 0.41228244118177493 --initial_py -0.5943343367056588 --initial_theta 0.27652373189896373 \
+  --initial_vx -0.6946567118136735 --initial_vy 0.243612463480831 --initial_omega 0.2312060204561165 \
+ --output_dir ./outputs/brt_safety_filter_fail
 
 # MPC single run
 python run_controller.py single --controller mpc \
@@ -72,20 +71,20 @@ python run_controller.py single --controller mpc_terminal \
   --output_dir ./outputs/single_mpc_terminal_effort_moderate
 
 # Cascaded MPC+Terminal with effort penalty
-python run_controller.py single --controller cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER \
+python run_controller.py single --controller mpc_terminal \
+  --checkpoint_path $CKPT \
   --tMax 15.0 --inner_tMax 3.0 --effective_horizon 3.0 --max_sim_time 60.0 \
-  --num_samples 500 --num_refinement 10 \
-  --effort_weight 0.01 \
+  --num_samples 100 --num_refinement 10 \
+  --effort_weight 0.005 \
   --output_dir ./outputs/single_cascaded_mpc_terminal_effort
 
 ########################### Comparison runs ##################################
 
 # Quick comparison
 python run_controller.py compare --controllers brt \
-  --checkpoint_path $CKPT  \
-  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 \
-  --sampling_method brt --output_dir ./outputs/comparison_BRT_IC 
+  --checkpoint_path $CKPT --safety_filter_mode 2 --safety_checkpoint_path $CKPT_AVOID\
+  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
+  --sampling_method uniform --output_dir ./outputs/BRT_10000safety_filter_2 
    
 # Volume comparison 
 python volume_comparison.py \
