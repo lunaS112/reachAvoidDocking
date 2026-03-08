@@ -35,6 +35,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from utils import modules
 from utils.MPC import MPC
 from dynamics import dynamics as dynamics_module
+from utils.controllers import clip_state_for_execution
+from utils.controllers.safety_filter import SafetyFilter
 
 
 class MPCTerminalController:
@@ -58,7 +60,7 @@ class MPCTerminalController:
                  dt=0.1, num_samples=500, num_refinement=10, device='cuda',
                  cost_type='reachability', effort_weight=0.0,
                  exploration_factor=3.0, exploration_patience=2,
-                 escape_thresh=0.5):
+                 escape_thresh=0.5, safety_filter=None):
         """
         Args:
             checkpoint_path: Path to trained model checkpoint.
@@ -117,6 +119,9 @@ class MPCTerminalController:
             num_iterative_refinement=self.num_refinement,
             cost_type=self.cost_type,
         )
+
+        # Safety filter (no-op when mode=0 or None)
+        self.safety_filter = safety_filter or SafetyFilter(mode=0)
 
         self.reset()
 
@@ -180,6 +185,7 @@ class MPCTerminalController:
         self.phase_history = []
         self.t_remaining_history = []
         self._warm_started = False
+        self.safety_filter.reset()
 
         # Phase tracking (one-way: once in_brt is True it stays True)
         self.in_brt = False
@@ -381,6 +387,7 @@ class MPCTerminalController:
 
         docked = False
         collided = False
+        n_clipped = 0
 
         # Stagnation detection state
         log_interval = 50          # log every 50 steps (5 s at dt=0.1)
@@ -400,6 +407,9 @@ class MPCTerminalController:
                     self.t_remaining -= self.dt
             else:
                 control, cost_val = self._mpc_step(state, sim_time)
+
+            # Post-process through safety filter (no-op when mode=0)
+            control = self.safety_filter.apply(state, control)
 
             # Record history
             self.state_history.append(state.copy())
@@ -481,7 +491,9 @@ class MPCTerminalController:
             # Integrate (Euler)
             state_dot = dynamics_fn(state, control)
             state = state + self.dt * state_dot
-            state[4] = np.arctan2(np.sin(state[4]), np.cos(state[4]))
+            state, clipped = clip_state_for_execution(state, self.dynamics)
+            if clipped:
+                n_clipped += 1
 
         wall_time = time.perf_counter() - t_wall_start
 
@@ -504,6 +516,11 @@ class MPCTerminalController:
             'control_effort': control_effort,
             'wall_time': wall_time,
             'brt_entry_time': self.brt_entry_time,
+            # --- safety filter ---
+            'safety_filter_mode': self.safety_filter.mode,
+            'safety_filter_log': self.safety_filter.get_log(),
+            # --- execution clamping ---
+            'n_clipped_steps': n_clipped,
         }
         return result
 

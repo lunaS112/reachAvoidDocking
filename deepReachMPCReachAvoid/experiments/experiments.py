@@ -32,8 +32,14 @@ class Experiment(ExperimentVizMixin, ABC):
         
         # Rollback tracking
         self.rollback_state = {}
-        self.max_partial_rollbacks = 1
-        self.max_full_rollbacks = 1
+        if self.dataset.dynamics.set_mode == 'reach_avoid':
+            self.max_partial_rollbacks = 1
+            self.max_full_rollbacks = 1
+        elif self.dataset.dynamics.set_mode == 'avoid' or self.dataset.dynamics.set_mode == 'reach':
+            self.max_partial_rollbacks = 1
+            self.max_full_rollbacks = 0
+        else:
+            raise NotImplementedError(f"set_mode '{self.dataset.dynamics.set_mode}' is not implemented for rollback tracking")
 
         # Refinment Horizon tracking
         self.horizon_epoch_map = {}      # Epoch when horizon was reached
@@ -158,10 +164,18 @@ class Experiment(ExperimentVizMixin, ABC):
         convergence_rate = converged_samples / num_test_samples
         converged = convergence_rate >= success_rate
 
-        # Compute learned value function accuracy for reach_avoid
+        # Compute learned value function classification accuracy
         if self.dataset.dynamics.set_mode == 'reach_avoid':
+            # Reach-avoid: V <= 0 means "can reach goal while avoiding obstacles" (safe)
             safe_mpc = (mpc_costs <= 0)
             safe_learned = (learned_values <= 0)
+            classification_accuracy = (safe_mpc == safe_learned).float().mean().item()
+            false_positives = torch.logical_and(safe_learned, ~safe_mpc).float().mean().item()
+            false_negatives = torch.logical_and(~safe_learned, safe_mpc).float().mean().item()
+        elif self.dataset.dynamics.set_mode == 'avoid':
+            # Avoid: V > 0 means "can avoid obstacle" (safe)
+            safe_mpc = (mpc_costs > 0)
+            safe_learned = (learned_values > 0)
             classification_accuracy = (safe_mpc == safe_learned).float().mean().item()
             false_positives = torch.logical_and(safe_learned, ~safe_mpc).float().mean().item()
             false_negatives = torch.logical_and(~safe_learned, safe_mpc).float().mean().item()

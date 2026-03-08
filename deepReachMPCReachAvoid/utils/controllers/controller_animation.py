@@ -169,6 +169,12 @@ def animate_trajectories(results_dict, dynamics, save_path,
         0.02, 0.90, '', transform=ax.transAxes, fontsize=10,
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text = ax.text(
+        0.02, 0.82, '', transform=ax.transAxes, fontsize=10,
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    # Only show when single controller with safety filter; hide initially
+    safety_filter_text.set_visible(False)
 
     ax.legend(loc='upper right', fontsize=10)
 
@@ -207,6 +213,32 @@ def animate_trajectories(results_dict, dynamics, save_path,
             dist = np.sqrt(cx**2 + cy**2)
             label = _get_label(result)
             info_lines.append(f'{label}: d={dist:.2f}m')
+
+            # Safety filter highlight (single-controller mode only)
+            if not multi:
+                sf_log = result.get('safety_filter_log', [])
+                sf_mode = result.get('safety_filter_mode', 0)
+                sf_active = False
+                if sf_mode > 0 and idx < len(sf_log):
+                    entry = sf_log[idx]
+                    if sf_mode == 1:
+                        sf_active = entry.get('filter_active', False)
+                    else:
+                        sf_active = entry.get('alpha_effective', 0) > 1e-6
+                if sf_mode > 0:
+                    safety_filter_text.set_visible(True)
+                    if sf_active:
+                        safety_filter_text.set_text('Safety filter: ACTIVE')
+                        safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
+                        chasers[name].set_facecolor('#ff6b6b')
+                        chasers[name].set_edgecolor('red')
+                    else:
+                        safety_filter_text.set_text('Safety filter: inactive')
+                        safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
+                        chasers[name].set_facecolor(_get_color(result))
+                        chasers[name].set_edgecolor('black')
+                else:
+                    safety_filter_text.set_visible(False)
 
         info_text.set_text('\n'.join(info_lines))
 
