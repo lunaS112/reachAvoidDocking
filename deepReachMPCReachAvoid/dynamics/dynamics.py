@@ -531,18 +531,6 @@ class Docking6D(Dynamics):
     def __init__(self, set_mode: str, state_range=None, goal_state=None,
                  eps_p: float = None, eps_v: float = None,
                  eps_theta: float = None, eps_omega: float = None):
-        """
-        Args:
-            set_mode:    'reach_avoid' (only supported mode).
-            state_range: Optional (6,2) list overriding the default state bounds.
-                         Used to restore training-time normalization when loading
-                         a model trained with different bounds.
-            goal_state:  Optional 6-element list overriding the default goal.
-            eps_p:       Optional position tolerance override.
-            eps_v:       Optional velocity tolerance override.
-            eps_theta:   Optional angular position tolerance override.
-            eps_omega:   Optional angular velocity tolerance override.
-        """
         # Defining dynamic parameters
         self.orbit_alt = 400  # Orbital altitude (km)
         self.u_bar = 20.0  # Maximum control input
@@ -561,7 +549,7 @@ class Docking6D(Dynamics):
         # Docking tolerances (use overrides when provided, else defaults)
         self.eps_p     = eps_p     if eps_p     is not None else 0.1    # Position (m)
         self.eps_v     = eps_v     if eps_v     is not None else 0.1    # Velocity (m/s)
-        self.eps_theta = eps_theta if eps_theta is not None else 0.04   # Angle (rad)
+        self.eps_theta = eps_theta if eps_theta is not None else 0.05   # Angle (rad)
         self.eps_omega = eps_omega if eps_omega is not None else 0.05   # Angular vel (rad/s)
 
         # Values for 3 second inner controller
@@ -575,16 +563,17 @@ class Docking6D(Dynamics):
         self.h_t = 3  # height of target spacecraft (m) (along y-axis)
 
         # Docking post: rectangular peg protruding from target face in -y
-        # (2D simplification of 13D geometry)
         self.post_hw_x = 0.6    # post half-width in x (m) = 1.2*w_c/2
         self.post_length = 0.2  # how far post extends in -y (m) = 0.2*h_c
 
-        # Goal region below inflated post tip (recomputed for 2D buffer)
-        goal_clearance = 0.093
-        goal_band_height = 0.4
-        self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.0
-        self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.4
-        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.2
+        # Goal region below inflated post tip, using AABB clearance at goal theta
+        goal_clearance = 0.1
+        goal_band_height = 0.05
+        theta_goal = goal_state[4] if goal_state is not None else np.pi / 2
+        h_y_at_goal = (self.w_c / 2.0) * abs(np.sin(theta_goal)) + (self.h_c / 2.0) * abs(np.cos(theta_goal))
+        self.goal_y_max = -(self.post_length + h_y_at_goal + goal_clearance)
+        self.goal_y_min = self.goal_y_max - goal_band_height
+        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0
 
         # Goal state (use override when provided, else default)
         if goal_state is not None:
@@ -789,26 +778,35 @@ class Docking6D(Dynamics):
         return torch.max(goal_val, dim=-1).values
 
     def avoid_fn(self, state):
-        """Obstacle = target body + docking post (2D simplification of 13D avoid_fn).
+        """Obstacle = target body + docking post, inflated by orientation-dependent AABB.
 
-        Body: rectangle y in [0, h_t], inflated by chaser_buffer.
-        Post: rectangle y in [-post_length, 0], inflated by chaser_buffer.
+        The chaser AABB half-extents at orientation theta are:
+            h_x(theta) = (w_c/2)|cos(theta)| + (h_c/2)|sin(theta)|
+            h_y(theta) = (w_c/2)|sin(theta)| + (h_c/2)|cos(theta)|
+        Body: rectangle y in [0, h_t], inflated by (h_x, h_y).
+        Post: rectangle y in [-post_length, 0], inflated by (h_x, h_y).
         Returns: negative inside obstacle, positive outside (safe).
         """
         px = state[..., 0]
         py = state[..., 1]
-        cb = self.chaser_buffer
+        theta = state[..., 4]
+
+        # Orientation-dependent AABB half-extents (support function)
+        cos_t = torch.cos(theta)
+        sin_t = torch.sin(theta)
+        h_x = (self.w_c / 2.0) * torch.abs(cos_t) + (self.h_c / 2.0) * torch.abs(sin_t)
+        h_y = (self.w_c / 2.0) * torch.abs(sin_t) + (self.h_c / 2.0) * torch.abs(cos_t)
 
         # Body SDF (inflated rectangle)
         s_body = torch.maximum(
-            torch.abs(px) - (self.w_t / 2.0 + cb),
-            torch.maximum(-(py + cb), py - (self.h_t + cb))
+            torch.abs(px) - (self.w_t / 2.0 + h_x),
+            torch.maximum(-(py + h_y), py - (self.h_t + h_y))
         )
 
         # Post SDF (inflated rectangle)
         s_post = torch.maximum(
-            torch.abs(px) - (self.post_hw_x + cb),
-            torch.maximum(-(py + self.post_length + cb), py - cb)
+            torch.abs(px) - (self.post_hw_x + h_x),
+            torch.maximum(-(py + self.post_length + h_y), py - h_y)
         )
 
         # Union of body + post

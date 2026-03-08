@@ -21,8 +21,8 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 3
-    dt = 0.1
+    T = 8
+    dt = 0.5
     style = "receding" # Can be "direct" or "receding"
     cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"
@@ -58,8 +58,8 @@ if __name__ == "__main__":
     
     # Select initial conditions for visualization
     interesting_ics = []
-    interesting_ics.append(torch.tensor([2, 4, 0, 0, np.pi/4, 0]).to(device))  
-    interesting_ics.append(torch.tensor([-0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))  
+    interesting_ics.append(torch.tensor([0, -4, 0, 0, np.pi/2, 0]).to(device))  
+    interesting_ics.append(torch.tensor([-0.5, -2, 0, 0, np.pi/2, 0]).to(device))  
     #interesting_ics.append(torch.tensor([-0.5, -0.5, 0, 0, np.pi/4, 0]).to(device)) 
     #interesting_ics.append(torch.tensor([0.5, 0.5, 0, 0, 3*np.pi/4, 0]).to(device))
     #interesting_ics.append(torch.tensor([-1.0, -1.0, 0, 0, np.pi/3, 0]).to(device))
