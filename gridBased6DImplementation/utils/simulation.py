@@ -373,26 +373,30 @@ def dock(s0, controller, dt, nt, f, save_animation, animation_save_path, show_br
     for i in range(len(throttle_bins)-1):
         print(f'{throttle_bins[i]:>3}-{throttle_bins[i+1]:<3}%        | {time_at_x_throttle[i]:>8.2f} | {time_at_y_throttle[i]:>8.2f} | {time_at_theta_throttle[i]:>8.2f}')
     
-    # Check if trajectory ever entered failure set
+    # Check if trajectory ever entered failure set (body + docking post)
+    # Uses corner-based check: compute 4 chaser corners from orientation,
+    # check each against uninflated body and post rectangles.
     entered_failure = False
+    hw = controller.w_c / 2.0
+    hh = controller.h_c / 2.0
     for i in range(len(s_history)):
         state = s_history[i]
-        px, py = state[0], state[1]
-        
-        # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
-        s_rect = max(
-            abs(px) - controller.w_t/2,
-            max(-py, py - controller.h_t)
-        )
-        # Bottom semicircular indentation centered at (0,0) covering py >= 0
-        dist_semi = np.sqrt(px**2 + py**2) - controller.dock_rad
-        # For upper half of circle: ensure we only carve out if py >= 0
-        s_dock = max(-py, dist_semi)
-        # Failure set check: inside rectangle but not inside indentation
-        failure_value = max(s_rect, -s_dock)
-        
-        if failure_value <= 0:  # Negative means inside failure set
-            entered_failure = True
+        px, py, theta = state[0], state[1], state[4]
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        corners = [
+            (px + hw * cos_t - hh * sin_t, py + hw * sin_t + hh * cos_t),
+            (px - hw * cos_t - hh * sin_t, py - hw * sin_t + hh * cos_t),
+            (px - hw * cos_t + hh * sin_t, py - hw * sin_t - hh * cos_t),
+            (px + hw * cos_t + hh * sin_t, py + hw * sin_t - hh * cos_t),
+        ]
+        for cx, cy in corners:
+            in_body = abs(cx) <= controller.w_t / 2.0 and 0.0 <= cy <= controller.h_t
+            in_post = abs(cx) <= controller.post_hw_x and -controller.post_length <= cy <= 0.0
+            if in_body or in_post:
+                entered_failure = True
+                break
+        if entered_failure:
             break
 
     # Update the return values to include the new metrics
