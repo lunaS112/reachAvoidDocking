@@ -109,7 +109,7 @@ class Docking_rotational(dynamics.ControlAndDisturbanceAffineDynamics):
                           [1.0/self.jc]])
 
 class ComboController:
-    def __init__(self, mc=200.0, orbit_alt=400, dock_rad=1.75,
+    def __init__(self, mc=200.0, orbit_alt=400, post_hw_x=0.6, post_length=0.2,
                  w_t=6, h_t=3, w_c=1.0, h_c=1.0,
                  eps_p=0.05, eps_v=0.05, eps_theta=0.01, eps_omega=0.005,
                  u_bar_4D=20.0, u_bar_2D=1.5,
@@ -123,7 +123,8 @@ class ComboController:
         Args:
             mc: Chaser mass (kg).
             orbit_alt: Orbital altitude (km).
-            dock_rad: Docking indentation radius (m).
+            post_hw_x: Docking post half-width in x (m).
+            post_length: How far the docking post extends in -y (m).
             w_t, h_t: Target spacecraft width/height (m).
             w_c, h_c: Chaser spacecraft width/height (m).
             eps_p, eps_v: Translational position/velocity tolerances (m, m/s).
@@ -154,7 +155,8 @@ class ComboController:
         # Define target spacecraft (Planar)
         self.w_t = w_t  # width of target spacecraft (m) (along x-axis)
         self.h_t = h_t  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = dock_rad # Radius of target spacecraft docking indentation (m)
+        self.post_hw_x = post_hw_x    # docking post half-width in x (m)
+        self.post_length = post_length  # docking post extent in -y (m)
         
         # Define the body of the chaser spacecraft 
         self.w_c = w_c  # width of chaser spacecraft (m) (along x-axis)
@@ -233,7 +235,7 @@ class ComboController:
         """Return a deterministic hash of every parameter that affects the
         solved value functions, so cache files are invalidated when params change."""
         key_parts = [
-            self.mc, self.orbit_alt, self.dock_rad,
+            self.mc, self.orbit_alt, self.post_hw_x, self.post_length,
             self.w_t, self.h_t, self.w_c, self.h_c,
             self.eps_p, self.eps_v, self.eps_theta, self.eps_omega,
             self.u_bar_4D, self.u_bar_2D,
@@ -278,15 +280,28 @@ class ComboController:
         self.u_history = []    
         
     def target_set_4D(self, state):
-        """Signed distance <= 0 if within docking position/velocity tolerances."""
+        """Signed distance <= 0 if within docking position/velocity tolerances.
+
+        Position: |px| <= eps_p AND py inside goal band [goal_y_min, goal_y_max].
+        Velocity: L-inf.
+        """
         px = state[..., 0]
         py = state[..., 1]
         vx = state[..., 2]
         vy = state[..., 3]
-        # Distance from allowable box in (px,py,vx,vy)
+
+        cb = np.sqrt(self.w_c**2 + self.h_c**2) / 2
+        goal_clearance = 0.093
+        goal_band_height = 0.4
+        goal_y_max = -(self.post_length + cb + goal_clearance)
+        goal_y_min = goal_y_max - goal_band_height
+
+        x_dist = jnp.abs(px) - self.eps_p
+        y_dist = jnp.maximum(goal_y_min - py, py - goal_y_max)
+        pos_dist = jnp.maximum(x_dist, y_dist)
+
         gi = jnp.stack([
-            jnp.abs(px) - self.eps_p,
-            jnp.abs(py) - self.eps_p,
+            pos_dist,
             jnp.abs(vx) - self.eps_v,
             jnp.abs(vy) - self.eps_v
         ], axis=-1)
@@ -304,25 +319,30 @@ class ComboController:
         return jnp.max(gi, axis=-1)
             
     def failure_set(self, state):
-        """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
+        """Obstacle = target body + docking post (2D simplification of 13D).
+
+        Returns: negative inside obstacle, positive outside (safe).
+        """
         px = state[..., 0]
         py = state[..., 1]
-        
-        # Defining buffer to acount for chaser spacecraft dimensions
-        self.chaser_buffer = np.sqrt(self.w_c**2 + self.h_c**2)/2
-        
-        # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
-        s_rect = jnp.maximum(
-            jnp.abs(px) - (self.w_t/2 + self.chaser_buffer),
-            jnp.maximum(-(py + self.chaser_buffer), py - (self.h_t + self.chaser_buffer))
+
+        self.chaser_buffer = np.sqrt(self.w_c**2 + self.h_c**2) / 2
+        cb = self.chaser_buffer
+
+        # Body SDF (inflated rectangle)
+        s_body = jnp.maximum(
+            jnp.abs(px) - (self.w_t / 2.0 + cb),
+            jnp.maximum(-(py + cb), py - (self.h_t + cb))
         )
-        # Bottom semicircular indentation centered at (0,0) covering py >= 0
-        dist_semi = jnp.sqrt(px**2 + (py + self.chaser_buffer)**2) - (self.dock_rad - self.chaser_buffer)
-        # For upper half of circle: ensure we only carve out if py >= 0
-        s_dock = jnp.maximum(-(py + self.chaser_buffer), dist_semi)
-        # Failure region: inside rectangle but not inside 
-        
-        return jnp.maximum(s_rect, -s_dock + 1e-6)
+
+        # Post SDF (inflated rectangle)
+        s_post = jnp.maximum(
+            jnp.abs(px) - (self.post_hw_x + cb),
+            jnp.maximum(-(py + self.post_length + cb), py - cb)
+        )
+
+        # Union of body + post
+        return jnp.minimum(s_body, s_post)
     
     def value_at_state_4D(self, x, t):
         time_values = self.values_4D[t]

@@ -885,7 +885,7 @@ def _add_shared_args(parser):
                         default='runs/Docking6D_RA_avoid',
                         help='Path to avoid-only BRT checkpoint dir or .pth '
                              'file (default: runs/Docking6D_RA_avoid)')
-    parser.add_argument('--safety_filter_margin', type=float, default=0.1,
+    parser.add_argument('--safety_filter_margin', type=float, default=0.02,
                         help='Mode 1 activation margin delta (meters). '
                              'Safety overrides when V_avoid <= delta. '
                              'Same units as avoid_fn signed distance '

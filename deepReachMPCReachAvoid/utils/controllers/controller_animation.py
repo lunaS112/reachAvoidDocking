@@ -50,10 +50,11 @@ def _get_label(result):
 
 
 def _draw_scene(ax, dynamics):
-    """Draw the static docking scene: target spacecraft, docking port, goal."""
+    """Draw the static docking scene: target spacecraft, docking post, goal."""
     w_t = dynamics.w_t
     h_t = dynamics.h_t
-    dock_rad = dynamics.dock_rad
+    post_hw_x = dynamics.post_hw_x
+    post_length = dynamics.post_length
     eps_p = dynamics.eps_p
 
     # Target spacecraft body
@@ -63,24 +64,23 @@ def _draw_scene(ax, dynamics):
         label='Target Spacecraft')
     ax.add_patch(target_body)
 
-    # Docking port (white semicircle)
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(
-        np.column_stack([docking_x, docking_y]),
-        closed=True, facecolor='white', edgecolor='black', alpha=0.9, zorder=21)
-    ax.add_patch(docking_bay)
+    # Docking post
+    post = mpatches.Rectangle(
+        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
+        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
+    ax.add_patch(post)
 
-    # Docking target marker
+    # Docking target marker at post tip
     dock_marker = mpatches.Circle(
-        (0, dock_rad), radius=0.15,
+        (0, -post_length), radius=0.15,
         facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
     ax.add_patch(dock_marker)
 
-    # Goal set
+    # Goal set (band below inflated post tip)
+    goal_y_min = dynamics.goal_y_min
+    goal_y_max = dynamics.goal_y_max
     goal_set = mpatches.Rectangle(
-        (-eps_p, -eps_p), 2 * eps_p, 2 * eps_p,
+        (-eps_p, goal_y_min), 2 * eps_p, goal_y_max - goal_y_min,
         facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
         label='Goal Set')
     ax.add_patch(goal_set)

@@ -70,7 +70,8 @@ def create_deepreach_animation(controller, sim_result, save_path,
     # Geometry parameters
     w_t = dynamics.w_t  # Target width
     h_t = dynamics.h_t  # Target height
-    dock_rad = dynamics.dock_rad  # Docking port radius
+    post_hw_x = dynamics.post_hw_x  # Post half-width
+    post_length = dynamics.post_length  # Post extent in -y
     w_c = dynamics.w_c  # Chaser width
     h_c = dynamics.h_c  # Chaser height
     eps_p = dynamics.eps_p  # Position tolerance
@@ -147,26 +148,25 @@ def create_deepreach_animation(controller, sim_result, save_path,
     )
     ax.add_patch(target_body)
     
-    # Docking port (white semicircle cutout)
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(
-        np.column_stack([docking_x, docking_y]),
-        closed=True, facecolor='white', edgecolor='black', alpha=0.9, zorder=21
+    # Docking post
+    docking_post = mpatches.Rectangle(
+        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
+        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20
     )
-    ax.add_patch(docking_bay)
+    ax.add_patch(docking_post)
     
-    # Docking target marker (red dot at pi/2 orientation)
+    # Docking target marker (red dot at post tip)
     dock_marker = mpatches.Circle(
-        (0, dock_rad), radius=0.15,
+        (0, -post_length), radius=0.15,
         facecolor='red', edgecolor='black', alpha=1.0, zorder=22
     )
     ax.add_patch(dock_marker)
     
-    # Goal set (green rectangle showing docking tolerance)
+    # Goal set (band below inflated post tip)
+    goal_y_min = dynamics.goal_y_min
+    goal_y_max = dynamics.goal_y_max
     goal_set = mpatches.Rectangle(
-        (-eps_p, -eps_p), 2*eps_p, 2*eps_p,
+        (-eps_p, goal_y_min), 2*eps_p, goal_y_max - goal_y_min,
         facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
         label='Goal Set'
     )
@@ -436,7 +436,8 @@ def create_cascaded_deepreach_animation(controller, sim_result, save_path,
     # Geometry
     w_t      = dynamics.w_t
     h_t      = dynamics.h_t
-    dock_rad = dynamics.dock_rad
+    post_hw_x = dynamics.post_hw_x
+    post_length = dynamics.post_length
     w_c      = dynamics.w_c
     h_c      = dynamics.h_c
     eps_p    = dynamics.eps_p
@@ -502,21 +503,18 @@ def create_cascaded_deepreach_animation(controller, sim_result, save_path,
         label='Target Spacecraft')
     ax.add_patch(target_body)
 
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(
-        np.column_stack([docking_x, docking_y]),
-        closed=True, facecolor='white', edgecolor='black', alpha=0.9, zorder=21)
-    ax.add_patch(docking_bay)
+    docking_post = mpatches.Rectangle(
+        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
+        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
+    ax.add_patch(docking_post)
 
     dock_marker = mpatches.Circle(
-        (0, dock_rad), radius=0.15,
+        (0, -post_length), radius=0.15,
         facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
     ax.add_patch(dock_marker)
 
     goal_set = mpatches.Rectangle(
-        (-eps_p, -eps_p), 2 * eps_p, 2 * eps_p,
+        (-eps_p, dynamics.goal_y_min), 2 * eps_p, dynamics.goal_y_max - dynamics.goal_y_min,
         facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
         label='Goal Set')
     ax.add_patch(goal_set)
@@ -796,7 +794,8 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
     # Geometry
     w_t      = dynamics.w_t
     h_t      = dynamics.h_t
-    dock_rad = dynamics.dock_rad
+    post_hw_x = dynamics.post_hw_x
+    post_length = dynamics.post_length
     w_c      = dynamics.w_c
     h_c      = dynamics.h_c
     eps_p    = dynamics.eps_p
@@ -860,21 +859,18 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
         label='Target Spacecraft')
     ax.add_patch(target_body)
 
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(
-        np.column_stack([docking_x, docking_y]),
-        closed=True, facecolor='white', edgecolor='black', alpha=0.9, zorder=21)
-    ax.add_patch(docking_bay)
+    docking_post = mpatches.Rectangle(
+        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
+        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
+    ax.add_patch(docking_post)
 
     dock_marker = mpatches.Circle(
-        (0, dock_rad), radius=0.15,
+        (0, -post_length), radius=0.15,
         facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
     ax.add_patch(dock_marker)
 
     goal_set = mpatches.Rectangle(
-        (-eps_p, -eps_p), 2 * eps_p, 2 * eps_p,
+        (-eps_p, dynamics.goal_y_min), 2 * eps_p, dynamics.goal_y_max - dynamics.goal_y_min,
         facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
         label='Goal Set')
     ax.add_patch(goal_set)
@@ -1140,7 +1136,8 @@ def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
     # Geometry
     w_t      = dynamics.w_t
     h_t      = dynamics.h_t
-    dock_rad = dynamics.dock_rad
+    post_hw_x = dynamics.post_hw_x
+    post_length = dynamics.post_length
     w_c      = dynamics.w_c
     h_c      = dynamics.h_c
     eps_p    = dynamics.eps_p
@@ -1206,21 +1203,18 @@ def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
         label='Target Spacecraft')
     ax.add_patch(target_body)
 
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(
-        np.column_stack([docking_x, docking_y]),
-        closed=True, facecolor='white', edgecolor='black', alpha=0.9, zorder=21)
-    ax.add_patch(docking_bay)
+    docking_post = mpatches.Rectangle(
+        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
+        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
+    ax.add_patch(docking_post)
 
     dock_marker = mpatches.Circle(
-        (0, dock_rad), radius=0.15,
+        (0, -post_length), radius=0.15,
         facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
     ax.add_patch(dock_marker)
 
     goal_set = mpatches.Rectangle(
-        (-eps_p, -eps_p), 2 * eps_p, 2 * eps_p,
+        (-eps_p, dynamics.goal_y_min), 2 * eps_p, dynamics.goal_y_max - dynamics.goal_y_min,
         facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
         label='Goal Set')
     ax.add_patch(goal_set)
@@ -1480,7 +1474,8 @@ def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True
     dynamics = controller.dynamics
     w_t = dynamics.w_t
     h_t = dynamics.h_t
-    dock_rad = dynamics.dock_rad
+    post_hw_x = dynamics.post_hw_x
+    post_length = dynamics.post_length
     eps_p = dynamics.eps_p
     
     # Create figure
@@ -1527,17 +1522,14 @@ def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True
                                  facecolor='gray', edgecolor='black', alpha=0.7, zorder=20)
     ax.add_patch(target)
     
-    # Docking port
-    theta_angles = np.linspace(0, np.pi, 50)
-    docking_x = dock_rad * np.cos(theta_angles)
-    docking_y = dock_rad * np.sin(theta_angles)
-    docking_bay = mpatches.Polygon(np.column_stack([docking_x, docking_y]),
-                                    closed=True, facecolor='white', edgecolor='black', 
-                                    alpha=0.9, zorder=21)
-    ax.add_patch(docking_bay)
+    # Docking post
+    docking_post = mpatches.Rectangle((-post_hw_x, -post_length), 2*post_hw_x, post_length,
+                                       facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
+    ax.add_patch(docking_post)
     
     # Goal set
-    goal = mpatches.Rectangle((-eps_p, -eps_p), 2*eps_p, 2*eps_p,
+    goal = mpatches.Rectangle((-eps_p, dynamics.goal_y_min), 2*eps_p,
+                               dynamics.goal_y_max - dynamics.goal_y_min,
                                facecolor='green', edgecolor='darkgreen', alpha=0.5, zorder=15)
     ax.add_patch(goal)
     

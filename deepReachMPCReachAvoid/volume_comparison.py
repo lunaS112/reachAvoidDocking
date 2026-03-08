@@ -141,16 +141,16 @@ DEFAULT_SLICES = [
     {
         'name': 'vx_vy',
         'vary': [2, 3],
-        'fixed': {0: 0.0, 1: 0.0, 4: np.pi/2, 5: 0.0},
+        'fixed': {0: 0.0, 1: -1.2, 4: np.pi/2, 5: 0.0},
         'labels': ('vx (m/s)', 'vy (m/s)'),
-        'title': 'Velocity slice (px=0, py=0, θ=π/2, ω=0)',
+        'title': 'Velocity slice (px=0, py=-1.2, θ=π/2, ω=0)',
     },
     {
         'name': 'theta_omega',
         'vary': [4, 5],
-        'fixed': {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0},
+        'fixed': {0: 0.0, 1: -1.2, 2: 0.0, 3: 0.0},
         'labels': ('θ (rad)', 'ω (rad/s)'),
-        'title': 'Attitude slice (px=0, py=0, vx=vy=0)',
+        'title': 'Attitude slice (px=0, py=-1.2, vx=vy=0)',
     },
 ]
 
@@ -428,7 +428,8 @@ def main():
         # Aligned to DeepReach Docking6D defaults
         mc=200.0,
         orbit_alt=400,
-        dock_rad=1.5,
+        post_hw_x=0.6,
+        post_length=0.2,
         w_t=6, h_t=3,
         w_c=1.0, h_c=1.0,
         eps_p=0.1,
@@ -495,9 +496,9 @@ def main():
             'grid_final_time': args.grid_final_time,
             'seed': args.seed,
             'notes': [
-                'Grid uses L-inf target sets; DeepReach uses L2-weighted.',
-                'Avoid-set geometries differ between grid and DeepReach.',
-                'Grid params aligned to DeepReach: dock_rad=1.5, eps_p=0.1, d_bar=0.',
+                'Grid uses L-inf target sets; DeepReach uses weighted max.',
+                'Body+post obstacle geometry consistent between grid and DeepReach.',
+                'Grid params aligned to DeepReach: post_hw_x=0.6, post_length=0.2, eps_p=0.1, d_bar=0.',
             ],
         },
         'volume': {str(k): v for k, v in volume_results.items()},
