@@ -11,13 +11,11 @@ CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 ########################### Single controller runs ###########################
 
-
-
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
   --initial_px -10.442982320340697 --initial_py -2.0512017498686443 --initial_theta 1.205599463157637 \
   --initial_vx 0.6868342952257529 --initial_vy 0.04974792745952561 --initial_omega -0.18448436899393705 \
- --output_dir ./outputs/brt_safety_filter_1_timeout_1
+ --output_dir ./outputs/brt_safety_filter_1_timeout_margin_0.02_test
 
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
@@ -79,8 +77,8 @@ python run_controller.py single --controller mpc_terminal \
 # Quick comparison
 python run_controller.py compare --controllers brt \
   --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 1000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
-  --sampling_method uniform --output_dir ./outputs/BRT_1000safety_filter_1 
+  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
+  --sampling_method uniform --output_dir ./outputs/BRT_10000_safety_filter_1 
    
 # Volume comparison 
 python volume_comparison.py \
