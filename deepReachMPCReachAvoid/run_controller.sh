@@ -7,36 +7,28 @@ CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 ########################### Single controller runs ###########################
 
-# BRT single run (default initial condition)
-python run_controller.py single --controller brt \
-   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-   --initial_px -8.1572345 --initial_theta -0.50771584 --initial_py -4.0154211\
-   --initial_vx -0.20646505 --initial_vy 0.07763347 --initial_omega 0.27782925\
-  --output_dir ./outputs/single_brt
+
 
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --initial_px 0.41228244118177493 --initial_py -0.5943343367056588 --initial_theta 0.27652373189896373 \
-  --initial_vx -0.6946567118136735 --initial_vy 0.243612463480831 --initial_omega 0.2312060204561165 \
- --output_dir ./outputs/brt_safety_filter_fail
-
-# MPC single run
-python run_controller.py single --controller mpc \
-   --checkpoint_path $CKPT --mpc_dt 0.1 --max_sim_time 60.0 \
-   --num_samples 100 --num_refinement 10 \
-   --output_dir ./outputs/single_mpc
-
-# MPC+Terminal single run
-python run_controller.py single --controller mpc_terminal \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --num_samples 100 --num_refinement 10 --mpc_dt 0.5\
-  --output_dir ./outputs/single_mpc_terminal
+  --initial_px -10.442982320340697 --initial_py -2.0512017498686443 --initial_theta 1.205599463157637 \
+  --initial_vx 0.6868342952257529 --initial_vy 0.04974792745952561 --initial_omega -0.18448436899393705 \
+ --output_dir ./outputs/brt_safety_filter_1_timeout_1
 
 python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --initial_px -5.981874814109322 --initial_py 10.293041673097736 --initial_theta 1.026933217676297 --initial_omega 0.18254358031368267 \
-  --initial_vx -0.14381762025741018 --initial_vy 0.9296800942967711 \
-  --output_dir ./outputs/single_brt_failed
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_px -3.407509855901665 --initial_py -2.9689989713225415 --initial_theta 0.49913273937622415 --initial_omega -0.017424178189499262 \
+  --initial_vx -1.026343555401426 --initial_vy -0.046729930795811336 \
+  --output_dir ./outputs/brt_filter_1_test
+
+  "initial_state": [
+          -3.407509855901665,
+          -2.9689989713225415,
+          0.49913273937622415,
+          -0.017424178189499262,
+          -1.026343555401426,
+          -0.046729930795811336
+        ],
 
 ########################### Cascaded controller runs #########################
 
@@ -82,9 +74,9 @@ python run_controller.py single --controller mpc_terminal \
 
 # Quick comparison
 python run_controller.py compare --controllers brt \
-  --checkpoint_path $CKPT --safety_filter_mode 2 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
-  --sampling_method uniform --output_dir ./outputs/BRT_10000safety_filter_2 
+  --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --n_rollouts 1000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
+  --sampling_method uniform --output_dir ./outputs/BRT_1000safety_filter_1 
    
 # Volume comparison 
 python volume_comparison.py \
