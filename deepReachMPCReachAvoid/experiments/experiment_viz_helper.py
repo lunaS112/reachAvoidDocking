@@ -1300,7 +1300,9 @@ class ExperimentVizMixin:
     def validate_mpc_ground_truth(self, epoch, x_resolution, y_resolution, z_resolution):
         if not self.dataset.use_MPC:
             return  # No MPC in this experiment
-        
+        if self.dataset.dynamics.name == 'Docking13D':
+            return  # MPC ground truth grid not used for Docking13D
+
         # Get plot configuration from dynamics
         plot_config = self.dataset.dynamics.plot_config()
         state_test_range = self.dataset.dynamics.state_test_range()

@@ -1178,24 +1178,38 @@ class Experiment(ExperimentVizMixin, ABC):
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         fig = None
         if self.dataset.dynamics.name == 'Docking13D':
-            z_values = [-2.0, -1.0, 0.0, 1.0, 2.0]
-            # Use goal quaternion from dynamics (90° yaw) so reach set shows up
+            # 3 figures, one per vy; within each figure vx sweeps across subplots
             q_goal = self.dataset.dynamics.q_goal.cpu()
             base_quat = [float(q_goal[0]), float(q_goal[1]), float(q_goal[2]), float(q_goal[3])]
-            base_yaw = self._quat_to_yaw(base_quat)
-            base_cfg = dict(plot_config)
-            base_slices = list(base_cfg['state_slices'])
+            base_slices = list(plot_config['state_slices'])
             base_slices[6:10] = base_quat
-            base_cfg['state_slices'] = base_slices
+            base_slices[2] = 0.0   # pz = 0
+            base_slices[5] = 0.0   # vz = 0
 
-            if base_cfg['z_axis_idx'] == -1:
-                fig = self.plotSingleFig(
-                    state_test_range, base_cfg, x_resolution, y_resolution, times,
-                    quat_slice=base_quat, theta_yaw=base_yaw, draw_target_set=True)
-            else:
-                fig = self.plotMultipleFigs(
-                    state_test_range, base_cfg, x_resolution, y_resolution, z_resolution, times,
-                    quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values, draw_target_set=True)
+            docking_cfg = dict(plot_config)
+            docking_cfg['z_axis_idx'] = 3  # sweep vx across subplots
+
+            vx_values = [-0.75, -0.375, 0.0, 0.375, 0.75]
+            vy_values = [-0.75, 0.0, 0.75]
+
+            for idx, vy_val in enumerate(vy_values):
+                slices = list(base_slices)
+                slices[4] = vy_val  # vy (state index 4)
+                slices[3] = 0.0     # vx default (swept across subplots)
+                cfg = dict(docking_cfg)
+                cfg['state_slices'] = slices
+
+                fig_vy = self.plotMultipleFigs(
+                    state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
+                    z_values=vx_values, draw_target_set=True)
+                fig_vy.suptitle(f'vy={vy_val:+.2f} m/s  |  q=q_goal, pz=vz=ω=0', y=1.01)
+
+                if self.use_wandb:
+                    wandb.log({
+                        'step': epoch,
+                        f'val_plot_docking13d_vy{idx+1}': wandb.Image(fig_vy),
+                    })
+                plt.close(fig_vy)
         else:
             if plot_config['z_axis_idx'] == -1:
                 fig = self.plotSingleFig(
@@ -1212,32 +1226,8 @@ class Experiment(ExperimentVizMixin, ABC):
         if fig is not None:
             plt.close(fig)
 
-        # Docking13D: vary vx to show BRATs at different lateral velocities
-        if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
-            vx_values = [-1.5, 0.0, 1.5]
-            for idx, vx_val in enumerate(vx_values):
-                cfg = dict(base_cfg)
-                slices = list(base_cfg['state_slices'])
-                slices[3] = vx_val  # vx (state index 3)
-                cfg['state_slices'] = slices
-
-                if cfg['z_axis_idx'] == -1:
-                    fig_vx = self.plotSingleFig(
-                        state_test_range, cfg, x_resolution, y_resolution, times,
-                        quat_slice=base_quat, theta_yaw=base_yaw, draw_target_set=True)
-                else:
-                    fig_vx = self.plotMultipleFigs(
-                        state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
-                        quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values, draw_target_set=True)
-
-                wandb.log({
-                    'step': epoch,
-                    f'val_plot_docking13d_vx{idx+1}': wandb.Image(fig_vx),
-                })
-                plt.close(fig_vx)
-
-            # self.validate_mpc_dataset_position_base_quat_scatter(
-            #     epoch, x_resolution, y_resolution, z_resolution, time_resolution)
+        # self.validate_mpc_dataset_position_base_quat_scatter(
+        #     epoch, x_resolution, y_resolution, z_resolution, time_resolution)
         
         if self.dataset.dynamics.name != 'Docking13D':
             # Plot velocity slice (vx vs vy) of the learned value function

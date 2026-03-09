@@ -1550,11 +1550,11 @@ class Docking13D(Dynamics):
         # --- Angular velocity ---
         omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
 
-        # Piecewise linear shaping
-        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
-        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
-        att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.5)
-        omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
+        # Piecewise shaping: steep linear inside the set, tanh-bounded outside
+        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, torch.tanh(pos_dist * 0.5))
+        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, torch.tanh(vel_dist * 1.0))
+        att_dist = torch.where(att_dist < 0, att_dist * 150, torch.tanh(att_dist * 1.0))
+        omg_dist = torch.where(omg_dist < 0, omg_dist * 30,  torch.tanh(omg_dist * 1.0))
 
         goal_val = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
         return torch.max(goal_val, dim=-1).values * self.reach_fn_weight
