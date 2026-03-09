@@ -12,25 +12,25 @@ CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 ########################### Single controller runs ###########################
 
 python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_margin 0.05 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
   --initial_px -10.442982320340697 --initial_py -2.0512017498686443 --initial_theta 1.205599463157637 \
   --initial_vx 0.6868342952257529 --initial_vy 0.04974792745952561 --initial_omega -0.18448436899393705 \
- --output_dir ./outputs/brt_safety_filter_1_timeout_margin_0.02_test
+ --output_dir ./outputs/brt_safety_filter_1_timeout_margin_0.05_test
 
 python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --initial_px -3.407509855901665 --initial_py -2.9689989713225415 --initial_theta 0.49913273937622415 --initial_omega -0.017424178189499262 \
-  --initial_vx -1.026343555401426 --initial_vy -0.046729930795811336 \
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 70.0 --safety_filter_margin 0.02 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_px 4.849024119721175 --initial_py 8.700267469331695 --initial_theta 3.0716048110691005 --initial_omega 0.2481656543798394 \
+  --initial_vx -0.7225675839837122 --initial_vy 0.37521647241745115 \
   --output_dir ./outputs/brt_filter_1_test
 
   "initial_state": [
-          -3.407509855901665,
-          -2.9689989713225415,
-          0.49913273937622415,
-          -0.017424178189499262,
-          -1.026343555401426,
-          -0.046729930795811336
-        ],
+          4.849024119721175,
+          8.700267469331695,
+          -0.7225675839837122,
+          0.37521647241745115,
+          3.0716048110691005,
+          0.2481656543798394
+        ]
 
 ########################### Cascaded controller runs #########################
 
