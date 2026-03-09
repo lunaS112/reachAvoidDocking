@@ -768,11 +768,10 @@ class Docking6D(Dynamics):
         # Angular velocity
         omg_dist = torch.abs(omega - omega_goal) - self.eps_omega
 
-        # Asymmetric scaling (coefficients from 13D reach_fn)
-        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
-        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
-        theta_dist = torch.where(theta_dist < 0, theta_dist * 150, theta_dist * 0.5)
-        omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
+        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, torch.tanh(pos_dist * 0.5))
+        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, torch.tanh(vel_dist * 1.0))
+        theta_dist = torch.where(theta_dist < 0, theta_dist * 150, torch.tanh(theta_dist * 1.0))
+        omg_dist = torch.where(omg_dist < 0, omg_dist * 30,  torch.tanh(omg_dist * 1.0))
 
         goal_val = torch.stack([pos_dist, vel_dist, theta_dist, omg_dist], dim=-1)
         return torch.max(goal_val, dim=-1).values
@@ -812,7 +811,7 @@ class Docking6D(Dynamics):
         # Union of body + post
         s_fail = torch.minimum(s_body, s_post)
 
-        # Asymmetric scaling (coefficients from 13D avoid_fn)
+        # Asymmetric scaling 
         if self.set_mode == 'reach_avoid':
             s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
 
