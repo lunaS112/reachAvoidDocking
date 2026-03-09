@@ -657,6 +657,6 @@ class BRTController13D(Docking13DControllerMixin):
             'τx (N·m)': [6, u[:, 3], {'color': 'r'}],
             'τy (N·m)': [6, u[:, 4], {'color': 'g'}],
             'τz (N·m)': [6, u[:, 5], {'color': 'b'}],
-            'Distance (m)': [7, np.sqrt(s[:, 0]**2 + s[:, 1]**2 + s[:, 2]**2),
+            'Distance (m)': [7, np.sqrt(s[:, 0]**2 + (s[:, 1] - self.dynamics.goal_y_center)**2 + s[:, 2]**2),
                              {'color': 'orange'}],
         }

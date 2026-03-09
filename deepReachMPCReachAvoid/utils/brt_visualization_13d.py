@@ -24,7 +24,6 @@ Both back-ends produce:
 
 from __future__ import annotations
 
-import warnings
 import numpy as np
 import torch
 
@@ -126,21 +125,6 @@ def _oriented_box_mesh(center, half_dims, quaternion=None):
     ]
     faces = [verts[i].tolist() for i in idx]
     return verts, faces
-
-
-def _hemisphere_points(radius, n=30):
-    """Sample surface points of a hemisphere (y >= 0) for scatter rendering.
-    (Kept for backward compatibility; new code uses _indent_box_mesh.)
-    """
-    u = np.linspace(0, 2 * np.pi, n)
-    v = np.linspace(0, np.pi / 2, n // 2)
-    U, V = np.meshgrid(u, v)
-    pts = np.column_stack([
-        (radius * np.cos(U) * np.sin(V)).ravel(),
-        (radius * np.cos(V)).ravel(),
-        (radius * np.sin(U) * np.sin(V)).ravel(),
-    ])
-    return pts
 
 
 def _indent_box_mesh(hw_x, hw_z, depth, n_face=5):
@@ -562,10 +546,6 @@ class BRTVisualizer13D:
             raise ValueError(f"backend must be one of {self.BACKENDS}")
         self._backend = backend
 
-    @property
-    def backend(self) -> str:
-        return self._backend
-
     # ------------------------------------------------------------------ #
     #  Value-field evaluation
     # ------------------------------------------------------------------ #
@@ -627,6 +607,140 @@ class BRTVisualizer13D:
         V_flat = self.dynamics.io_to_value(model_input, output).cpu().numpy()
         V = V_flat.reshape(resolution, resolution, resolution)
         return X, Y, Z, V
+
+    # ------------------------------------------------------------------ #
+    #  2D slice evaluation (for val-plot GIFs)
+    # ------------------------------------------------------------------ #
+
+    def evaluate_brt_grid_2d(self, current_state: np.ndarray,
+                             time_query: float,
+                             plane: str = 'xy',
+                             grid_bounds_2d: list | None = None,
+                             resolution: int = 100) -> tuple:
+        """Evaluate V over a 2D position slice.
+
+        Parameters
+        ----------
+        current_state : (13,) array — non-varied states taken from here.
+        time_query    : scalar time for V query.
+        plane         : ``'xy'``, ``'xz'``, or ``'yz'``.
+        grid_bounds_2d: [(a_min,a_max), (b_min,b_max)] or *None*.
+        resolution    : grid points per axis.
+
+        Returns
+        -------
+        A, B : (res, res) meshgrid arrays for the two in-plane axes.
+        V    : (res, res) value field.
+        dVda, dVdb : (res, res) spatial gradients in the slice plane.
+        """
+        axis_map = {'xy': (0, 1, 2), 'xz': (0, 2, 1), 'yz': (1, 2, 0)}
+        if plane not in axis_map:
+            raise ValueError(f"plane must be one of {list(axis_map.keys())}")
+        idx_a, idx_b, idx_fixed = axis_map[plane]
+
+        if grid_bounds_2d is None:
+            half, clamp = 8.0, 15.0
+            pos = np.asarray(current_state[:3], dtype=np.float64)
+            lo_a = np.clip(pos[idx_a] - half, -clamp, clamp)
+            hi_a = np.clip(pos[idx_a] + half, -clamp, clamp)
+            lo_b = np.clip(pos[idx_b] - half, -clamp, clamp)
+            hi_b = np.clip(pos[idx_b] + half, -clamp, clamp)
+            grid_bounds_2d = [(lo_a, hi_a), (lo_b, hi_b)]
+
+        a_vals = np.linspace(grid_bounds_2d[0][0], grid_bounds_2d[0][1], resolution)
+        b_vals = np.linspace(grid_bounds_2d[1][0], grid_bounds_2d[1][1], resolution)
+        A, B = np.meshgrid(a_vals, b_vals, indexing='ij')
+
+        N = resolution * resolution
+        states = np.tile(np.asarray(current_state, dtype=np.float32), (N, 1))
+        states[:, idx_a] = A.ravel()
+        states[:, idx_b] = B.ravel()
+
+        states_t = torch.tensor(states, dtype=torch.float32,
+                                device=self.device).requires_grad_(True)
+        time_col = torch.full((N, 1), time_query, dtype=torch.float32,
+                              device=self.device)
+        coords = torch.cat([time_col, states_t], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+        model_input.requires_grad_(True)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)
+        V_raw = self.dynamics.io_to_value(model_input, output)
+
+        # Compute gradients w.r.t. the spatial state columns
+        grad_outputs = torch.ones_like(V_raw)
+        grads = torch.autograd.grad(V_raw, states_t, grad_outputs=grad_outputs,
+                                    create_graph=False)[0]
+        dVda = grads[:, idx_a].detach().cpu().numpy().reshape(resolution, resolution)
+        dVdb = grads[:, idx_b].detach().cpu().numpy().reshape(resolution, resolution)
+
+        V = V_raw.detach().cpu().numpy().reshape(resolution, resolution)
+        return A, B, V, dVda, dVdb
+
+    # ------------------------------------------------------------------ #
+    #  3D gradient evaluation (for Cone arrows in HTML animation)
+    # ------------------------------------------------------------------ #
+
+    def evaluate_brt_gradients_3d(self, current_state: np.ndarray,
+                                  time_query: float,
+                                  grid_bounds: list | None = None,
+                                  resolution: int = 12) -> tuple:
+        """Evaluate V and dV/d(x,y,z) on a coarse 3D grid for arrow overlay.
+
+        Parameters
+        ----------
+        current_state : (13,) array.
+        time_query    : scalar time for V query.
+        grid_bounds   : [(xmin,xmax), (ymin,ymax), (zmin,zmax)].
+        resolution    : grid points per axis (keep low, e.g. 8-12).
+
+        Returns
+        -------
+        X, Y, Z : (res, res, res) meshgrid arrays.
+        V       : (res, res, res) value field.
+        dVdx, dVdy, dVdz : (res, res, res) spatial gradients.
+        """
+        if grid_bounds is None:
+            half, clamp = 8.0, 15.0
+            pos = np.asarray(current_state[:3], dtype=np.float64)
+            lo = np.clip(pos - half, -clamp, clamp)
+            hi = np.clip(pos + half, -clamp, clamp)
+            grid_bounds = [(lo[0], hi[0]), (lo[1], hi[1]), (lo[2], hi[2])]
+
+        xs = np.linspace(grid_bounds[0][0], grid_bounds[0][1], resolution)
+        ys = np.linspace(grid_bounds[1][0], grid_bounds[1][1], resolution)
+        zs = np.linspace(grid_bounds[2][0], grid_bounds[2][1], resolution)
+        X, Y, Z = np.meshgrid(xs, ys, zs, indexing='ij')
+
+        N = resolution ** 3
+        states = np.tile(np.asarray(current_state, dtype=np.float32), (N, 1))
+        states[:, 0] = X.ravel()
+        states[:, 1] = Y.ravel()
+        states[:, 2] = Z.ravel()
+
+        states_t = torch.tensor(states, dtype=torch.float32,
+                                device=self.device).requires_grad_(True)
+        time_col = torch.full((N, 1), time_query, dtype=torch.float32,
+                              device=self.device)
+        coords = torch.cat([time_col, states_t], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+        model_input.requires_grad_(True)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)
+        V_raw = self.dynamics.io_to_value(model_input, output)
+
+        grad_outputs = torch.ones_like(V_raw)
+        grads = torch.autograd.grad(V_raw, states_t, grad_outputs=grad_outputs,
+                                    create_graph=False)[0]
+
+        shape = (resolution, resolution, resolution)
+        dVdx = grads[:, 0].detach().cpu().numpy().reshape(shape)
+        dVdy = grads[:, 1].detach().cpu().numpy().reshape(shape)
+        dVdz = grads[:, 2].detach().cpu().numpy().reshape(shape)
+        V = V_raw.detach().cpu().numpy().reshape(shape)
+        return X, Y, Z, V, dVdx, dVdy, dVdz
 
     # ------------------------------------------------------------------ #
     #  Plotly rendering
@@ -859,7 +973,7 @@ class BRTVisualizer13D:
         d = self.dynamics
         pos = state[:3]
         q = state[6:10] / (np.linalg.norm(state[6:10]) + 1e-12)
-        verts, faces = _oriented_box_mesh(
+        verts, _ = _oriented_box_mesh(
             pos, (d.w_c / 2, d.h_c / 2, d.d_c / 2), quaternion=q)
 
         # Triangulate quads for Mesh3d (each quad → 2 triangles)
@@ -928,7 +1042,7 @@ class BRTVisualizer13D:
         brt_drawn = False
         try:
             from skimage.measure import marching_cubes
-            verts_mc, faces_mc, normals_mc, values_mc = marching_cubes(
+            verts_mc, faces_mc, _, values_mc = marching_cubes(
                 V, level=0.0)
             # Scale verts to real coordinates
             spacing = np.array([
@@ -1063,12 +1177,3 @@ class BRTVisualizer13D:
                   nose_dir[2] * arrow_len,
                   color='blue', linewidth=2.0, arrow_length_ratio=0.25)
 
-    # ------------------------------------------------------------------ #
-    #  Convenience dispatch
-    # ------------------------------------------------------------------ #
-
-    def render(self, X, Y, Z, V, chaser_state, **kwargs):
-        """Dispatch to the active backend."""
-        if self._backend == 'plotly':
-            return self.render_plotly(X, Y, Z, V, chaser_state, **kwargs)
-        return self.render_matplotlib(X, Y, Z, V, chaser_state, **kwargs)

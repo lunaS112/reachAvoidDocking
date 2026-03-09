@@ -24,6 +24,8 @@ from __future__ import annotations
 import numpy as np
 import warnings
 
+from utils.controllers.anim_utils import select_key_frames, get_t_queries
+
 from utils.brt_visualization_13d import compute_scene_limits, state_range_limits, _inject_play_pause_js
 
 
@@ -48,45 +50,62 @@ class ControllerAnimation13D:
         self.resolution = grid_resolution
         self.grid_bounds = grid_bounds
 
-    # ------------------------------------------------------------------ #
-    #  Key-frame selection
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _select_key_frames(n_total: int, max_frames: int = 60) -> np.ndarray:
-        """Return at most *max_frames* evenly-spaced frame indices."""
-        if n_total <= max_frames:
-            return np.arange(n_total)
-        return np.linspace(0, n_total - 1, max_frames, dtype=int)
+    # Key-frame / time-query helpers imported from anim_utils
 
     # ------------------------------------------------------------------ #
-    #  Time-query logic (Phase-aware)
+    #  Gradient arrow helpers
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _get_t_queries(result: dict) -> np.ndarray:
-        """Derive the time-query array used for each simulation step.
+    def _build_gradient_cones(X, Y, Z, V, dVdx, dVdy, dVdz,
+                              v_band=(-0.3, 0.3), max_arrows=500,
+                              arrow_scale=0.45):
+        """Create Plotly Cone trace(s) for **-∇V** (steepest descent).
 
-        For controllers that track phase and t_remaining (BRT, MPC-terminal):
-            Phase 1 → tMax,  Phase 2 → t_remaining.
-        For pure-MPC: constant tMax (only used for the blob, not cost).
+        Arrows point from high to low value (toward the BRT interior
+        where V < 0).  Only arrows near the zero level-set (within
+        *v_band*) are shown so the visualisation is not cluttered.
+
+        Returns a list of ``go.Cone`` traces (usually one).
         """
-        if 't_remaining' in result and 'phases' in result:
-            return np.asarray(result['t_remaining'], dtype=np.float64)
-        # Fallback: use tMax from controller metadata
-        tMax = result.get('tMax', 14.0)
-        return np.full(len(result['trajectory']), tMax)
+        import plotly.graph_objects as go
 
-    # ------------------------------------------------------------------ #
-    #  Interactive Plotly HTML
-    # ------------------------------------------------------------------ #
+        mask = (V >= v_band[0]) & (V <= v_band[1])
+        xs = X[mask]; ys = Y[mask]; zs = Z[mask]
+        # Negate: show -∇V so arrows point downhill (into the BRT).
+        us = -dVdx[mask]; vs = -dVdy[mask]; ws = -dVdz[mask]
 
-    @staticmethod
-    def _auto_center_bounds(pos, half_range=8.0, clamp=15.0):
-        """Compute grid bounds centred on *pos* (3,), clamped to ±clamp."""
-        lo = np.clip(pos[:3] - half_range, -clamp, clamp)
-        hi = np.clip(pos[:3] + half_range, -clamp, clamp)
-        return [(lo[0], hi[0]), (lo[1], hi[1]), (lo[2], hi[2])]
+        if len(xs) == 0:
+            # Nothing near zero level-set — return invisible placeholder
+            return [go.Cone(x=[0], y=[0], z=[0], u=[0], v=[0], w=[0],
+                            visible=True, showlegend=False,
+                            sizemode='absolute', sizeref=0.01)]
+
+        # Down-sample if too many
+        if len(xs) > max_arrows:
+            idx = np.random.default_rng(0).choice(
+                len(xs), max_arrows, replace=False)
+            xs, ys, zs = xs[idx], ys[idx], zs[idx]
+            us, vs, ws = us[idx], vs[idx], ws[idx]
+
+        # Normalise arrows to unit length so they convey direction only
+        mag = np.sqrt(us**2 + vs**2 + ws**2) + 1e-12
+        us = us / mag; vs = vs / mag; ws = ws / mag
+
+        cone = go.Cone(
+            x=xs, y=ys, z=zs,
+            u=us, v=vs, w=ws,
+            sizemode='absolute',
+            sizeref=arrow_scale,
+            anchor='tail',
+            colorscale=[[0, 'rgba(80,80,80,0.6)'],
+                        [1, 'rgba(80,80,80,0.6)']],
+            showscale=False,
+            name='-∇V',
+            showlegend=False,
+            hoverinfo='skip',
+        )
+        return [cone]
 
     def generate_interactive_html(self, result: dict, output_path: str,
                                   max_frames: int = 50):
@@ -106,9 +125,9 @@ class ControllerAnimation13D:
         import plotly.graph_objects as go
 
         traj = result['trajectory']
-        t_queries = self._get_t_queries(result)
+        t_queries = get_t_queries(result)
         times = result['times']
-        key_idx = self._select_key_frames(len(traj), max_frames)
+        key_idx = select_key_frames(len(traj), max_frames)
 
         # --- Pre-compute unified grid bounds + scene axis limits ------ #
         if self.grid_bounds is not None:
@@ -126,8 +145,9 @@ class ControllerAnimation13D:
             traj, self.brt_viz.dynamics, padding=1.5)
 
         # --- Pre-compute all traces for every key frame --------------- #
-        print(f"[Animation] Evaluating BRT grids for {len(key_idx)} frames "
-              f"(resolution={self.resolution})...")
+        grad_resolution = min(10, self.resolution // 3)
+        print(f"[Animation] Computing {len(key_idx)} frames "
+              f"(grid {self.resolution}³, grad {grad_resolution}³)...")
         all_traces = []          # flat list of every trace across all frames
         traces_per_frame = []    # (start_idx, count) for each frame group
         first_layout = None
@@ -145,6 +165,15 @@ class ControllerAnimation13D:
                 axis_range=scene_limits,
             )
 
+            # --- Gradient arrows (Cone trace) --- #
+            Xg, Yg, Zg, Vg, dVdx, dVdy, dVdz = \
+                self.brt_viz.evaluate_brt_gradients_3d(
+                    state, t_q, unified_bounds, grad_resolution)
+            grad_traces = self._build_gradient_cones(
+                Xg, Yg, Zg, Vg, dVdx, dVdy, dVdz)
+            for gt in grad_traces:
+                frame_fig.add_trace(gt)
+
             start_idx = len(all_traces)
             frame_trace_list = list(frame_fig.data)
             is_first = (count == 0)
@@ -160,7 +189,7 @@ class ControllerAnimation13D:
                 first_layout = frame_fig.layout
 
             if (count + 1) % 10 == 0 or count == len(key_idx) - 1:
-                print(f"  Frame {count + 1}/{len(key_idx)} done.")
+                print(f"  [{count + 1}/{len(key_idx)}]")
 
         # --- Build slider steps: each toggles one frame group --------- #
         total_traces = len(all_traces)
@@ -202,7 +231,7 @@ class ControllerAnimation13D:
         # Inject Play / Pause JS that cycles through slider steps
         _inject_play_pause_js(output_path, interval_ms=500)
 
-        print(f"[Animation] HTML written to {output_path}")
+        print(f"[Animation] HTML saved to {output_path}")
 
     # ------------------------------------------------------------------ #
     #  MP4 animation (Matplotlib)
@@ -225,11 +254,10 @@ class ControllerAnimation13D:
         from matplotlib.animation import FuncAnimation, FFMpegWriter
 
         traj = result['trajectory']
-        controls = result['controls']
         values = result['values']
         sim_times = result['times']
-        t_queries = self._get_t_queries(result)
-        key_idx = self._select_key_frames(len(traj), max_frames)
+        t_queries = get_t_queries(result)
+        key_idx = select_key_frames(len(traj), max_frames)
 
         # Pre-compute unified grid bounds for MP4
         if self.grid_bounds is not None:
@@ -251,10 +279,11 @@ class ControllerAnimation13D:
                 unified_bounds, self.resolution)
             grids.append((X, Y, Z, V))
             if (count + 1) % 20 == 0 or count == len(key_idx) - 1:
-                print(f"  Grid {count + 1}/{len(key_idx)} done.")
+                print(f"  [{count + 1}/{len(key_idx)}]")
 
         # --- Pre-compute full-run data for fixed axis limits ---------- #
-        all_dists = np.linalg.norm(traj[:, :3], axis=1)
+        goal_center = np.array([0.0, self.brt_viz.dynamics.goal_y_center, 0.0])
+        all_dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
         val_pad = max(0.05, (values.max() - values.min()) * 0.10)
         val_lo, val_hi = values.min() - val_pad, values.max() + val_pad
         dist_hi = all_dists.max() * 1.1 + 0.5
@@ -317,13 +346,13 @@ class ControllerAnimation13D:
             else:
                 title_text.set_text(f"t = {sim_times[idx]:.1f}s")
 
-        print("[Animation] Rendering MP4 frames...")
+        print("[Animation] Rendering MP4...")
         anim = FuncAnimation(fig, update, frames=len(key_idx),
                              interval=1000 / fps)
         try:
             writer = FFMpegWriter(fps=fps, metadata=dict(title='Docking 13D'))
             anim.save(output_path, writer=writer)
-            print(f"[Animation] MP4 written to {output_path}")
+            print(f"[Animation] MP4 saved to {output_path}")
         except FileNotFoundError:
             warnings.warn("ffmpeg not found — cannot produce MP4. "
                           "Install ffmpeg or use generate_interactive_html().")

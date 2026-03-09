@@ -1,101 +1,111 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
-#  13D Docking Controller — Example Commands
+#  13-D Docking Controller Runner
 # ============================================================================
-#  Uncomment the command you want to run; execute with:
-#     bash run_controller_13d.sh
+#
+#  Quick-start:
+#    ./run_controller_13d.sh                    # BRT single run, default IC
+#    ./run_controller_13d.sh --viz              # + HTML animation & slice GIFs
+#    ./run_controller_13d.sh --easy             # easy IC (close, aligned)
+#    ./run_controller_13d.sh --compare          # multi-controller comparison
+#    ./run_controller_13d.sh --help             # this message
+#
 # ============================================================================
+set -euo pipefail
 
-# Activate venv (provides 'python' on PATH)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
-#  Checkpoints
+#  Configuration — edit these to match your setup
 # ---------------------------------------------------------------------------
-# Short-horizon (tMax = 5 s, 4 hidden layers, 5× importance sampling)
-CKPT_5s="runs/Docking13D_RA_5s_5xSampling/training/checkpoints/model_final.pth"
-
-# Longer-horizon (tMax = 10 s, 3 hidden layers — larger BRAT)
-CKPT_10s="runs/Docking13D_RA-Might-Be-Usableish/training/checkpoints/model_epoch_104000.pth"
-
-# >>> Choose which checkpoint to use for the commands below <<<
-CKPT="$CKPT_10s"
+CKPT="runs/Docking13D_RA_new_goal_set2/training/checkpoints/model_horizon_10.00.pth"
 TMAX=10.0
+MAX_SIM=60.0
+OUTDIR="./outputs/13d_run"
 
-# ===========================================================================
-#  1.  Single-controller runs
-# ===========================================================================
+# Easy initial condition: close, aligned, gentle upward drift
+EASY_IC="[0,-3.0,0,0,0.05,0,0.7071,0,0,0.7071,0,0,0]"
 
-# --- BRT 13D : custom initial condition ---
-# python run_controller_13d.py single \
-#   --controller brt_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --initial_state "[-8.0, 10.0, -3.5, 0.05, -0.02, 0.01, 0.7071, 0.0, 0.0, 0.7071, 0.1, -0.05, 0.02]" \
-#   --viz_html --viz_resolution 30 --viz_max_frames 40 \
-#   --output_dir ./outputs/13d_single_brt_custom
+# ---------------------------------------------------------------------------
+#  Parse flags
+# ---------------------------------------------------------------------------
+MODE="single"
+VIZ_FLAGS=""
+CONTROLLER="brt_13d"
+IC_FLAG=""
+EXTRA_ARGS=""
 
-# --- BRT 13D : random IC sampled from BRAT ---
-# python run_controller_13d.py single \
-#   --controller brt_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --sampling_method brt --seed 42 \
-#   --viz_html --viz_resolution 30 --viz_max_frames 40 \
-#   --output_dir ./outputs/13d_single_brt_brat
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-# --- BRT 13D : default IC (10 m away, at rest, goal attitude) ---
-# python run_controller_13d.py single \
-#   --controller brt_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --viz_html --viz_resolution 30 --viz_max_frames 40 \
-#   --output_dir ./outputs/13d_single_brt_default
+Options:
+  --help, -h          Show this help message
+  --viz               Enable all visualisations (HTML + slice GIFs)
+  --viz-html          Enable only HTML animation
+  --viz-gifs          Enable only 2-D slice GIFs
+  --easy              Use an easy IC (close, aligned, gentle drift)
+  --ic "JSON_ARRAY"   Custom 13-element initial state, e.g. "[10,0,0,...]"
+  --compare           Run multi-controller comparison instead of single run
+  --controller NAME   Controller: brt_13d | mpc_13d | mpc_terminal_13d
+  --ckpt PATH         Checkpoint path (default: \$CKPT)
+  --tmax FLOAT        Time horizon (default: $TMAX)
+  --outdir DIR        Output directory (default: $OUTDIR)
 
-# --- MPC 13D (no value function) ---
-# python run_controller_13d.py single \
-#   --controller mpc_13d \
-#   --checkpoint_path "$CKPT" --dt 0.1 --max_sim_time 60.0 \
-#   --planning_horizon 3.0 --mpc_dt 0.5 \
-#   --num_samples 100 --num_refinement 10 \
-#   --viz_html \
-#   --output_dir ./outputs/13d_single_mpc
+Examples:
+  $(basename "$0")                              # default BRT run
+  $(basename "$0") --easy --viz                 # easy IC with full viz
+  $(basename "$0") --ic "[5,-5,2,0,0,0,0.7071,0,0,0.7071,0,0,0]" --viz
+  $(basename "$0") --compare --outdir ./outputs/13d_cmp
+EOF
+  exit 0
+}
 
-# --- MPC + Terminal 13D ---
-# python run_controller_13d.py single \
-#   --controller mpc_terminal_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --effective_horizon 3.0 --effort_weight 0.0 \
-#   --num_samples 100 --num_refinement 10 \
-#   --viz_html --viz_resolution 30 --viz_max_frames 40 \
-#   --output_dir ./outputs/13d_single_mpc_terminal
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)      usage ;;
+    --viz)          VIZ_FLAGS="--viz_html --viz_gifs"; shift ;;
+    --viz-html)     VIZ_FLAGS="${VIZ_FLAGS} --viz_html"; shift ;;
+    --viz-gifs)     VIZ_FLAGS="${VIZ_FLAGS} --viz_gifs"; shift ;;
+    --easy)         IC_FLAG="--initial_state '${EASY_IC}'"; shift ;;
+    --ic)           IC_FLAG="--initial_state '$2'"; shift 2 ;;
+    --compare)      MODE="compare"; shift ;;
+    --controller)   CONTROLLER="$2"; shift 2 ;;
+    --ckpt)         CKPT="$2"; shift 2 ;;
+    --tmax)         TMAX="$2"; shift 2 ;;
+    --outdir)       OUTDIR="$2"; shift 2 ;;
+    *)              EXTRA_ARGS="${EXTRA_ARGS} $1"; shift ;;
+  esac
+done
 
-# ===========================================================================
-#  2.  Stagnation-escape tuning (MPC+Terminal only)
-# ===========================================================================
+# Validate checkpoint exists
+if [[ ! -f "$CKPT" ]]; then
+  echo "ERROR: Checkpoint not found: $CKPT" >&2
+  echo "  Set the CKPT variable in this script or use --ckpt PATH" >&2
+  exit 1
+fi
 
-# python run_controller_13d.py single \
-#   --controller mpc_terminal_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --effective_horizon 2.0 \
-#   --num_samples 500 --num_refinement 10 \
-#   --exploration_factor 5.0 --exploration_patience 1 --escape_thresh 0.3 \
-#   --output_dir ./outputs/13d_single_mpc_terminal_aggressive
-
-# ===========================================================================
-#  3.  Multi-controller comparison runs
-# ===========================================================================
-
-# Uniform IC sampling (geometric constraints only)
-# python run_controller_13d.py compare \
-#   --controllers brt_13d mpc_13d mpc_terminal_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --num_rollouts 3 --seed 42 \
-#   --num_samples 500 --num_refinement 10 \
-#   --output_dir ./outputs/13d_comparison_uniform
-
-# BRAT IC sampling (ICs inside the learned backward reachable-avoid tube)
-# python run_controller_13d.py compare \
-#   --controllers brt_13d mpc_terminal_13d \
-#   --checkpoint_path "$CKPT" --tMax $TMAX --max_sim_time 60.0 \
-#   --num_rollouts 5 --seed 42 --sampling_method brt \
-#   --num_samples 500 --num_refinement 10 \
-#   --output_dir ./outputs/13d_comparison_brat
+# ---------------------------------------------------------------------------
+#  Run
+# ---------------------------------------------------------------------------
+if [[ "$MODE" == "compare" ]]; then
+  echo "=== Multi-controller comparison ==="
+  eval python3 run_controller_13d.py compare \
+    --controllers brt_13d mpc_terminal_13d \
+    --checkpoint_path "$CKPT" --tMax "$TMAX" --max_sim_time "$MAX_SIM" \
+    --num_rollouts 5 --seed 42 \
+    --num_samples 500 --num_refinement 10 \
+    --output_dir "$OUTDIR" \
+    $EXTRA_ARGS
+else
+  echo "=== Single run: $CONTROLLER ==="
+  eval python3 run_controller_13d.py single \
+    --controller "$CONTROLLER" \
+    --checkpoint_path "$CKPT" --tMax "$TMAX" --max_sim_time "$MAX_SIM" \
+    $IC_FLAG \
+    $VIZ_FLAGS \
+    --viz_resolution 30 --viz_max_frames 40 \
+    --output_dir "$OUTDIR" \
+    $EXTRA_ARGS
+fi

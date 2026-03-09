@@ -48,47 +48,68 @@ def _q_goal_np(dynamics):
 
 
 def _draw_target_2d(ax, dynamics, plane='xy'):
-    """Draw 2-D projection of the target body + dock circle.
+    """Draw 2-D projection of the target body + docking post + goal band.
 
     *plane* is one of ``'xy'``, ``'xz'``.
     """
     import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
 
     d = dynamics
-    hw, hh, hd = d.w_t / 2, d.h_t, d.d_t / 2
+    hw = d.w_t / 2
+    hd = d.d_t / 2
+    post_hw_x = d.post_hw_x
+    post_hw_z = d.post_hw_z
+    post_len = d.post_length
 
     if plane == 'xy':
-        # Rectangle [−hw, hw] × [0, hh]
-        rect = plt.Rectangle((-hw, 0), d.w_t, hh,
+        # Target body [−hw, hw] × [0, h_t]
+        rect = plt.Rectangle((-hw, 0), d.w_t, d.h_t,
                               linewidth=1.5, edgecolor='gray',
                               facecolor='silver', alpha=0.35, zorder=5)
         ax.add_patch(rect)
-        # Dock circle at origin
-        circ = plt.Circle((0, 0), d.dock_rad, linewidth=1.2,
-                           edgecolor='limegreen', facecolor='limegreen',
-                           alpha=0.20, zorder=6)
-        ax.add_patch(circ)
+        # Docking post [−post_hw_x, post_hw_x] × [−post_len, 0]
+        post = plt.Rectangle((-post_hw_x, -post_len),
+                              2 * post_hw_x, post_len,
+                              linewidth=1.2, edgecolor='green',
+                              facecolor='limegreen', alpha=0.30, zorder=6)
+        ax.add_patch(post)
+        # Goal band
+        if hasattr(d, 'goal_y_min'):
+            goal_band = plt.Rectangle((-d.eps_p, d.goal_y_min),
+                                       2 * d.eps_p,
+                                       d.goal_y_max - d.goal_y_min,
+                                       linewidth=1.2, edgecolor='gold',
+                                       facecolor='gold', alpha=0.20,
+                                       linestyle='--', zorder=7)
+            ax.add_patch(goal_band)
     elif plane == 'xz':
-        # Rectangle [−hw, hw] × [−hd, hd]
+        # Target body [−hw, hw] × [−hd, hd]
         rect = plt.Rectangle((-hw, -hd), d.w_t, d.d_t,
                               linewidth=1.5, edgecolor='gray',
                               facecolor='silver', alpha=0.35, zorder=5)
         ax.add_patch(rect)
-        circ = plt.Circle((0, 0), d.dock_rad, linewidth=1.2,
-                           edgecolor='limegreen', facecolor='limegreen',
-                           alpha=0.20, zorder=6)
-        ax.add_patch(circ)
+        # Post cross-section [−post_hw_x, post_hw_x] × [−post_hw_z, post_hw_z]
+        post = plt.Rectangle((-post_hw_x, -post_hw_z),
+                              2 * post_hw_x, 2 * post_hw_z,
+                              linewidth=1.2, edgecolor='green',
+                              facecolor='limegreen', alpha=0.30, zorder=6)
+        ax.add_patch(post)
+        # Goal circle (eps_p radius in x-z)
+        if hasattr(d, 'eps_p'):
+            circ = plt.Circle((0, 0), d.eps_p, linewidth=1.2,
+                               edgecolor='gold', facecolor='gold',
+                               alpha=0.20, linestyle='--', zorder=7)
+            ax.add_patch(circ)
 
 
 def _draw_target_3d(ax, dynamics):
-    """Draw 3-D target body + dock wireframe circles."""
+    """Draw 3-D target body + docking post + goal band box."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     d = dynamics
     hw, hd = d.w_t / 2, d.d_t / 2
 
-    # Box centred at (0, h_t/2, 0)
+    # --- Target body box centred at (0, h_t/2, 0) ---
     from utils.brt_visualization_13d import _oriented_box_mesh
     _, faces = _oriented_box_mesh(
         [0, d.h_t / 2, 0], (hw, d.h_t / 2, hd))
@@ -97,22 +118,27 @@ def _draw_target_3d(ax, dynamics):
     mesh.set_edgecolor('gray')
     ax.add_collection3d(mesh)
 
-    # Dock hemisphere wireframe circles
-    theta = np.linspace(0, 2 * np.pi, 40)
-    for elev_frac in np.linspace(0.1, 1.0, 5):
-        r = d.dock_rad * np.sin(np.arccos(1 - elev_frac))
-        h = d.dock_rad * (1 - elev_frac)
-        ax.plot(r * np.cos(theta), np.full_like(theta, h),
-                r * np.sin(theta), color='limegreen', alpha=0.5, lw=1.0)
+    # --- Docking post box centred at (0, -post_length/2, 0) ---
+    post_hw_x = d.post_hw_x
+    post_hw_z = d.post_hw_z
+    post_len = d.post_length
+    _, pfaces = _oriented_box_mesh(
+        [0, -post_len / 2, 0], (post_hw_x, post_len / 2, post_hw_z))
+    pmesh = Poly3DCollection(pfaces, alpha=0.30, linewidths=0.5)
+    pmesh.set_facecolor('limegreen')
+    pmesh.set_edgecolor('green')
+    ax.add_collection3d(pmesh)
 
-    # Reach tolerance sphere
-    u = np.linspace(0, 2 * np.pi, 15)
-    v = np.linspace(0, np.pi, 15)
-    rr = d.eps_p
-    xs = rr * np.outer(np.cos(u), np.sin(v))
-    ys = rr * np.outer(np.sin(u), np.sin(v))
-    zs = rr * np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_surface(xs, ys, zs, color='lime', alpha=0.15)
+    # --- Goal band box ---
+    if hasattr(d, 'goal_y_min'):
+        goal_cy = (d.goal_y_min + d.goal_y_max) / 2
+        goal_hy = (d.goal_y_max - d.goal_y_min) / 2
+        _, gfaces = _oriented_box_mesh(
+            [0, goal_cy, 0], (d.eps_p, goal_hy, d.eps_p))
+        gmesh = Poly3DCollection(gfaces, alpha=0.15, linewidths=0.8)
+        gmesh.set_facecolor('gold')
+        gmesh.set_edgecolor('goldenrod')
+        ax.add_collection3d(gmesh)
 
 
 # --------------------------------------------------------------------------- #
@@ -136,7 +162,9 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 
     traj = result['trajectory']
     times = result['times']
-    dists = np.linalg.norm(traj[:, :3], axis=1)
+    # Distance to goal center (matches reach_fn / goal band definition)
+    goal_center = np.array([0.0, dynamics.goal_y_center, 0.0])
+    dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
     d = dynamics
 
     pad = 3.0
@@ -207,9 +235,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
     # ---- (1,1) Distance to dock -------------------------------------- #
     ax_dist = fig.add_subplot(224)
     ax_dist.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax_dist.axhline(d.dock_rad, color='limegreen', ls='--', lw=1.2,
-                     label=f'dock_rad = {d.dock_rad}m')
-    ax_dist.axhline(d.eps_p, color='lime', ls=':', lw=1.2,
+    ax_dist.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
                      label=f'eps_p = {d.eps_p}m')
     if result.get('docked', False):
         dock_idx = np.argmax(dists <= d.eps_p)
@@ -308,11 +334,10 @@ def plot_states_13d(result, dynamics, save_path=None):
 
     # ---- (2,0) Distance ---------------------------------------------- #
     ax = axes[2, 0]
-    dists = np.linalg.norm(traj[:, :3], axis=1)
+    goal_center = np.array([0.0, d.goal_y_center, 0.0])
+    dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
     ax.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax.axhline(d.dock_rad, color='limegreen', ls='--', lw=1.2,
-               label=f'dock_rad = {d.dock_rad}m')
-    ax.axhline(d.eps_p, color='lime', ls=':', lw=1.2,
+    ax.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
                label=f'eps_p = {d.eps_p}m')
     ax.set_title('Distance to Target (m)')
     ax.set_xlabel('Time (s)')
@@ -399,7 +424,6 @@ def plot_controls_13d(result, dynamics, save_path=None):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    traj = result['trajectory']
     controls = result['controls']
     times = result['times']
     d = dynamics

@@ -48,8 +48,8 @@ class Docking13DControllerMixin:
     def _check_docked_13d(self, state):
         """Check if all 13D docking tolerances are met.
 
-        Tolerances checked:
-            - 3D position L2 <= eps_p
+        Tolerances checked (matching reach_fn in dynamics):
+            - x,z within eps_p of post axis + y inside goal band
             - 3D velocity L2 <= eps_v
             - Quaternion angle error <= eps_q
             - 3D angular velocity L2 <= eps_omega
@@ -63,8 +63,12 @@ class Docking13DControllerMixin:
         if q_norm > 1e-12:
             q = q / q_norm
 
-        pos_ok = np.linalg.norm(pos) <= self.dynamics.eps_p
-        vel_ok = np.linalg.norm(vel) <= self.dynamics.eps_v
+        # Position: xz distance from post axis + y inside goal band
+        d = self.dynamics
+        xz_ok = np.sqrt(pos[0]**2 + pos[2]**2) <= d.eps_p
+        y_ok = (d.goal_y_min <= pos[1] <= d.goal_y_max)
+        pos_ok = xz_ok and y_ok
+        vel_ok = np.linalg.norm(vel) <= d.eps_v
 
         q_goal_np = self.dynamics.q_goal.detach().cpu().numpy()
         att_err = _quat_error_angle_np(q, q_goal_np)
