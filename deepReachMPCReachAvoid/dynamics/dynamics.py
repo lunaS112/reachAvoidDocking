@@ -1001,9 +1001,15 @@ class Docking6D(Dynamics):
         return 0
 
     def plot_config(self):
+        # Slice py below the obstacle so velocity/rotation slices are outside the
+        # failure set at any theta.  Worst-case lower boundary of the inflated
+        # obstacle is -(post_length + chaser_buffer) ≈ -0.91 m; adding a 2 m
+        # approach offset places the slice at a realistic pre-docking distance.
+        approach_py = -(self.post_length + self.chaser_buffer + 2.0)
+
         if self.set_mode == 'reach_avoid':
             return {
-                'state_slices': [0, 0, 0, 0, np.pi/2, 0],
+                'state_slices': [0, approach_py, 0, 0, np.pi/2, 0],
                 'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
                 'x_axis_idx': 0,
                 'y_axis_idx': 1,
@@ -1011,11 +1017,11 @@ class Docking6D(Dynamics):
             }
         elif self.set_mode == 'avoid':
             return {
-                'state_slices': [0, 0, 0, 0, np.pi/2, 0],
+                'state_slices': [0, approach_py, 0, 0, np.pi/2, 0],
                 'state_labels': ['x', 'y', 'vx', 'vy', r'$\theta$', r'$\omega$'],
                 'x_axis_idx': 0,
                 'y_axis_idx': 1,
-                'z_axis_idx': 2,  # Use vx for the z-axis instead of vx
+                'z_axis_idx': 2,  # Use vx for the z-axis
             }
         else:
             raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking6D")

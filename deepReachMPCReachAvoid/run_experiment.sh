@@ -62,7 +62,7 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics
  --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_MedData --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 # Post-curriculum refinement with false-positive penalty 
-python3 run_experiment.py --mode train --experiment_name Docking6D_RA_15sec-fine_newGeom --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000 \
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA_15sec_newGeom --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000 \
  --pretrain_iters 1000 --num_epochs 200000 --pause_epochs 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
  --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 0 \
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.05 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \

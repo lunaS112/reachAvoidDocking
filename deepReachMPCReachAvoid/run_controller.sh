@@ -6,6 +6,7 @@ source "${SCRIPT_DIR}/../.venv/bin/activate"
 # RUN IN TERMINAL FIRST
 
 CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_15sec-fine_newGeom/training/checkpoints/model_horizon_12.50.pth"
 CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"d
 CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
@@ -33,13 +34,10 @@ python run_controller.py single --controller brt \
           -2.701630548995958,
           -0.01365488906296819
 
-########################### Cascaded controller runs #########################
-
-# Cascaded BRT single run
-python run_controller.py single --controller cascaded_brt \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER \
-  --tMax 15.0 --inner_tMax 3.0 --max_sim_time 60.0 \
-  --output_dir ./outputs/single_cascaded_brt
+python run_controller.py single --controller brt \
+  --checkpoint_path $CKPT --safety_filter_mode 0\
+  --tMax 12.5  --max_sim_time 60.0 \
+  --output_dir ./outputs/brt_newGeom
 
 # Cascaded MPC+Terminal single run
 python run_controller.py single --controller cascaded_mpc_terminal \
@@ -80,6 +78,11 @@ python run_controller.py compare --controllers brt \
   --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
   --n_rollouts 1000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
   --sampling_method uniform --output_dir ./outputs/BRT_1000safety_filter_1 
+
+  python run_controller.py compare --controllers brt \
+  --checkpoint_path $CKPT \
+  --n_rollouts 5 --tMax 12.5 --max_sim_time 60.0 --effort_weight 0.005\
+  --sampling_method brt --output_dir ./outputs/BRT_newGeom_BRAT
    
 # Volume comparison 
 python volume_comparison.py \
