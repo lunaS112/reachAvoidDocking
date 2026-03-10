@@ -1121,8 +1121,10 @@ class Docking13D(Dynamics):
 
         if set_mode == 'reach_avoid':
             l_type = 'brat_hjivi'
+        elif set_mode == 'avoid':
+            l_type = 'brt_hjivi'
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented')
+            raise NotImplementedError(f"set_mode '{set_mode}' is not implemented for Docking13D")
 
         # (HJ/DeepReach) ranges (ASSUMPTION: expand from planar; tune as needed)
         self.state_dim = 13
@@ -1349,6 +1351,29 @@ class Docking13D(Dynamics):
         Tier 4 (40%): Broader uniform sampling centred on goal
         """
         num_samples = int(num_samples)
+
+        if self.set_mode == 'avoid':
+            samples = torch.zeros(num_samples, self.state_dim)
+            margin = 3.0
+            cb = self.chaser_buffer
+            half_w = self.w_t / 2 + cb + margin
+            h_min = -(self.post_length + cb + margin)
+            h_max = self.h_t + cb + margin
+            half_z = self.d_t / 2 + cb + margin
+            samples[:, 0] = torch.empty(num_samples).uniform_(-half_w, half_w)
+            samples[:, 1] = torch.empty(num_samples).uniform_(h_min, h_max)
+            samples[:, 2] = torch.empty(num_samples).uniform_(-half_z, half_z)
+            for dim in range(3, self.state_dim):
+                lo, hi = self.state_range_[dim]
+                samples[:, dim] = torch.empty(num_samples).uniform_(lo.item(), hi.item())
+            # Normalize quaternions to unit sphere, canonical form (q0 >= 0)
+            q = samples[:, 6:10]
+            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+            sign = torch.sign(q[:, 0:1])
+            sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+            samples[:, 6:10] = q * sign
+            return samples
+
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
@@ -1616,20 +1641,32 @@ class Docking13D(Dynamics):
         s_fail = torch.minimum(s_body, s_post)
 
         # Piecewise shaping
-        s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
+        if self.set_mode == 'reach_avoid':
+            s_fail = torch.where(s_fail < 0, s_fail * 0.750, s_fail * 50.0)
+        elif self.set_mode == 'avoid':
+            pass
+
         return s_fail * self.avoid_fn_weight
 
     def boundary_fn(self, state):
         if self.set_mode == 'reach_avoid':
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
-        raise NotImplementedError
+        elif self.set_mode == 'avoid':
+            return self.avoid_fn(state)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def cost_fn(self, state_traj):
-        # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
-        # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
-        reach_values = self.reach_fn(state_traj)
-        avoid_values = self.avoid_fn(state_traj)
-        return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
+        if self.set_mode == 'avoid':
+            return torch.min(self.boundary_fn(state_traj), dim=-1).values
+        elif self.set_mode == 'reach_avoid':
+            # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
+            # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
+            reach_values = self.reach_fn(state_traj)
+            avoid_values = self.avoid_fn(state_traj)
+            return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def check_collision_oriented(self, state):
         """Check if any corner of the oriented 3D chaser box collides with the target body.
@@ -1696,20 +1733,19 @@ class Docking13D(Dynamics):
         return False  # safe
 
     def hamiltonian(self, state, dvds):
-        if self.set_mode != 'reach_avoid':
-            raise NotImplementedError
-        opt_control = self.optimal_control(state, dvds)
-        dsdt_ = self.dsdt(state, opt_control, None)
-        return torch.sum(dvds * dsdt_, dim=-1)
+        if self.set_mode in ['avoid', 'reach_avoid']:
+            opt_control = self.optimal_control(state, dvds)
+            dsdt_ = self.dsdt(state, opt_control, None)
+            return torch.sum(dvds * dsdt_, dim=-1)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def optimal_control(self, state, dvds):
         """
-        Bang-bang control for reach-avoid, but:
+        Bang-bang control:
           - Force optimal sign depends on attitude: dv/dv · (R^T F_b)/m = (R dv_v)/m · F_b
+          - Reach-avoid minimises V (drives toward target); avoid maximises V (drives away from obstacle)
         """
-        if self.set_mode != 'reach_avoid':
-            raise NotImplementedError
-
         q = state[...,6:10]
         q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
         R_L2B = self.quat_to_R_LVLH_to_body(q)
@@ -1721,18 +1757,27 @@ class Docking13D(Dynamics):
         # where (R p_v) gives body-frame coefficients.
         coeff_body = torch.matmul(R_L2B, p_v.unsqueeze(-1)).squeeze(-1) / self.mc
 
-        Fx = torch.where(coeff_body[...,0] > 0, -self.F_bar, self.F_bar)
-        Fy = torch.where(coeff_body[...,1] > 0, -self.F_bar, self.F_bar)
-        Fz = torch.where(coeff_body[...,2] > 0, -self.F_bar, self.F_bar)
-
         # Costates for omega: omega_dot includes I^{-1} tau
         p_omega = dvds[...,10:13]  # ∂V/∂omega
         # maximize p_omega · (I^{-1} tau) => (I^{-T} p_omega) · tau
         coeff_tau = torch.linalg.solve(self.I.transpose(0,1), p_omega.unsqueeze(-1)).squeeze(-1)
 
-        tx = torch.where(coeff_tau[...,0] > 0, -self.tau_bar, self.tau_bar)
-        ty = torch.where(coeff_tau[...,1] > 0, -self.tau_bar, self.tau_bar)
-        tz = torch.where(coeff_tau[...,2] > 0, -self.tau_bar, self.tau_bar)
+        if self.set_mode == 'reach_avoid':
+            Fx = torch.where(coeff_body[...,0] > 0, -self.F_bar, self.F_bar)
+            Fy = torch.where(coeff_body[...,1] > 0, -self.F_bar, self.F_bar)
+            Fz = torch.where(coeff_body[...,2] > 0, -self.F_bar, self.F_bar)
+            tx = torch.where(coeff_tau[...,0] > 0, -self.tau_bar, self.tau_bar)
+            ty = torch.where(coeff_tau[...,1] > 0, -self.tau_bar, self.tau_bar)
+            tz = torch.where(coeff_tau[...,2] > 0, -self.tau_bar, self.tau_bar)
+        elif self.set_mode == 'avoid':
+            Fx = torch.where(coeff_body[...,0] > 0, self.F_bar, -self.F_bar)
+            Fy = torch.where(coeff_body[...,1] > 0, self.F_bar, -self.F_bar)
+            Fz = torch.where(coeff_body[...,2] > 0, self.F_bar, -self.F_bar)
+            tx = torch.where(coeff_tau[...,0] > 0, self.tau_bar, -self.tau_bar)
+            ty = torch.where(coeff_tau[...,1] > 0, self.tau_bar, -self.tau_bar)
+            tz = torch.where(coeff_tau[...,2] > 0, self.tau_bar, -self.tau_bar)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
         return torch.stack([Fx, Fy, Fz, tx, ty, tz], dim=-1)
 
@@ -1807,13 +1852,24 @@ class Docking13D(Dynamics):
         q1 = float(self.q_goal[1].cpu()) if self.q_goal[1].is_cuda else float(self.q_goal[1])
         q2 = float(self.q_goal[2].cpu()) if self.q_goal[2].is_cuda else float(self.q_goal[2])
         q3 = float(self.q_goal[3].cpu()) if self.q_goal[3].is_cuda else float(self.q_goal[3])
-        return {
-            'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
-            'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
-            'x_axis_idx': 0,
-            'y_axis_idx': 1,
-            'z_axis_idx': 2,
-        }
+        if self.set_mode == 'reach_avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
+                'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 2,
+            }
+        elif self.set_mode == 'avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
+                'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 2,
+            }
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
 
 class Quadrotor(Dynamics):
