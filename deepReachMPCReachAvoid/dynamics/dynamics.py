@@ -1618,13 +1618,16 @@ class Docking13D(Dynamics):
 
         cb = self.chaser_buffer
 
-        # --- Target body SDF (rectangular prism y∈[0, h_t], fully inflated) ---
+        # --- Target body SDF (rectangular prism y∈[0, h_t]) ---
+        # Side/top faces use full chaser_buffer (bounding sphere).
+        # -Y face uses cb_tip (aligned-approach inflation), same reasoning as post tip:
+        # chaser approaches from -Y with aligned attitude, so only Y half-extent matters.
         half_w = self.w_t / 2.0 + cb
         half_z = self.d_t / 2.0 + cb
         s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + cb), y - (self.h_t + cb)),
+                torch.maximum(-(y + self.cb_tip), y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )

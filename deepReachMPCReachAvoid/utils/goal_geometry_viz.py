@@ -59,10 +59,10 @@ def main():
     # Old inflated tip (for comparison)
     post_y_lo_inf_old = -(post_length + cb)
 
-    # Body inflated in YZ plane (unchanged)
+    # Body inflated in YZ plane (-Y face uses cb_tip, same as post tip)
     body_z_lo_inf = -(d_t / 2.0 + cb)
     body_z_hi_inf =  (d_t / 2.0 + cb)
-    body_y_lo_inf = -cb
+    body_y_lo_inf = -cb_tip
     body_y_hi_inf =  h_t + cb
 
     # ── Safety analysis ──
