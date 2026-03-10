@@ -7,8 +7,8 @@ Subcommands:
     compare  -- Run N rollouts per controller from random ICs and compare metrics.
 
 Usage:
-    python run_controller.py single  --controller brt   [options]
-    python run_controller.py compare --controllers brt mpc mpc_terminal [options]
+    python run_controller.py single  --controller brat   [options]
+    python run_controller.py compare --controllers brat mpc mpc_terminal [options]
 """
 
 import argparse
@@ -30,8 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Controller classes (via convenience re-exports)
 from utils.controllers import (
-    BRTController, MPCController, MPCTerminalController,
-    CascadedBRTController, CascadedMPCTerminalController,
+    BRATController, MPCController, MPCTerminalController,
     SafetyFilter,
 )
 
@@ -44,14 +43,12 @@ from utils.controllers.controller_animation import (
     CONTROLLER_COLORS,
 )
 
-# BRT-specific visualisation (value-function heatmap animation)
-from utils.controllers.brt_animation import (
-    create_deepreach_animation,
-    create_cascaded_deepreach_animation,
+# BRAT-specific visualisation (value-function heatmap animation)
+from utils.controllers.brat_animation import (
+    create_brat_animation,
     create_mpc_terminal_animation,
-    create_cascaded_mpc_terminal_animation,
-    plot_trajectory_static as brt_plot_trajectory_static,
-    plot_simulation_data   as brt_plot_simulation_data,
+    plot_trajectory_static as brat_plot_trajectory_static,
+    plot_simulation_data   as brat_plot_simulation_data,
 )
 
 from dynamics import dynamics as dynamics_module
@@ -64,7 +61,7 @@ def _build_safety_filter(args):
         mode=args.safety_filter_mode,
         checkpoint_path=args.safety_checkpoint_path,
         tMax=None,
-        margin=args.safety_filter_margin,
+        margin=args.safety_margin_phase1,
         gamma=args.safety_filter_gamma,
         device=args.device,
     )
@@ -72,21 +69,18 @@ def _build_safety_filter(args):
 
 def build_controller(name, args):
     """Instantiate a controller by name string."""
-    # Validate inner checkpoint for cascaded controllers
-    if name.startswith('cascaded') and not args.inner_checkpoint_path:
-        raise ValueError(
-            f"Controller '{name}' requires --inner_checkpoint_path but none was provided.")
+    # Safety filter (no-op when mode=0)
+    sf = _build_safety_filter(args) if name in ('brat', 'mpc', 'mpc_terminal') else None
 
-    # Safety filter for the three 6D controllers (no-op when mode=0)
-    sf = _build_safety_filter(args) if name in ('brt', 'mpc', 'mpc_terminal') else None
-
-    if name == 'brt':
-        return BRTController(
+    if name == 'brat':
+        return BRATController(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
             device=args.device,
             safety_filter=sf,
+            safety_margin_phase1=args.safety_margin_phase1,
+            safety_margin_phase2=args.safety_margin_phase2,
         )
     elif name == 'mpc':
         return MPCController(
@@ -113,31 +107,8 @@ def build_controller(name, args):
             exploration_patience=args.exploration_patience,
             escape_thresh=args.escape_thresh,
             safety_filter=sf,
-        )
-    elif name == 'cascaded_brt':
-        return CascadedBRTController(
-            outer_checkpoint=args.checkpoint_path,
-            inner_checkpoint=args.inner_checkpoint_path,
-            outer_tMax=args.tMax,
-            inner_tMax=args.inner_tMax,
-            dt=args.dt,
-            device=args.device,
-        )
-    elif name == 'cascaded_mpc_terminal':
-        return CascadedMPCTerminalController(
-            outer_checkpoint=args.checkpoint_path,
-            inner_checkpoint=args.inner_checkpoint_path,
-            effective_horizon_sec=args.effective_horizon,
-            outer_tMax=args.tMax,
-            inner_tMax=args.inner_tMax,
-            dt=args.dt,
-            num_samples=args.num_samples,
-            num_refinement=args.num_refinement,
-            device=args.device,
-            effort_weight=args.effort_weight,
-            exploration_factor=args.exploration_factor,
-            exploration_patience=args.exploration_patience,
-            escape_thresh=args.escape_thresh,
+            safety_margin_phase1=args.safety_margin_phase1,
+            safety_margin_phase2=args.safety_margin_phase2,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -207,7 +178,7 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
     max_attempts = n * 1000
     n_rejected_geom = 0
     n_rejected_avoid_brt = 0
-    n_rejected_brt = 0
+    n_rejected_brat = 0
 
     while len(samples) < n and attempts < max_attempts:
         batch_size = min(n * 10, 5000)
@@ -230,12 +201,12 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
             n_rejected_avoid_brt += int((~avoid_brt_valid).sum())
             candidates = candidates[avoid_brt_valid]
 
-        # Reach-avoid BRAT filter (optional, --sampling_method brt)
+        # Reach-avoid BRAT filter (optional, --sampling_method brat)
         if value_filter_fn is not None and len(candidates) > 0:
             values = value_filter_fn(candidates)
-            brt_valid = values <= 0
-            n_rejected_brt += int((~brt_valid).sum())
-            candidates = candidates[brt_valid]
+            brat_valid = values <= 0
+            n_rejected_brat += int((~brat_valid).sum())
+            candidates = candidates[brat_valid]
 
         for s in candidates:
             if len(samples) >= n:
@@ -252,7 +223,7 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
         print(f"  IC sampling stats:  checked={attempts}  "
               f"rejected_geom={n_rejected_geom}  "
               f"rejected_avoid_brt={n_rejected_avoid_brt}  "
-              f"rejected_brt={n_rejected_brt}  "
+              f"rejected_brat={n_rejected_brat}  "
               f"accepted={len(samples)}")
 
     return np.array(samples[:n])
@@ -329,7 +300,7 @@ def plot_metrics_bar(metrics_by_controller, save_path=None):
     n_ctrl = len(names)
 
     label_to_type = {v: k for k, v in CONTROLLER_LABELS.items()}
-    colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brt'), '#1f77b4')
+    colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brat'), '#1f77b4')
               for n in names]
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5.5))
@@ -442,11 +413,11 @@ def run_single(args):
           f"vx={initial_state[2]:.2f}, vy={initial_state[3]:.2f}, "
           f"theta={initial_state[4]:.2f}, omega={initial_state[5]:.2f}")
 
-    # BRT-specific pre-check
-    if ctrl_type == 'brt':
+    # BRAT-specific pre-check
+    if ctrl_type == 'brat':
         v0 = controller.get_value(initial_state, args.tMax)
         print(f"Initial V(x, tMax={args.tMax}s) = {v0:.4f}")
-        print(f"State is {'INSIDE' if v0 <= 0 else 'OUTSIDE'} the BRT")
+        print(f"State is {'INSIDE' if v0 <= 0 else 'OUTSIDE'} the BRAT")
 
     # Run simulation
     print(f"\nRunning simulation for {args.max_sim_time}s ...")
@@ -469,11 +440,11 @@ def run_single(args):
     print(f"Control effort: {result.get('control_effort', 0):.2f}")
     print(f"Wall time: {result.get('wall_time', 0):.2f}s")
 
-    if ctrl_type == 'brt':
+    if ctrl_type == 'brat':
         if result.get('phase_transition_time') is not None:
-            print(f"Entered BRT (Phase 2) at t={result['phase_transition_time']:.2f}s")
+            print(f"Entered BRAT (Phase 2) at t={result['phase_transition_time']:.2f}s")
         else:
-            print("Never entered BRT (stayed in Phase 1)")
+            print("Never entered BRAT (stayed in Phase 1)")
         phases = result.get('phases', np.array([]))
         if len(phases) > 0:
             print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
@@ -484,21 +455,10 @@ def run_single(args):
         if len(phases) > 0:
             print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
             print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
-        if result.get('brt_entry_time') is not None:
-            print(f"Entered BRT (Phase 2) at t={result['brt_entry_time']:.2f}s")
+        if result.get('brat_entry_time') is not None:
+            print(f"Entered BRAT (Phase 2) at t={result['brat_entry_time']:.2f}s")
         else:
-            print("Never entered BRT (stayed in Phase 1)")
-
-    if ctrl_type == 'cascaded_mpc_terminal':
-        phases = result.get('phases', np.array([]))
-        if len(phases) > 0:
-            print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
-            print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
-            print(f"Time in Phase 3: {np.sum(phases == 3) * args.dt:.1f}s")
-        if result.get('outer_entry_time') is not None:
-            print(f"Entered outer BRT (Phase 2) at t={result['outer_entry_time']:.2f}s")
-        if result.get('inner_entry_time') is not None:
-            print(f"Entered inner BRT (Phase 3) at t={result['inner_entry_time']:.2f}s")
+            print("Never entered BRAT (stayed in Phase 1)")
 
     # Safety filter stats
     sf_mode = result.get('safety_filter_mode', 0)
@@ -540,21 +500,11 @@ def run_single(args):
 
     # Animation
     if not args.no_animation:
-        if ctrl_type == 'brt' and not args.no_value_function:
-            # BRT-specific animation with value-function heatmap
+        if ctrl_type == 'brat' and not args.no_value_function:
+            # BRAT-specific animation with value-function heatmap
             anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
-            print(f"Generating BRT animation (with value function): {anim_path}")
-            create_deepreach_animation(
-                controller, result, anim_path,
-                skip_frames=args.skip_frames,
-                resolution=args.resolution,
-                show_value_function=True,
-            )
-        elif ctrl_type == 'cascaded_brt' and not args.no_value_function:
-            # Cascaded BRT animation with phase-aware value function
-            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
-            print(f"Generating Cascaded BRT animation (with value function): {anim_path}")
-            create_cascaded_deepreach_animation(
+            print(f"Generating BRAT animation (with value function): {anim_path}")
+            create_brat_animation(
                 controller, result, anim_path,
                 skip_frames=args.skip_frames,
                 resolution=args.resolution,
@@ -565,16 +515,6 @@ def run_single(args):
             anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
             print(f"Generating MPC+Terminal animation (with value function): {anim_path}")
             create_mpc_terminal_animation(
-                controller, result, anim_path,
-                skip_frames=args.skip_frames,
-                resolution=args.resolution,
-                show_value_function=True,
-            )
-        elif ctrl_type == 'cascaded_mpc_terminal' and not args.no_value_function:
-            # Cascaded MPC+Terminal animation with 3-phase value function
-            anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
-            print(f"Generating Cascaded MPC+Terminal animation (with value function): {anim_path}")
-            create_cascaded_mpc_terminal_animation(
                 controller, result, anim_path,
                 skip_frames=args.skip_frames,
                 resolution=args.resolution,
@@ -619,7 +559,7 @@ def run_compare(args):
     if avoid_ckpt and os.path.exists(avoid_ckpt):
         try:
             avoid_ckpt_resolved = SafetyFilter._resolve_checkpoint(avoid_ckpt)
-            avoid_ctrl = BRTController(
+            avoid_ctrl = BRATController(
                 checkpoint_path=avoid_ckpt_resolved,
                 device=args.device,
             )
@@ -634,18 +574,18 @@ def run_compare(args):
         print(f"  Avoid checkpoint not found at "
               f"{avoid_ckpt!r}, skipping avoid-BRT filter.")
 
-    # Optionally build a value-function filter for BRT-based IC sampling
+    # Optionally build a value-function filter for BRAT-based IC sampling
     value_filter_fn = None
-    if getattr(args, 'sampling_method', 'uniform') == 'brt':
-        print(f"Loading model for BRT IC filtering (tMax={args.tMax}) ...")
-        query_ctrl = BRTController(
+    if getattr(args, 'sampling_method', 'uniform') == 'brat':
+        print(f"Loading model for BRAT IC filtering (tMax={args.tMax}) ...")
+        query_ctrl = BRATController(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             device=args.device,
         )
         value_filter_fn = lambda states: query_ctrl.get_values_batch_states(
             states, args.tMax)
-        print(f"  BRT filter ready — ICs will satisfy V(x, {args.tMax}) <= 0")
+        print(f"  BRAT filter ready — ICs will satisfy V(x, {args.tMax}) <= 0")
 
     # Sample initial conditions
     sampling_label = getattr(args, 'sampling_method', 'uniform')
@@ -833,18 +773,13 @@ def _add_shared_args(parser):
     parser.add_argument('--output_dir', type=str, default='./outputs/controller',
                         help='Directory to save outputs')
     parser.add_argument('--tMax', type=float, default=15.0,
-                        help='BRT / terminal cost time horizon')
+                        help='BRAT / terminal cost time horizon')
     parser.add_argument('--dt', type=float, default=0.1,
                         help='Control / integration timestep (s)')
     parser.add_argument('--max_sim_time', type=float, default=30.0,
                         help='Maximum simulation time (s)')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Torch device')
-    # Cascaded controller args
-    parser.add_argument('--inner_checkpoint_path', type=str, default=None,
-                        help='Path to inner (short-horizon) model checkpoint (cascaded controllers)')
-    parser.add_argument('--inner_tMax', type=float, default=3.0,
-                        help='Inner BRT time horizon (cascaded controllers)')
     # MPC-specific
     parser.add_argument('--planning_horizon', type=float, default=3.0,
                         help='MPC-only planning horizon (s)')
@@ -867,7 +802,7 @@ def _add_shared_args(parser):
                              'mode (default 3.0)')
     parser.add_argument('--exploration_patience', type=int, default=1,
                         help='Number of stagnation windows (each ~5 s) in '
-                             'EXPLORING mode before switching to BRT '
+                             'EXPLORING mode before switching to BRAT '
                              'fallback (default 1)')
     parser.add_argument('--escape_thresh', type=float, default=0.5,
                         help='Distance improvement (m) from stagnation entry '
@@ -885,11 +820,14 @@ def _add_shared_args(parser):
                         default='runs/Docking6D_RA_avoid',
                         help='Path to avoid-only BRT checkpoint dir or .pth '
                              'file (default: runs/Docking6D_RA_avoid)')
-    parser.add_argument('--safety_filter_margin', type=float, default=0.02,
-                        help='Mode 1 activation margin delta (meters). '
-                             'Safety overrides when V_avoid <= delta. '
-                             'Same units as avoid_fn signed distance '
+    parser.add_argument('--safety_margin_phase1', type=float, default=0.1,
+                        help='Safety filter margin when outside BRAT (Phase 1). '
+                             'Higher value triggers filter earlier. '
                              '(default: 0.1)')
+    parser.add_argument('--safety_margin_phase2', type=float, default=0.02,
+                        help='Safety filter margin when inside BRAT (Phase 2). '
+                             'Lower value for minimal intervention. '
+                             '(default: 0.02)')
     parser.add_argument('--safety_filter_gamma', type=float, default=0.2,
                         help='Mode 2 CBF decay rate gamma '
                              '(default: 0.2, from ComboControl)')
@@ -901,8 +839,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python run_controller.py single  --controller brt\n"
-            "  python run_controller.py compare --controllers brt mpc mpc_terminal\n"
+            "  python run_controller.py single  --controller brat\n"
+            "  python run_controller.py compare --controllers brat mpc mpc_terminal\n"
         ),
     )
     subparsers = parser.add_subparsers(dest='command', required=True)
@@ -912,8 +850,8 @@ def main():
         'single', help='Run one controller from a specified initial condition')
     _add_shared_args(sp_single)
     sp_single.add_argument(
-        '--controller', type=str, default='brt',
-        choices=['brt', 'mpc', 'mpc_terminal', 'cascaded_brt', 'cascaded_mpc_terminal'],
+        '--controller', type=str, default='brat',
+        choices=['brat', 'mpc', 'mpc_terminal'],
         help='Controller type to run')
     # Initial state
     sp_single.add_argument('--initial_px',    type=float, default=2.0)
@@ -926,9 +864,9 @@ def main():
     sp_single.add_argument('--no_animation', action='store_true',
                            help='Skip animation generation')
     sp_single.add_argument('--no_value_function', action='store_true',
-                           help='Skip value-function heatmap in BRT animation')
+                           help='Skip value-function heatmap in BRAT animation')
     sp_single.add_argument('--resolution', type=int, default=40,
-                           help='Value-function grid resolution (BRT only)')
+                           help='Value-function grid resolution (BRAT only)')
 
     # ---- compare ----
     sp_compare = subparsers.add_parser(
@@ -936,17 +874,17 @@ def main():
     _add_shared_args(sp_compare)
     sp_compare.add_argument(
         '--controllers', type=str, nargs='+',
-        default=['brt', 'mpc', 'mpc_terminal'],
-        choices=['brt', 'mpc', 'mpc_terminal', 'cascaded_brt', 'cascaded_mpc_terminal'],
+        default=['brat', 'mpc', 'mpc_terminal'],
+        choices=['brat', 'mpc', 'mpc_terminal'],
         help='Controllers to compare')
     sp_compare.add_argument('--n_rollouts', type=int, default=50,
                             help='Number of rollouts per controller')
     sp_compare.add_argument('--seed', type=int, default=1,
                             help='Random seed for IC sampling')
     sp_compare.add_argument('--sampling_method', type=str, default='uniform',
-                            choices=['uniform', 'brt'],
+                            choices=['uniform', 'brat'],
                             help='IC sampling method: "uniform" = geometric '
-                                 'constraints only; "brt" = additionally '
+                                 'constraints only; "brat" = additionally '
                                  'require V(x, tMax) <= 0 (inside learned BRAT)')
     sp_compare.add_argument('--animate', action='store_true',
                             help='Generate comparison animation for first IC')

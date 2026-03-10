@@ -2,12 +2,12 @@
 Unified animation and static plotting for any combination of controllers.
 
 Supports visualising one trajectory (with oriented chaser) or overlaying all
-three controller types (BRT, MPC, MPC+Terminal) for side-by-side comparison.
+three controller types (BRAT, MPC, MPC+Terminal) for side-by-side comparison.
 
 Usage:
     from utils.controllers.controller_animation import animate_trajectories, plot_trajectories_static
 
-    results = {"BRT": brt_result, "MPC": mpc_result, "MPC+Terminal": term_result}
+    results = {"BRAT": brat_result, "MPC": mpc_result, "MPC+Terminal": term_result}
     animate_trajectories(results, dynamics, "comparison.mp4")
     plot_trajectories_static(results, dynamics, "comparison.png")
 """
@@ -22,30 +22,26 @@ import os
 
 # Default colour palette per controller type
 CONTROLLER_COLORS = {
-    'brt': '#1f77b4',            # blue
+    'brat': '#1f77b4',           # blue
     'mpc': '#ff7f0e',            # orange
     'mpc_terminal': '#2ca02c',   # green
-    'cascaded_brt': '#d62728',   # red
-    'cascaded_mpc_terminal': '#9467bd',  # purple
 }
 
 CONTROLLER_LABELS = {
-    'brt': 'BRT',
+    'brat': 'BRAT',
     'mpc': 'MPC',
     'mpc_terminal': 'MPC+Terminal',
-    'cascaded_brt': 'Cascaded BRT',
-    'cascaded_mpc_terminal': 'Cascaded MPC+Terminal',
 }
 
 
 def _get_color(result):
     """Return the colour for a result dict based on controller_type."""
-    ctype = result.get('controller_type', 'brt')
+    ctype = result.get('controller_type', 'brat')
     return CONTROLLER_COLORS.get(ctype, '#1f77b4')
 
 
 def _get_label(result):
-    ctype = result.get('controller_type', 'brt')
+    ctype = result.get('controller_type', 'brat')
     return CONTROLLER_LABELS.get(ctype, ctype)
 
 
@@ -97,7 +93,7 @@ def animate_trajectories(results_dict, dynamics, save_path,
 
     Args:
         results_dict: dict mapping display-name -> sim_result dict
-                      e.g. {"BRT": brt_result, "MPC": mpc_result, ...}
+                      e.g. {"BRAT": brat_result, "MPC": mpc_result, ...}
         dynamics:     Docking6D dynamics instance (for geometry parameters).
         save_path:    Where to save the mp4.
         skip_frames:  Frame decimation factor.
@@ -424,8 +420,8 @@ def plot_simulation_data_multi(results_dict, save_path=None):
     # Distance to goal: 0
     axes[2, 0].axhline(0, color='black', linestyle=':', linewidth=1.5, alpha=0.5, label='Goal')
     
-    # Value: BRT boundary at 0
-    axes[2, 1].axhline(0, color='black', linestyle=':', linewidth=1.5, alpha=0.5, label='BRT boundary')
+    # Value: BRAT boundary at 0
+    axes[2, 1].axhline(0, color='black', linestyle=':', linewidth=1.5, alpha=0.5, label='BRAT boundary')
 
     plt.tight_layout()
 

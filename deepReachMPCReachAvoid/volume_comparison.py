@@ -10,9 +10,9 @@ BRAT HJI-VI PDE loss.
 
 This script:
   1. Loads / solves the grid-based value functions (with caching).
-  2. Loads the DeepReach model via BRTController.
+  2. Loads the DeepReach model via BRATController.
   3. Evaluates both value functions on 2D slices through state space.
-  4. Computes a Monte-Carlo estimate of 6D BRT volumes.
+  4. Computes a Monte-Carlo estimate of 6D BRAT volumes.
   5. Produces side-by-side contour plots and a volume summary table.
 
 Known limitations (documented per plan):
@@ -53,7 +53,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'gridBased6DImplementation'))
 
-from utils.controllers import BRTController
+from utils.controllers import BRATController
 
 # Grid-based imports (deferred to avoid import errors when JAX not available)
 _combo_module = None
@@ -122,9 +122,9 @@ def grid_value_6D(combo, states_6d, time_idx):
 # ======================================================================
 #  DeepReach value query helper (batched)
 # ======================================================================
-def deepreach_value_6D(brt_ctrl, states_6d, t_physical):
+def deepreach_value_6D(brat_ctrl, states_6d, t_physical):
     """Query the DeepReach value function for (N, 6) states at time t."""
-    return brt_ctrl.get_values_batch_states(states_6d, t_physical)
+    return brat_ctrl.get_values_batch_states(states_6d, t_physical)
 
 
 # ======================================================================
@@ -168,7 +168,7 @@ STATE_BOUNDS = np.array([
 # ======================================================================
 #  Slice evaluation
 # ======================================================================
-def evaluate_slice(combo, brt_ctrl, slice_def, t_physical, resolution,
+def evaluate_slice(combo, brat_ctrl, slice_def, t_physical, resolution,
                    grid_times):
     """Evaluate both value functions on a 2D grid for a given slice.
 
@@ -201,7 +201,7 @@ def evaluate_slice(combo, brt_ctrl, slice_def, t_physical, resolution,
     gv = grid_value_6D(combo, states, t_idx).reshape(xx.shape)
 
     # DeepReach value
-    dv = deepreach_value_6D(brt_ctrl, states, t_physical).reshape(xx.shape)
+    dv = deepreach_value_6D(brat_ctrl, states, t_physical).reshape(xx.shape)
 
     extent = [lo0, hi0, lo1, hi1]
     return {
@@ -216,9 +216,9 @@ def evaluate_slice(combo, brt_ctrl, slice_def, t_physical, resolution,
 # ======================================================================
 #  Monte Carlo volume estimation
 # ======================================================================
-def monte_carlo_volume(combo, brt_ctrl, t_physical, grid_times, n_samples,
+def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
                        seed=42):
-    """Estimate 6D BRT volumes via uniform random sampling.
+    """Estimate 6D BRAT volumes via uniform random sampling.
 
     Returns dict with keys:
         grid_frac, dr_frac, overlap_frac, grid_only_frac, dr_only_frac,
@@ -237,7 +237,7 @@ def monte_carlo_volume(combo, brt_ctrl, t_physical, grid_times, n_samples,
     for i in range(0, n_samples, chunk):
         s = states[i:i+chunk]
         gv_all.append(grid_value_6D(combo, s, t_idx))
-        dv_all.append(deepreach_value_6D(brt_ctrl, s, t_physical))
+        dv_all.append(deepreach_value_6D(brat_ctrl, s, t_physical))
 
     gv = np.concatenate(gv_all)
     dv = np.concatenate(dv_all)
@@ -310,7 +310,7 @@ def plot_slice_comparison(slice_result, slice_def, t_physical, save_path):
     axes[2].imshow(zone, origin='lower', aspect='auto',
                    extent=slice_result['extent'], cmap=cmap_zone,
                    vmin=0, vmax=3, interpolation='nearest')
-    axes[2].set_title('BRT overlap')
+    axes[2].set_title('BRAT overlap')
     axes[2].set_xlabel(xlabel); axes[2].set_ylabel(ylabel)
     # Legend
     import matplotlib.patches as mpatches
@@ -330,19 +330,19 @@ def plot_slice_comparison(slice_result, slice_def, t_physical, save_path):
 
 
 def plot_volume_vs_time(volume_results, save_path):
-    """Line chart of BRT volume fraction vs. time horizon for both methods."""
+    """Line chart of BRAT volume fraction vs. time horizon for both methods."""
     times = sorted(volume_results.keys())
     grid_fracs = [volume_results[t]['grid_frac'] for t in times]
     dr_fracs   = [volume_results[t]['dr_frac']   for t in times]
     overlap    = [volume_results[t]['overlap_frac'] for t in times]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(times, grid_fracs, 'o-', color='#fc8d62', label='Grid BRT', lw=2)
-    ax.plot(times, dr_fracs,   's-', color='#66c2a5', label='DeepReach BRT', lw=2)
+    ax.plot(times, grid_fracs, 'o-', color='#fc8d62', label='Grid BRAT', lw=2)
+    ax.plot(times, dr_fracs,   's-', color='#66c2a5', label='DeepReach BRAT', lw=2)
     ax.plot(times, overlap,    '^--', color='#8da0cb', label='Overlap', lw=1.5)
     ax.set_xlabel('Time Horizon (s)')
-    ax.set_ylabel('BRT Volume Fraction')
-    ax.set_title('BRT Volume vs. Time Horizon (Monte Carlo)')
+    ax.set_ylabel('BRAT Volume Fraction')
+    ax.set_title('BRAT Volume vs. Time Horizon (Monte Carlo)')
     ax.legend()
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -354,7 +354,7 @@ def plot_volume_vs_time(volume_results, save_path):
 
 def print_volume_table(volume_results):
     """Print a formatted volume comparison table to stdout."""
-    header = (f"{'Time(s)':>8} {'Grid BRT%':>10} {'DR BRT%':>10} "
+    header = (f"{'Time(s)':>8} {'Grid BRAT%':>11} {'DR BRAT%':>11} "
               f"{'Overlap%':>10} {'Grid-only%':>11} {'DR-only%':>10} "
               f"{'Jaccard':>8}")
     sep = '-' * len(header)
@@ -411,7 +411,7 @@ def main():
     print('Loading DeepReach model ...')
     print('=' * 60)
     t0 = time.time()
-    brt_ctrl = BRTController(
+    brat_ctrl = BRATController(
         checkpoint_path=args.checkpoint_path,
         tMax=args.tMax,
         device=args.device,
@@ -455,7 +455,7 @@ def main():
     for sl in DEFAULT_SLICES:
         for t_phys in args.time_horizons:
             print(f"  Slice '{sl['name']}' at t={t_phys:.0f}s ...")
-            res = evaluate_slice(combo, brt_ctrl, sl, t_phys,
+            res = evaluate_slice(combo, brat_ctrl, sl, t_phys,
                                  args.slice_resolution, grid_times)
             slice_results[(sl['name'], t_phys)] = res
 
@@ -471,7 +471,7 @@ def main():
     for t_phys in args.time_horizons:
         print(f"  t={t_phys:.0f}s  (N={args.n_monte_carlo:,}) ...")
         t0 = time.time()
-        vol = monte_carlo_volume(combo, brt_ctrl, t_phys, grid_times,
+        vol = monte_carlo_volume(combo, brat_ctrl, t_phys, grid_times,
                                  args.n_monte_carlo, seed=args.seed)
         print(f"    done in {time.time() - t0:.1f}s  |  "
               f"grid={vol['grid_frac']*100:.2f}%  "

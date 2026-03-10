@@ -1,5 +1,5 @@
 """
-Animation module for BRT-based docking visualization.
+Animation module for BRAT-based docking visualization.
 
 Creates animated visualizations showing:
 - Time-varying learned value function (static in Phase 1, shrinking in Phase 2)
@@ -20,7 +20,7 @@ from tqdm import tqdm
 import os
 
 
-def create_deepreach_animation(controller, sim_result, save_path, 
+def create_brat_animation(controller, sim_result, save_path, 
                                 skip_frames=10, resolution=40,
                                 show_value_function=True):
     """
@@ -31,7 +31,7 @@ def create_deepreach_animation(controller, sim_result, save_path,
     - Phase 2 (Precision): Shrinking heatmap of V(x, t_remaining)
     
     Args:
-        controller: BRTController instance with loaded dynamics
+        controller: BRATController instance with loaded dynamics
         sim_result: Dictionary from controller.simulate_docking() containing:
             - trajectory: (N, 6) state trajectory
             - controls: (N, 3) control inputs
@@ -86,7 +86,7 @@ def create_deepreach_animation(controller, sim_result, save_path,
     ax.grid(True, linestyle='--', alpha=0.5)
     ax.set_xlabel('x (m)', fontsize=12)
     ax.set_ylabel('y (m)', fontsize=12)
-    ax.set_title('DeepReach BRT-Based Docking Control', fontsize=14)
+    ax.set_title('DeepReach BRAT-Based Docking Control', fontsize=14)
     
     # Precompute value function grid coordinates
     x_range = np.linspace(-15, 15, resolution)
@@ -124,7 +124,7 @@ def create_deepreach_animation(controller, sim_result, save_path,
         vmin, vmax = -1.0, 1.0
     
     # Colormap
-    cmap = plt.cm.RdBu_r  # Red=negative (inside BRT), Blue=positive (outside)
+    cmap = plt.cm.RdBu_r  # Red=negative (inside BRAT), Blue=positive (outside)
     
     # Add colorbar (will be updated dynamically)
     # Store as dictionary to allow modification in animate function
@@ -191,7 +191,7 @@ def create_deepreach_animation(controller, sim_result, save_path,
     # Trajectory trace
     trace, = ax.plot([], [], '--', linewidth=2, color='orange', zorder=25, label='Trajectory')
     
-    # BRT boundary contour (will be updated)
+    # BRAT boundary contour (will be updated)
     contour_artists = {'filled': None, 'lines': None}
     
     # Text elements
@@ -390,366 +390,6 @@ def create_deepreach_animation(controller, sim_result, save_path,
     return fig, ani
 
 
-def create_cascaded_deepreach_animation(controller, sim_result, save_path,
-                                         skip_frames=10, resolution=40,
-                                         show_value_function=True):
-    """
-    Animated docking visualization for the cascaded BRT controller
-    with phase-aware value-function heatmap.
-
-    The displayed value function switches depending on the active control phase:
-      Phase 1 (Approach):   V_outer(x, tMax_outer)  -- static outer BRT
-      Phase 2 (Outer BRT):  V_outer(x, t_remaining) -- shrinking outer BRT
-      Phase 3 (Inner BRT):  V_inner(x, t_remaining) -- shrinking inner BRT
-
-    Args:
-        controller: CascadedBRTController instance.
-        sim_result: dict returned by controller.simulate_docking().
-        save_path:  Output mp4 path.
-        skip_frames: Frame decimation factor.
-        resolution: Grid resolution for value-function heatmap.
-        show_value_function: Whether to render the background heatmap.
-
-    Returns:
-        (fig, ani) matplotlib objects.
-    """
-    # ----- Extract data -----
-    trajectory = sim_result['trajectory']
-    phases     = sim_result['phases']
-    t_remaining_history = sim_result['t_remaining']
-    times  = sim_result['times']
-    values = sim_result['values']
-    sf_log = sim_result.get('safety_filter_log', [])
-    sf_mode = sim_result.get('safety_filter_mode', 0)
-
-    px    = trajectory[:, 0]
-    py    = trajectory[:, 1]
-    vx    = trajectory[:, 2]
-    vy    = trajectory[:, 3]
-    theta = trajectory[:, 4]
-    omega = trajectory[:, 5]
-
-    dynamics   = controller.dynamics
-    outer_tMax = controller.outer.tMax
-    inner_tMax = controller.inner.tMax
-
-    # Geometry
-    w_t      = dynamics.w_t
-    h_t      = dynamics.h_t
-    post_hw_x = dynamics.post_hw_x
-    post_length = dynamics.post_length
-    w_c      = dynamics.w_c
-    h_c      = dynamics.h_c
-    eps_p    = dynamics.eps_p
-
-    # ----- Figure setup -----
-    fig, ax = plt.subplots(figsize=(12, 10), dpi=100)
-    ax.set_xlim([-15, 15])
-    ax.set_ylim([-15, 15])
-    ax.set_aspect('equal')
-    ax.grid(True, linestyle='--', alpha=0.5)
-    ax.set_xlabel('x (m)', fontsize=12)
-    ax.set_ylabel('y (m)', fontsize=12)
-    ax.set_title('Cascaded BRT Docking Control', fontsize=14)
-
-    # Value-function grid
-    x_range = np.linspace(-15, 15, resolution)
-    y_range = np.linspace(-15, 15, resolution)
-    X, Y = np.meshgrid(x_range, y_range, indexing='ij')
-
-    cmap = plt.cm.RdBu_r
-
-    # Sample value range for colourbar
-    if show_value_function:
-        print("Computing value function range (outer + inner)...")
-        sample_values = []
-        for ctrl_sub, t_max in [(controller.outer, outer_tMax),
-                                 (controller.inner, inner_tMax)]:
-            for t in [t_max, t_max / 2, t_max / 4, 0.1]:
-                for i in range(0, resolution, 5):
-                    for j in range(0, resolution, 5):
-                        state = np.array([X[i, j], Y[i, j], 0, 0, np.pi / 2, 0])
-                        try:
-                            v = ctrl_sub.get_value(state, t)
-                            if np.isfinite(v):
-                                sample_values.append(v)
-                        except Exception:
-                            pass
-        if sample_values:
-            vmin = max(-2.0, np.percentile(sample_values, 5))
-            vmax = min(2.0, np.percentile(sample_values, 95))
-            if vmin >= vmax:
-                vmin, vmax = -1.0, 1.0
-        else:
-            vmin, vmax = -1.0, 1.0
-        print(f"Value function range: [{vmin:.2f}, {vmax:.2f}]")
-    else:
-        vmin, vmax = -1.0, 1.0
-
-    colorbar_info = {'sm': None, 'cbar': None}
-    if show_value_function:
-        norm = Normalize(vmin=vmin, vmax=vmax)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-        cbar.set_label('Value Function V(x, t)', fontsize=11)
-        colorbar_info['sm'] = sm
-        colorbar_info['cbar'] = cbar
-
-    # ---- Static scene ----
-    target_body = mpatches.Rectangle(
-        (-w_t / 2, 0), w_t, h_t,
-        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20,
-        label='Target Spacecraft')
-    ax.add_patch(target_body)
-
-    docking_post = mpatches.Rectangle(
-        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
-        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
-    ax.add_patch(docking_post)
-
-    dock_marker = mpatches.Circle(
-        (0, -post_length), radius=0.15,
-        facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
-    ax.add_patch(dock_marker)
-
-    goal_set = mpatches.Rectangle(
-        (-eps_p, dynamics.goal_y_min), 2 * eps_p, dynamics.goal_y_max - dynamics.goal_y_min,
-        facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
-        label='Goal Set')
-    ax.add_patch(goal_set)
-
-    # ---- Dynamic elements ----
-    chaser = mpatches.Rectangle(
-        (-w_c / 2, -h_c / 2), w_c, h_c,
-        facecolor='#d62728', edgecolor='black', alpha=0.9, zorder=30)
-    ax.add_patch(chaser)
-
-    marker_patch = mpatches.RegularPolygon(
-        (0, 0), 3, radius=w_c / 3,
-        orientation=0, facecolor='yellow', edgecolor='black',
-        alpha=0.9, zorder=31)
-    ax.add_patch(marker_patch)
-
-    trace, = ax.plot([], [], '--', linewidth=2, color='orange', zorder=25,
-                     label='Trajectory')
-
-    contour_artists = {'filled': None, 'lines': None}
-
-    time_text = ax.text(
-        0.02, 0.98, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    phase_text = ax.text(
-        0.02, 0.88, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    value_text = ax.text(
-        0.02, 0.78, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    safety_filter_text = ax.text(
-        0.02, 0.70, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    safety_filter_text.set_visible(sf_mode > 0)
-
-    ax.legend(loc='upper right', fontsize=10)
-
-    # ---- Value-function cache ----
-    value_cache = {}
-    chaser_base_color = '#d62728'
-
-    def compute_value_grid(model_tag, ctrl_sub, t_query,
-                           cur_vx, cur_vy, cur_theta, cur_omega):
-        cache_key = (model_tag, round(t_query, 2),
-                     round(cur_vx, 1), round(cur_vy, 1))
-        if cache_key in value_cache:
-            return value_cache[cache_key]
-
-        V = np.zeros((resolution, resolution))
-        for i in range(resolution):
-            for j in range(resolution):
-                state = np.array([X[i, j], Y[i, j],
-                                  cur_vx, cur_vy, cur_theta, cur_omega])
-                try:
-                    V[i, j] = ctrl_sub.get_value(state, t_query)
-                except Exception:
-                    V[i, j] = np.nan
-
-        if len(value_cache) > 100:
-            for key in list(value_cache.keys())[:50]:
-                del value_cache[key]
-        value_cache[cache_key] = V
-        return V
-
-    # ---- Animation callback ----
-    def animate(k):
-        cur_theta  = theta[k]
-        cur_vx     = vx[k]
-        cur_vy     = vy[k]
-        cur_omega  = omega[k]
-        cur_phase  = phases[k]
-        cur_t_rem  = t_remaining_history[k]
-        cur_time   = times[k]
-        cur_value  = values[k]
-
-        # Chaser transform
-        t_c = (mtransforms.Affine2D()
-               .rotate(cur_theta)
-               .translate(px[k], py[k]) + ax.transData)
-        chaser.set_transform(t_c)
-
-        mx = px[k] + (w_c / 2) * np.cos(cur_theta)
-        my = py[k] + (w_c / 2) * np.sin(cur_theta)
-        t_m = (mtransforms.Affine2D()
-               .rotate(cur_theta + np.pi / 2)
-               .translate(mx, my) + ax.transData)
-        marker_patch.set_transform(t_m)
-
-        trace.set_data(px[:k + 1], py[:k + 1])
-
-        # Time
-        time_text.set_text(f'Time: {cur_time:.2f}s')
-
-        # Phase label
-        if cur_phase == 1:
-            phase_text.set_text(
-                f'Phase 1: Approach\n'
-                f'Active: Outer BRT  V(x, tMax={outer_tMax:.1f}s)')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-        elif cur_phase == 2:
-            phase_text.set_text(
-                f'Phase 2: Transit (Outer BRT)\n'
-                f't_remaining = {cur_t_rem:.2f}s')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-        else:
-            phase_text.set_text(
-                f'Phase 3: Precision (Inner BRT)\n'
-                f't_remaining = {cur_t_rem:.2f}s')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-
-        # Value
-        value_text.set_text(f'V(x, t) = {cur_value:.3f}')
-        if cur_value <= 0:
-            value_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-        else:
-            value_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-
-        # Safety filter status
-        sf_active = False
-        if sf_mode > 0 and k < len(sf_log):
-            entry = sf_log[k]
-            if sf_mode == 1:
-                sf_active = entry.get('filter_active', False)
-            else:
-                sf_active = entry.get('alpha_effective', 0) > 1e-6
-        if sf_mode > 0:
-            safety_filter_text.set_visible(True)
-            if sf_active:
-                safety_filter_text.set_text('Safety filter: ACTIVE')
-                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
-                chaser.set_facecolor('#ff6b6b')
-                chaser.set_edgecolor('red')
-            else:
-                safety_filter_text.set_text('Safety filter: inactive')
-                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
-                chaser.set_facecolor(chaser_base_color)
-                chaser.set_edgecolor('black')
-        else:
-            safety_filter_text.set_visible(False)
-
-        # Heatmap
-        if show_value_function:
-            for tp in ['filled', 'lines']:
-                if contour_artists[tp] is not None:
-                    for coll in contour_artists[tp].collections:
-                        try:
-                            coll.remove()
-                        except Exception:
-                            pass
-
-            if cur_phase == 1:
-                ctrl_sub  = controller.outer
-                t_query   = outer_tMax
-                model_tag = 'outer'
-            elif cur_phase == 2:
-                ctrl_sub  = controller.outer
-                t_query   = max(cur_t_rem, 0.1)
-                model_tag = 'outer'
-            else:
-                ctrl_sub  = controller.inner
-                t_query   = max(cur_t_rem, 0.1)
-                model_tag = 'inner'
-
-            V = compute_value_grid(model_tag, ctrl_sub, t_query,
-                                   cur_vx, cur_vy, cur_theta, cur_omega)
-
-            V_finite = V[np.isfinite(V)]
-            if len(V_finite) > 0:
-                cur_vmin = max(-3.0, np.percentile(V_finite, 5))
-                cur_vmax = min(3.0, np.percentile(V_finite, 95))
-                if cur_vmax - cur_vmin < 0.1:
-                    mid = (cur_vmin + cur_vmax) / 2
-                    cur_vmin = mid - 0.5
-                    cur_vmax = mid + 0.5
-            else:
-                cur_vmin, cur_vmax = -1.0, 1.0
-
-            try:
-                contour_artists['filled'] = ax.contourf(
-                    X, Y, V, levels=20, cmap=cmap, alpha=0.6,
-                    vmin=cur_vmin, vmax=cur_vmax, zorder=5)
-                contour_artists['lines'] = ax.contour(
-                    X, Y, V, levels=[0], colors=['black'],
-                    linewidths=2.5, zorder=10)
-
-                if colorbar_info['sm'] is not None:
-                    new_norm = Normalize(vmin=cur_vmin, vmax=cur_vmax)
-                    colorbar_info['sm'].set_norm(new_norm)
-                    colorbar_info['cbar'].update_normal(colorbar_info['sm'])
-                    brt_label = 'outer' if model_tag == 'outer' else 'inner'
-                    colorbar_info['cbar'].set_label(
-                        f'V_{brt_label}(x, t={t_query:.1f}s)', fontsize=11)
-            except Exception:
-                pass
-
-        return chaser, marker_patch, trace, time_text, phase_text, value_text
-
-    # ---- Render ----
-    print(f"Creating cascaded animation with {len(times)} frames "
-          f"(skip={skip_frames})...")
-    frames = range(0, len(times), skip_frames)
-
-    ani = animation.FuncAnimation(
-        fig, animate, frames,
-        interval=controller.dt * 1000 * skip_frames,
-        blit=False)
-
-    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.',
-                exist_ok=True)
-    writer = animation.FFMpegWriter(
-        fps=min(30, int(1 / (controller.dt * skip_frames))))
-
-    print(f"Saving animation to {save_path}...")
-    try:
-        with tqdm(total=len(list(frames)), desc="Rendering") as pbar:
-            ani.save(save_path, writer=writer,
-                     progress_callback=lambda i, n: pbar.update(1))
-        print(f"Animation saved to {save_path}")
-    except Exception as e:
-        print(f"Error with progress bar, trying without: {e}")
-        ani.save(save_path, writer=writer)
-        print(f"Animation saved to {save_path}")
-
-    plt.close(fig)
-    return fig, ani
-
 
 def create_mpc_terminal_animation(controller, sim_result, save_path,
                                    skip_frames=10, resolution=40,
@@ -758,8 +398,8 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
     Animated docking visualization for the MPC + Terminal Cost controller
     with phase-aware value-function heatmap.
 
-    Phase 1 (Approach):  V(x, tMax)         -- static BRT
-    Phase 2 (Tracking):  V(x, t_remaining)  -- shrinking BRT (permanent countdown)
+    Phase 1 (Approach):  V(x, tMax)         -- static BRAT
+    Phase 2 (Tracking):  V(x, t_remaining)  -- shrinking BRAT (permanent countdown)
 
     Args:
         controller: MPCTerminalController instance (must have get_value method).
@@ -1090,376 +730,16 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
     return fig, ani
 
 
-def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
-                                            skip_frames=10, resolution=40,
-                                            show_value_function=True):
-    """
-    Animated docking visualization for the Cascaded MPC + Terminal Cost
-    controller with 3-phase value-function heatmap.
-
-    Phase 1 (Approach):   V_outer(x, outer_tMax)        -- static outer BRT
-    Phase 2 (Transit):    V_outer(x, outer_t_remaining)  -- shrinking outer BRT
-    Phase 3 (Precision):  V_inner(x, inner_t_remaining)  -- shrinking inner BRT
-
-    Args:
-        controller: CascadedMPCTerminalController instance
-                    (must have get_value_outer / get_value_inner methods).
-        sim_result: dict returned by controller.simulate_docking().
-        save_path:  Output mp4 path.
-        skip_frames: Frame decimation factor.
-        resolution: Grid resolution for value-function heatmap.
-        show_value_function: Whether to render the background heatmap.
-
-    Returns:
-        (fig, ani) matplotlib objects.
-    """
-    # ----- Extract data -----
-    trajectory = sim_result['trajectory']
-    phases     = sim_result['phases']
-    t_remaining_history = sim_result['t_remaining']
-    times  = sim_result['times']
-    values = sim_result['values']
-    sf_log = sim_result.get('safety_filter_log', [])
-    sf_mode = sim_result.get('safety_filter_mode', 0)
-
-    px    = trajectory[:, 0]
-    py    = trajectory[:, 1]
-    vx    = trajectory[:, 2]
-    vy    = trajectory[:, 3]
-    theta = trajectory[:, 4]
-    omega = trajectory[:, 5]
-
-    dynamics   = controller.dynamics
-    outer_tMax = controller.outer_tMax
-    inner_tMax = controller.inner_tMax
-
-    # Geometry
-    w_t      = dynamics.w_t
-    h_t      = dynamics.h_t
-    post_hw_x = dynamics.post_hw_x
-    post_length = dynamics.post_length
-    w_c      = dynamics.w_c
-    h_c      = dynamics.h_c
-    eps_p    = dynamics.eps_p
-
-    # ----- Figure setup -----
-    fig, ax = plt.subplots(figsize=(12, 10), dpi=100)
-    ax.set_xlim([-15, 15])
-    ax.set_ylim([-15, 15])
-    ax.set_aspect('equal')
-    ax.grid(True, linestyle='--', alpha=0.5)
-    ax.set_xlabel('x (m)', fontsize=12)
-    ax.set_ylabel('y (m)', fontsize=12)
-    ax.set_title('Cascaded MPC + Terminal Cost Docking Control', fontsize=14)
-
-    # Value-function grid
-    x_range = np.linspace(-15, 15, resolution)
-    y_range = np.linspace(-15, 15, resolution)
-    X, Y = np.meshgrid(x_range, y_range, indexing='ij')
-
-    cmap = plt.cm.RdBu_r
-
-    # Compute colourbar range (sample both outer and inner)
-    if show_value_function:
-        print("Computing value function range (outer + inner)...")
-        sample_values = []
-        for get_val_fn, t_max in [(controller.get_value_outer, outer_tMax),
-                                   (controller.get_value_inner, inner_tMax)]:
-            for t in [t_max, t_max / 2, t_max / 4, 0.1]:
-                for i in range(0, resolution, 5):
-                    for j in range(0, resolution, 5):
-                        state = np.array([X[i, j], Y[i, j], 0, 0, np.pi / 2, 0])
-                        try:
-                            v = get_val_fn(state, t)
-                            if np.isfinite(v):
-                                sample_values.append(v)
-                        except Exception:
-                            pass
-        if sample_values:
-            vmin = max(-2.0, np.percentile(sample_values, 5))
-            vmax = min(2.0, np.percentile(sample_values, 95))
-            if vmin >= vmax:
-                vmin, vmax = -1.0, 1.0
-        else:
-            vmin, vmax = -1.0, 1.0
-        print(f"Value function range: [{vmin:.2f}, {vmax:.2f}]")
-    else:
-        vmin, vmax = -1.0, 1.0
-
-    colorbar_info = {'sm': None, 'cbar': None}
-    if show_value_function:
-        norm = Normalize(vmin=vmin, vmax=vmax)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-        cbar.set_label('Value Function V(x, t)', fontsize=11)
-        colorbar_info['sm'] = sm
-        colorbar_info['cbar'] = cbar
-
-    # ---- Static scene ----
-    target_body = mpatches.Rectangle(
-        (-w_t / 2, 0), w_t, h_t,
-        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20,
-        label='Target Spacecraft')
-    ax.add_patch(target_body)
-
-    docking_post = mpatches.Rectangle(
-        (-post_hw_x, -post_length), 2 * post_hw_x, post_length,
-        facecolor='gray', edgecolor='black', alpha=0.8, zorder=20)
-    ax.add_patch(docking_post)
-
-    dock_marker = mpatches.Circle(
-        (0, -post_length), radius=0.15,
-        facecolor='red', edgecolor='black', alpha=1.0, zorder=22)
-    ax.add_patch(dock_marker)
-
-    goal_set = mpatches.Rectangle(
-        (-eps_p, dynamics.goal_y_min), 2 * eps_p, dynamics.goal_y_max - dynamics.goal_y_min,
-        facecolor='green', edgecolor='darkgreen', alpha=0.4, zorder=15,
-        label='Goal Set')
-    ax.add_patch(goal_set)
-
-    # ---- Dynamic elements ----
-    chaser = mpatches.Rectangle(
-        (-w_c / 2, -h_c / 2), w_c, h_c,
-        facecolor='#d62728', edgecolor='black', alpha=0.9, zorder=30)
-    ax.add_patch(chaser)
-
-    marker_patch = mpatches.RegularPolygon(
-        (0, 0), 3, radius=w_c / 3,
-        orientation=0, facecolor='yellow', edgecolor='black',
-        alpha=0.9, zorder=31)
-    ax.add_patch(marker_patch)
-
-    trace, = ax.plot([], [], '--', linewidth=2, color='orange', zorder=25,
-                     label='Trajectory')
-
-    contour_artists = {'filled': None, 'lines': None}
-
-    time_text = ax.text(
-        0.02, 0.98, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    phase_text = ax.text(
-        0.02, 0.88, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    value_text = ax.text(
-        0.02, 0.78, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    safety_filter_text = ax.text(
-        0.02, 0.70, '', transform=ax.transAxes, fontsize=11,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    safety_filter_text.set_visible(sf_mode > 0)
-
-    ax.legend(loc='upper right', fontsize=10)
-
-    # ---- Value-function cache ----
-    value_cache = {}
-    chaser_base_color = '#d62728'
-
-    def compute_value_grid(model_tag, get_val_fn, t_query,
-                           cur_vx, cur_vy, cur_theta, cur_omega):
-        cache_key = (model_tag, round(t_query, 2),
-                     round(cur_vx, 1), round(cur_vy, 1))
-        if cache_key in value_cache:
-            return value_cache[cache_key]
-
-        V = np.zeros((resolution, resolution))
-        for i in range(resolution):
-            for j in range(resolution):
-                state = np.array([X[i, j], Y[i, j],
-                                  cur_vx, cur_vy, cur_theta, cur_omega])
-                try:
-                    V[i, j] = get_val_fn(state, t_query)
-                except Exception:
-                    V[i, j] = np.nan
-
-        if len(value_cache) > 100:
-            for key in list(value_cache.keys())[:50]:
-                del value_cache[key]
-        value_cache[cache_key] = V
-        return V
-
-    # ---- Animation callback ----
-    def animate(k):
-        cur_theta  = theta[k]
-        cur_vx     = vx[k]
-        cur_vy     = vy[k]
-        cur_omega  = omega[k]
-        cur_phase  = phases[k]
-        cur_t_rem  = t_remaining_history[k]
-        cur_time   = times[k]
-        cur_value  = values[k]
-
-        # Chaser transform
-        t_c = (mtransforms.Affine2D()
-               .rotate(cur_theta)
-               .translate(px[k], py[k]) + ax.transData)
-        chaser.set_transform(t_c)
-
-        mx = px[k] + (w_c / 2) * np.cos(cur_theta)
-        my = py[k] + (w_c / 2) * np.sin(cur_theta)
-        t_m = (mtransforms.Affine2D()
-               .rotate(cur_theta + np.pi / 2)
-               .translate(mx, my) + ax.transData)
-        marker_patch.set_transform(t_m)
-
-        trace.set_data(px[:k + 1], py[:k + 1])
-
-        # Time
-        time_text.set_text(f'Time: {cur_time:.2f}s')
-
-        # Phase label
-        if cur_phase == 1:
-            phase_text.set_text(
-                f'Phase 1: Approach\n'
-                f'Active: Outer V(x, tMax={outer_tMax:.1f}s)')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-        elif cur_phase == 2:
-            phase_text.set_text(
-                f'Phase 2: Transit (Outer BRT)\n'
-                f'outer_t_remaining = {cur_t_rem:.2f}s')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-        else:
-            phase_text.set_text(
-                f'Phase 3: Precision (Inner BRT)\n'
-                f'inner_t_remaining = {cur_t_rem:.2f}s')
-            phase_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-
-        # Value
-        value_text.set_text(f'V(x, t) = {cur_value:.3f}')
-        if cur_value <= 0:
-            value_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-        else:
-            value_text.set_bbox(
-                dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-
-        # Safety filter status
-        sf_active = False
-        if sf_mode > 0 and k < len(sf_log):
-            entry = sf_log[k]
-            if sf_mode == 1:
-                sf_active = entry.get('filter_active', False)
-            else:
-                sf_active = entry.get('alpha_effective', 0) > 1e-6
-        if sf_mode > 0:
-            safety_filter_text.set_visible(True)
-            if sf_active:
-                safety_filter_text.set_text('Safety filter: ACTIVE')
-                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
-                chaser.set_facecolor('#ff6b6b')
-                chaser.set_edgecolor('red')
-            else:
-                safety_filter_text.set_text('Safety filter: inactive')
-                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
-                chaser.set_facecolor(chaser_base_color)
-                chaser.set_edgecolor('black')
-        else:
-            safety_filter_text.set_visible(False)
-
-        # Heatmap
-        if show_value_function:
-            for tp in ['filled', 'lines']:
-                if contour_artists[tp] is not None:
-                    for coll in contour_artists[tp].collections:
-                        try:
-                            coll.remove()
-                        except Exception:
-                            pass
-
-            if cur_phase == 1:
-                get_val_fn = controller.get_value_outer
-                t_query    = outer_tMax
-                model_tag  = 'outer'
-            elif cur_phase == 2:
-                get_val_fn = controller.get_value_outer
-                t_query    = max(cur_t_rem, 0.1)
-                model_tag  = 'outer'
-            else:
-                get_val_fn = controller.get_value_inner
-                t_query    = max(cur_t_rem, 0.1)
-                model_tag  = 'inner'
-
-            V = compute_value_grid(model_tag, get_val_fn, t_query,
-                                   cur_vx, cur_vy, cur_theta, cur_omega)
-
-            V_finite = V[np.isfinite(V)]
-            if len(V_finite) > 0:
-                cur_vmin = max(-3.0, np.percentile(V_finite, 5))
-                cur_vmax = min(3.0, np.percentile(V_finite, 95))
-                if cur_vmax - cur_vmin < 0.1:
-                    mid = (cur_vmin + cur_vmax) / 2
-                    cur_vmin = mid - 0.5
-                    cur_vmax = mid + 0.5
-            else:
-                cur_vmin, cur_vmax = -1.0, 1.0
-
-            try:
-                contour_artists['filled'] = ax.contourf(
-                    X, Y, V, levels=20, cmap=cmap, alpha=0.6,
-                    vmin=cur_vmin, vmax=cur_vmax, zorder=5)
-                contour_artists['lines'] = ax.contour(
-                    X, Y, V, levels=[0], colors=['black'],
-                    linewidths=2.5, zorder=10)
-
-                if colorbar_info['sm'] is not None:
-                    new_norm = Normalize(vmin=cur_vmin, vmax=cur_vmax)
-                    colorbar_info['sm'].set_norm(new_norm)
-                    colorbar_info['cbar'].update_normal(colorbar_info['sm'])
-                    brt_label = 'outer' if model_tag == 'outer' else 'inner'
-                    colorbar_info['cbar'].set_label(
-                        f'V_{brt_label}(x, t={t_query:.1f}s)', fontsize=11)
-            except Exception:
-                pass
-
-        return chaser, marker_patch, trace, time_text, phase_text, value_text
-
-    # ---- Render ----
-    print(f"Creating Cascaded MPC+Terminal animation with {len(times)} frames "
-          f"(skip={skip_frames})...")
-    frames = range(0, len(times), skip_frames)
-
-    ani = animation.FuncAnimation(
-        fig, animate, frames,
-        interval=controller.dt * 1000 * skip_frames,
-        blit=False)
-
-    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.',
-                exist_ok=True)
-    writer = animation.FFMpegWriter(
-        fps=min(30, int(1 / (controller.dt * skip_frames))))
-
-    print(f"Saving animation to {save_path}...")
-    try:
-        with tqdm(total=len(list(frames)), desc="Rendering") as pbar:
-            ani.save(save_path, writer=writer,
-                     progress_callback=lambda i, n: pbar.update(1))
-        print(f"Animation saved to {save_path}")
-    except Exception as e:
-        print(f"Error with progress bar, trying without: {e}")
-        ani.save(save_path, writer=writer)
-        print(f"Animation saved to {save_path}")
-
-    plt.close(fig)
-    return fig, ani
-
 
 def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True):
     """
     Create static plot of docking trajectory with value function overlay.
     
     Args:
-        controller: BRTController instance
+        controller: BRATController instance
         sim_result: Dictionary from controller.simulate_docking()
         save_path: Path to save figure (optional)
-        show_brt: Whether to show BRT overlay
+        show_brt: Whether to show BRAT overlay
         
     Returns:
         fig: Matplotlib figure
@@ -1481,9 +761,9 @@ def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 8))
     
-    # Show BRT at tMax
+    # Show BRAT at tMax
     if show_brt:
-        print("Computing BRT for static plot...")
+        print("Computing BRAT for static plot...")
         X, Y, V = controller.get_value_grid(controller.tMax, resolution=60)
         
         # Heatmap
@@ -1515,7 +795,7 @@ def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True
     if sim_result['phase_transition_time'] is not None:
         transition_idx = np.argmin(np.abs(sim_result['times'] - sim_result['phase_transition_time']))
         ax.plot(px[transition_idx], py[transition_idx], 'mo', markersize=10, 
-                label='BRT Entry', zorder=35)
+                label='BRAT Entry', zorder=35)
     
     # Target spacecraft
     target = mpatches.Rectangle((-w_t/2, 0), w_t, h_t, 
@@ -1540,7 +820,7 @@ def plot_trajectory_static(controller, sim_result, save_path=None, show_brt=True
     ax.grid(True, linestyle='--', alpha=0.5)
     ax.set_xlabel('x (m)', fontsize=12)
     ax.set_ylabel('y (m)', fontsize=12)
-    ax.set_title('DeepReach BRT-Based Docking Trajectory', fontsize=14)
+    ax.set_title('DeepReach BRAT-Based Docking Trajectory', fontsize=14)
     ax.legend(loc='upper right')
     
     # Add results text
@@ -1627,7 +907,7 @@ def plot_simulation_data(sim_result, save_path=None):
     # Value function and phase
     ax = axes[2, 0]
     ax.plot(times, values, 'k-', linewidth=2, label='V(x, t)')
-    ax.axhline(0, color='r', linestyle='--', alpha=0.5, label='BRT boundary')
+    ax.axhline(0, color='r', linestyle='--', alpha=0.5, label='BRAT boundary')
     ax.fill_between(times, values, 0, where=(phases == 2), 
                     alpha=0.3, color='green', label='Phase 2')
     ax.set_xlabel('Time (s)')
@@ -1642,7 +922,7 @@ def plot_simulation_data(sim_result, save_path=None):
     ax.fill_between(times, t_remaining, alpha=0.3, where=(phases == 2), color='green')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('t_remaining (s)')
-    ax.set_title('Time Remaining in BRT Phase')
+    ax.set_title('Time Remaining in BRAT Phase')
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()

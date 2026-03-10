@@ -7,10 +7,11 @@ trajectory optimisation while the value function provides long-term guidance
 toward the docking goal.
 
 Two-phase terminal cost strategy:
-  Phase 1 (Approach): V(x, tMax) -- static terminal cost while outside the BRT
-  Phase 2 (Tracking): V(x, t_remaining) -- time-varying terminal cost once
-                       inside the BRT. t_remaining counts down from tMax and
-                       is never reset (permanent one-way transition).
+  Phase 1 (Approach): V(x, tMax) -- static terminal cost while outside the BRAT
+  Phase 2 (Tracking): V(x, t*) -- time-varying terminal cost once inside the
+                       BRAT. Each step, t* = min t s.t. V(x, t) <= 0 (with
+                       argmin fallback if no exact zero-crossing). One-way
+                       transition: once in Phase 2, stays in Phase 2.
 
 Usage:
     controller = MPCTerminalController(
@@ -37,6 +38,7 @@ from utils.MPC import MPC
 from dynamics import dynamics as dynamics_module
 from utils.controllers import clip_state_for_execution
 from utils.controllers.safety_filter import SafetyFilter
+from utils.controllers.min_time_search import find_min_brat_time_single, find_min_brat_time_batch
 
 
 class MPCTerminalController:
@@ -60,7 +62,9 @@ class MPCTerminalController:
                  dt=0.1, num_samples=500, num_refinement=10, device='cuda',
                  cost_type='reachability', effort_weight=0.0,
                  exploration_factor=3.0, exploration_patience=2,
-                 escape_thresh=0.5, safety_filter=None):
+                 escape_thresh=0.5, safety_filter=None,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
+                 search_resolution=0.1):
         """
         Args:
             checkpoint_path: Path to trained model checkpoint.
@@ -77,7 +81,7 @@ class MPCTerminalController:
             exploration_factor: Multiplier for eps_var when in EXPLORING mode
                                 (default 3.0).
             exploration_patience: Number of stagnation windows (each 5 s) in
-                                  EXPLORING mode before switching to BRT
+                                  EXPLORING mode before switching to BRAT
                                   fallback (default 2).
             escape_thresh: Distance improvement (m) from stagnation entry
                            required to consider the local min escaped and
@@ -96,6 +100,7 @@ class MPCTerminalController:
         self.exploration_factor_setting = exploration_factor
         self.exploration_patience = exploration_patience
         self.escape_thresh = escape_thresh
+        self.search_resolution = search_resolution
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
@@ -122,6 +127,8 @@ class MPCTerminalController:
 
         # Safety filter (no-op when mode=0 or None)
         self.safety_filter = safety_filter or SafetyFilter(mode=0)
+        self.safety_margin_phase1 = safety_margin_phase1
+        self.safety_margin_phase2 = safety_margin_phase2
 
         self.reset()
 
@@ -187,10 +194,10 @@ class MPCTerminalController:
         self._warm_started = False
         self.safety_filter.reset()
 
-        # Phase tracking (one-way: once in_brt is True it stays True)
-        self.in_brt = False
+        # Phase tracking (one-way: once in_brat is True it stays True)
+        self.in_brat = False
         self.t_remaining = self.tMax
-        self.brt_entry_time = None
+        self.brat_entry_time = None
 
         # Diagnostics: cost breakdown from last MPC step
         self._last_reach_avoid = 0.0
@@ -199,7 +206,7 @@ class MPCTerminalController:
 
         # Graduated stagnation-escape state
         self._stagnation_count = 0
-        self._control_mode = 'normal'   # 'normal' | 'exploring' | 'brt_fallback'
+        self._control_mode = 'normal'   # 'normal' | 'exploring' | 'brat_fallback'
         self._exploration_factor = 1.0
         self._mode_entry_dist = None
 
@@ -207,8 +214,8 @@ class MPCTerminalController:
     # Value function queries
     # ------------------------------------------------------------------
 
-    def _is_in_brt(self, state_np):
-        """Check if V(state, tMax) <= 0 (state is inside the BRT)."""
+    def _is_in_brat(self, state_np):
+        """Check if V(state, tMax) <= 0 (state is inside the BRAT)."""
         s = torch.tensor(
             state_np, dtype=torch.float32, device=self.device).unsqueeze(0)
         time_col = torch.full(
@@ -290,8 +297,81 @@ class MPCTerminalController:
         values = self.dynamics.io_to_value(model_input, output)
         return values.reshape(A, N)
 
+    def _evaluate_terminal_values_variable_time(self, terminal_states, t_queries):
+        """
+        Evaluate V(x_i, t_i) where each sample has its own time query.
+
+        Args:
+            terminal_states: (A, N, D) tensor of terminal states.
+            t_queries: (N,) numpy array of per-sample time queries.
+
+        Returns:
+            (A, N) tensor of terminal values.
+        """
+        A, N, D = terminal_states.shape
+        flat_states = terminal_states.reshape(A * N, D)
+
+        test_range = torch.tensor(
+            self.dynamics.state_test_range(), device=self.device)
+        flat_states_clamped = torch.clamp(
+            flat_states, test_range[..., 0], test_range[..., 1])
+
+        # Per-sample times: tile across A batches
+        t_np = np.tile(t_queries, A)  # (A*N,)
+        time_col = torch.tensor(
+            t_np, dtype=torch.float32, device=self.device).unsqueeze(-1)
+        coords = torch.cat([time_col, flat_states_clamped], dim=-1)
+
+        model_input = self.dynamics.coord_to_input(coords)
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)
+
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.reshape(A, N)
+
+    def _batch_value_grid(self, states_np, times_np):
+        """
+        Query V(x_i, t_j) for N states x T times -> (N, T) numpy array.
+
+        Used by find_min_brat_time_batch as the value_fn_batch callback.
+
+        Args:
+            states_np: (N, D) numpy array of states.
+            times_np: (T,) numpy array of time grid points.
+
+        Returns:
+            (N, T) numpy array of V(x_i, t_j).
+        """
+        N = states_np.shape[0]
+        T = len(times_np)
+
+        states_t = torch.tensor(
+            states_np, dtype=torch.float32, device=self.device)
+        # Expand: (N, T, D)
+        states_exp = states_t.unsqueeze(1).expand(N, T, -1)
+        times_exp = torch.tensor(
+            times_np, dtype=torch.float32, device=self.device
+        ).unsqueeze(0).expand(N, T).unsqueeze(-1)  # (N, T, 1)
+
+        coords = torch.cat([times_exp, states_exp], dim=-1)  # (N, T, 1+D)
+        flat_coords = coords.reshape(N * T, -1)
+
+        test_range = torch.tensor(
+            self.dynamics.state_test_range(), device=self.device)
+        flat_coords[:, 1:] = torch.clamp(
+            flat_coords[:, 1:], test_range[..., 0], test_range[..., 1])
+
+        model_input = self.dynamics.coord_to_input(flat_coords)
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)
+
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.reshape(N, T).cpu().numpy()
+
     # ------------------------------------------------------------------
-    # Phase tracking (extracted so BRT fallback path can reuse it)
+    # Phase tracking (extracted so BRAT fallback path can reuse it)
     # ------------------------------------------------------------------
 
     def _update_phase(self, state, sim_time):
@@ -299,24 +379,30 @@ class MPCTerminalController:
         Phase tracking and t_query computation.
 
         Phase 1 (Approach): V(x, tMax)  -- static terminal cost
-        Phase 2 (Tracking): V(x, t_remaining) -- countdown from tMax
+        Phase 2 (Tracking): V(x, t*) -- per-step min-time query
 
-        Transition is one-way: once inside the BRT, the timer counts down
-        permanently even if the chaser temporarily exits.
+        Transition is one-way: once inside the BRAT, min-time queries
+        determine t* each step (no countdown timer).
 
         Returns:
             (phase, t_query)
         """
-        if not self.in_brt:
-            if self._is_in_brt(state):
-                self.in_brt = True
-                self.t_remaining = self.tMax
-                self.brt_entry_time = sim_time
-                print(f"[MPC+Terminal] Entered BRT at t={sim_time:.2f}s "
-                      f"-> Phase 2 (t_remaining={self.tMax:.1f}s)")
+        if not self.in_brat:
+            if self._is_in_brat(state):
+                self.in_brat = True
+                self.brat_entry_time = sim_time
+                print(f"[MPC+Terminal] Entered BRAT at t={sim_time:.2f}s "
+                      f"-> Phase 2")
 
-        if self.in_brt:
-            t_query = max(self.t_remaining, 0.01)
+        if self.in_brat:
+            # Per-step min-time query for the current state
+            state_np = state if isinstance(state, np.ndarray) else np.array(state)
+            value_fn = lambda times: self._value_at_times_single(state_np, times)
+            t_star, _status = find_min_brat_time_single(
+                value_fn, self.tMax,
+                resolution=self.search_resolution)
+            self.t_remaining = t_star
+            t_query = max(t_star, 0.01)
             phase = 2
         else:
             t_query = self.tMax
@@ -324,20 +410,35 @@ class MPCTerminalController:
 
         self.phase_history.append(phase)
         self.t_remaining_history.append(
-            self.t_remaining if self.in_brt else self.tMax)
+            self.t_remaining if self.in_brat else self.tMax)
         self._last_t_query = t_query
 
         return phase, t_query
 
+    def _value_at_times_single(self, state_np, times):
+        """Query V(state, t_i) for a single state at multiple times."""
+        n = len(times)
+        s = torch.tensor(state_np, dtype=torch.float32, device=self.device)
+        state_batch = s.unsqueeze(0).expand(n, -1)
+        time_col = torch.tensor(
+            times, dtype=torch.float32, device=self.device).unsqueeze(-1)
+        coords = torch.cat([time_col, state_batch], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.cpu().numpy()
+
     # ------------------------------------------------------------------
-    # BRT optimal-control fallback
+    # BRAT optimal-control fallback
     # ------------------------------------------------------------------
 
-    def _compute_brt_control(self, state):
+    def _compute_brat_control(self, state):
         """
-        Bang-bang optimal control from value function gradient (BRT fallback).
+        Bang-bang optimal control from value function gradient (BRAT fallback).
 
-        Replicates the gradient-based control strategy used by the pure BRT
+        Replicates the gradient-based control strategy used by the pure BRAT
         controller.  The spatial gradient dV/ds is computed via a forward pass
         with grad tracking, and control is set to +-u_max opposing the gradient
         direction.
@@ -399,16 +500,16 @@ class MPCTerminalController:
             sim_time = step * self.dt
 
             # --- Control selection (mode-aware) ---
-            if self._control_mode == 'brt_fallback':
+            if self._control_mode == 'brat_fallback':
                 phase, t_query = self._update_phase(state, sim_time)
-                control = self._compute_brt_control(state)
+                control = self._compute_brat_control(state)
                 cost_val = self.get_value(state, self._last_t_query)
-                if self.in_brt:
-                    self.t_remaining -= self.dt
             else:
                 control, cost_val = self._mpc_step(state, sim_time)
 
             # Post-process through safety filter (no-op when mode=0)
+            self.safety_filter.set_margin(
+                self.safety_margin_phase2 if self.in_brat else self.safety_margin_phase1)
             control = self.safety_filter.apply(state, control)
 
             # Record history
@@ -461,9 +562,9 @@ class MPCTerminalController:
                         elif (self._control_mode == 'exploring'
                               and self._stagnation_count
                               >= self.exploration_patience):
-                            self._control_mode = 'brt_fallback'
+                            self._control_mode = 'brat_fallback'
                             print(f'  -> Exploration failed, switching '
-                                  f'to BRT_FALLBACK')
+                                  f'to BRAT_FALLBACK')
 
                 mode_tag = self._control_mode.upper()
                 print(
@@ -515,7 +616,7 @@ class MPCTerminalController:
             'controller_type': 'mpc_terminal',
             'control_effort': control_effort,
             'wall_time': wall_time,
-            'brt_entry_time': self.brt_entry_time,
+            'brat_entry_time': self.brat_entry_time,
             # --- safety filter ---
             'safety_filter_mode': self.safety_filter.mode,
             'safety_filter_log': self.safety_filter.get_log(),
@@ -532,8 +633,8 @@ class MPCTerminalController:
         """
         Run one MPC optimisation step with phase-aware terminal cost.
 
-        Phase 1 (Approach): terminal cost = V(x, tMax)  -- static
-        Phase 2 (Tracking): terminal cost = V(x, t_remaining) -- countdown
+        Phase 1 (Approach): terminal cost = V(x, tMax)  -- static, same for all samples
+        Phase 2 (Tracking): terminal cost = V(x_i, t*_i) -- per-sample min-time
 
         Returns:
             (first_control, best_combined_cost)
@@ -571,8 +672,20 @@ class MPCTerminalController:
 
             # --- Terminal cost from learned value function ---
             terminal_states = state_trajs[:, :, -1, :]        # (1, N, D)
-            terminal_values = self._evaluate_terminal_values(
-                terminal_states, t_query=t_query)              # (1, N)
+            if phase == 2:
+                # Per-sample min-time queries for variable-time terminal cost
+                term_np = terminal_states[0].detach().cpu().numpy()  # (N, D)
+                N = term_np.shape[0]
+                def _vfn_batch(indices, times):
+                    return self._batch_value_grid(term_np[indices], times)
+                t_stars, _statuses = find_min_brat_time_batch(
+                    _vfn_batch, N, self.tMax,
+                    resolution=self.search_resolution)
+                terminal_values = self._evaluate_terminal_values_variable_time(
+                    terminal_states, t_stars)                  # (1, N)
+            else:
+                terminal_values = self._evaluate_terminal_values(
+                    terminal_states, t_query=t_query)          # (1, N)
 
             # --- Combine costs (reach-avoid formulation) ---
             combined = torch.minimum(reach_avoid_cost, terminal_values)
@@ -588,8 +701,8 @@ class MPCTerminalController:
                 effort_per_sample = torch.sum(
                     control_norms, dim=-1) * self.dt     # (1, N)
                 # Only penalize effort when the trajectory is on track
-                # (cost <= 0 means inside the BRT).  When cost > 0 (outside
-                # BRT), the controller needs full effort to reach the goal --
+                # (cost <= 0 means inside the BRAT).  When cost > 0 (outside
+                # BRAT), the controller needs full effort to reach the goal --
                 # penalizing effort here causes the optimizer to collapse to
                 # zero controls.
                 on_track = (combined <= 0).float()
@@ -612,15 +725,11 @@ class MPCTerminalController:
                 permuted_controls, dim=1, index=idx_ctrl).squeeze(1)  # (1,H,Du)
             self.mpc.control_tensors = best_controls.clone()
 
-        # --- Decrement timer after using it (Phase 2 only) ---
-        if self.in_brt:
-            self.t_remaining -= self.dt
-
         first_control = self.mpc.control_tensors[0, 0, :].detach().cpu().numpy()
         return first_control, best_cost_val
 
     # ------------------------------------------------------------------
-    # Internal helpers (shared with BRT / MPC controllers)
+    # Internal helpers (shared with BRAT / MPC controllers)
     # ------------------------------------------------------------------
 
     def _default_dynamics_fn(self, state, control):

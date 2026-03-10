@@ -3,7 +3,7 @@ MPC-Only Controller for Docking6D
 
 Direct-style MPC controller using random-shooting optimization with the
 reachability cost function. No learned value function is used -- this serves
-as a pure-MPC baseline for comparison against the BRT controller.
+as a pure-MPC baseline for comparison against the BRAT controller.
 
 At each simulation step the controller:
   1. Rolls out `num_samples` perturbed control sequences over the full
