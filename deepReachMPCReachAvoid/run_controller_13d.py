@@ -493,7 +493,66 @@ def run_compare(args):
     print(f"  {len(ics)} valid ICs obtained.")
     np.save(os.path.join(args.output_dir, 'initial_conditions.npy'), ics)
 
+    # ---- Helper: build detail record for one rollout -------------------
+    q_goal_np = (dynamics.q_goal.cpu().numpy()
+                 if hasattr(dynamics, 'q_goal')
+                 else np.array([1, 0, 0, 0]))
+    goal_center = np.array([0.0, dynamics.goal_y_center, 0.0])
+
+    def _detail(i, result):
+        fs = result['final_state']
+        q = fs[6:10] / (np.linalg.norm(fs[6:10]) + 1e-12)
+        dot = np.clip(np.abs(np.dot(q, q_goal_np)), 0, 1)
+        return {
+            'rollout_idx': i,
+            'initial_state': ics[i].tolist(),
+            'final_state': fs.tolist(),
+            'quat_err_deg': round(float(np.degrees(2 * np.arccos(dot))), 4),
+            'final_dist': round(float(np.linalg.norm(fs[:3] - goal_center)), 4),
+            'sim_time': round(float(result['times'][-1]), 4),
+            'control_effort': round(float(result['control_effort']), 4),
+            'wall_time': round(float(result['wall_time']), 4),
+        }
+
+    def _save_checkpoint(all_results_so_far, tag='checkpoint'):
+        """Write comparison_results.json with whatever rollouts are done."""
+        json_path = os.path.join(args.output_dir, 'comparison_results.json')
+        json_data = {
+            '_metadata': {
+                'sampling_method': sampling_label,
+                'num_rollouts': args.num_rollouts,
+                'seed': args.seed,
+                'tMax': args.tMax,
+                'max_sim_time': args.max_sim_time,
+                'checkpoint_path': args.checkpoint_path,
+                'status': tag,
+            }
+        }
+        for cn in all_results_so_far:
+            disp = CONTROLLER_LABELS.get(cn, cn)
+            results = all_results_so_far[cn]
+            m = compute_metrics(results)
+            entry = {k: (float(v) if isinstance(v, (np.floating, float))
+                         else int(v)) for k, v in m.items()}
+            colls, docks, touts = [], [], []
+            for j, r in enumerate(results):
+                d = _detail(j, r)
+                if r['collision']:
+                    colls.append(d)
+                elif r['docked']:
+                    docks.append(d)
+                else:
+                    touts.append(d)
+            entry['collisions'] = colls
+            entry['docked'] = docks
+            entry['timeouts'] = touts
+            json_data[disp] = entry
+        with open(json_path, 'w') as f:
+            json.dump(json_data, f, indent=2)
+
     # ---- Run each controller ------------------------------------------
+    CHECKPOINT_INTERVAL = 100
+
     metrics_all = {}
     all_results = {}
     for ctrl_name in args.controllers:
@@ -514,6 +573,13 @@ def run_compare(args):
                   f"wall={res['wall_time']:.1f}s")
             results.append(res)
 
+            # Periodic checkpoint every CHECKPOINT_INTERVAL rollouts
+            if (i + 1) % CHECKPOINT_INTERVAL == 0:
+                all_results[ctrl_name] = results
+                _save_checkpoint(all_results,
+                                 tag=f'checkpoint_{ctrl_name}_{i+1}')
+                print(f"  ** Checkpoint saved ({i+1}/{len(ics)} rollouts)")
+
         all_results[ctrl_name] = results
         m = compute_metrics(results)
         metrics_all[display] = m
@@ -521,7 +587,7 @@ def run_compare(args):
     # ---- Summary table ------------------------------------------------
     print_comparison_table(metrics_all)
 
-    # ---- Collect detailed per-rollout outcomes (matches 6D pipeline) ---
+    # ---- Collect detailed per-rollout outcomes ------------------------
     detailed_by_name = {}
     for ctrl_name in args.controllers:
         display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
@@ -532,23 +598,7 @@ def run_compare(args):
         timeouts = []
 
         for i, result in enumerate(results):
-            fs = result['final_state']
-            q = fs[6:10] / (np.linalg.norm(fs[6:10]) + 1e-12)
-            q_goal = dynamics.q_goal.cpu().numpy() if hasattr(dynamics, 'q_goal') else np.array([1,0,0,0])
-            dot = np.clip(np.abs(np.dot(q, q_goal)), 0, 1)
-            quat_err_deg = float(np.degrees(2 * np.arccos(dot)))
-
-            detail = {
-                'rollout_idx': i,
-                'initial_state': ics[i].tolist(),
-                'final_state': fs.tolist(),
-                'quat_err_deg': round(quat_err_deg, 4),
-                'final_dist': round(float(np.linalg.norm(
-                    fs[:3] - np.array([0, dynamics.goal_y_center, 0]))), 4),
-                'sim_time': round(float(result['times'][-1]), 4),
-                'control_effort': round(float(result['control_effort']), 4),
-                'wall_time': round(float(result['wall_time']), 4),
-            }
+            detail = _detail(i, result)
 
             if result['collision']:
                 collisions.append(detail)
@@ -614,27 +664,9 @@ def run_compare(args):
             print(f"\n  {display}: no failures")
     print('-' * 60)
 
-    # ---- Build and save JSON ------------------------------------------
+    # ---- Final JSON save (reuses checkpoint helper) --------------------
+    _save_checkpoint(all_results, tag='final')
     json_path = os.path.join(args.output_dir, 'comparison_results.json')
-    json_data = {
-        '_metadata': {
-            'sampling_method': sampling_label,
-            'num_rollouts': args.num_rollouts,
-            'seed': args.seed,
-            'tMax': args.tMax,
-            'max_sim_time': args.max_sim_time,
-            'checkpoint_path': args.checkpoint_path,
-        }
-    }
-    for ctrl_name in args.controllers:
-        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
-        m = metrics_all[display]
-        entry = {k: (float(v) if isinstance(v, (np.floating, float)) else int(v))
-                 for k, v in m.items()}
-        entry.update(detailed_by_name[display])
-        json_data[display] = entry
-    with open(json_path, 'w') as f:
-        json.dump(json_data, f, indent=2)
     print(f"\n  Results saved to: {json_path}")
 
 # ------------------------------------------------------------------ #
