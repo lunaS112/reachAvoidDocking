@@ -1061,15 +1061,21 @@ class Docking13D(Dynamics):
         self.d_c = 1.0  # z-dim (m)
         # Fix #7: Use single 3D bounding-sphere radius for consistent collision buffer
         self.chaser_buffer = math.sqrt(self.w_c**2 + self.h_c**2 + self.d_c**2) / 2.0
+        # Aligned-approach inflation for post tip (-Y face only):
+        # When approaching from -Y with correct attitude, only the Y half-extent
+        # (0.5m) matters, not the full bounding sphere (0.866m).
+        # 0.55m = 0.5m half-height + 0.05m physical margin.
+        self.cb_tip = 0.55
 
         # Derived
         self.n = self.mean_motion()
         self.I = self.inertia_tensor_body()  # 3x3 torch tensor on CUDA later
 
         # Docking tolerances
-        self.eps_p = 0.3
+        self.eps_p = 0.10
         self.eps_v = 0.1
-        self.eps_q = 0.20       # radians (~11.5°), attitude error tolerance
+        self.eps_q = 0.065      # radians (~3.7°), tight enough that rotated 1m cube
+                                # clears post at 0.55m: max corner Δy = 0.707*0.065 = 0.046m < 0.05m
         self.eps_omega = 0.05
         self.v_max = 2.0        # Max linear velocity (m/s) - matches state_range
         self.omega_max = 1.5    # Max angular velocity (rad/s) - matches state_range
@@ -1088,13 +1094,13 @@ class Docking13D(Dynamics):
         self.post_length = 0.2       # how far post extends in -y (m) = 0.2*h_c
 
         # Goal region: must be below the inflated post tip so it's outside the obstacle.
-        # Inflated post tip at y = -(post_length + chaser_buffer).
-        # Add clearance gap, then a wide band below.
-        goal_clearance = 0.134  # gap between inflated post tip and goal top (gives round -1.2)
-        goal_band_height = 0.4  # y-band height (increased from 0.1)
-        self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.2
-        self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.6
-        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.4
+        # Post tip uses cb_tip (aligned-approach inflation), not full chaser_buffer.
+        # Inflated post tip at y = -(post_length + cb_tip) = -0.75.
+        goal_clearance = 0.01   # small SDF clearance so goal is strictly outside failure set
+        goal_band_height = 0.10  # y-band height, matches eps_p in x/z
+        self.goal_y_max = -(self.post_length + self.cb_tip + goal_clearance)
+        self.goal_y_min = self.goal_y_max - goal_band_height
+        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0
 
         # Goal: rotation-ALIGNED — chaser must match goal attitude.
         # 90° yaw so chaser body -Y faces target +Y.
@@ -1623,15 +1629,16 @@ class Docking13D(Dynamics):
             )
         )
 
-        # --- Docking post SDF (peg y∈[-post_length, 0], fully inflated) ---
-        # The post -y tip is inflated to y = -(post_length + cb).
-        # The post +y face inflated to y = cb merges seamlessly with body -y face.
+        # --- Docking post SDF (peg y∈[-post_length, 0]) ---
+        # Side faces (x, z, +y) use full chaser_buffer (bounding sphere).
+        # Tip face (-y) uses cb_tip (aligned-approach half-extent + margin)
+        # so the goal set can sit closer to the physical post tip.
         post_hw_x_inf = self.post_hw_x + cb
         post_hw_z_inf = self.post_hw_z + cb
         s_post = torch.maximum(
             torch.abs(x) - post_hw_x_inf,
             torch.maximum(
-                torch.maximum(-(y + self.post_length + cb),
+                torch.maximum(-(y + self.post_length + self.cb_tip),
                               y - cb),
                 torch.abs(z) - post_hw_z_inf
             )
@@ -1640,9 +1647,9 @@ class Docking13D(Dynamics):
         # Union of body + post (take the one we're deeper inside)
         s_fail = torch.minimum(s_body, s_post)
 
-        # Piecewise shaping
+        # Piecewise shaping: steep linear inside, tanh-bounded outside
         if self.set_mode == 'reach_avoid':
-            s_fail = torch.where(s_fail < 0, s_fail * 0.750, s_fail * 50.0)
+            s_fail = torch.where(s_fail < 0, s_fail * 5.0, torch.tanh(s_fail * 5.0))
         elif self.set_mode == 'avoid':
             pass
 

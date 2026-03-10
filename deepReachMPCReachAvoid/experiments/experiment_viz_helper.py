@@ -98,13 +98,21 @@ class ExperimentVizMixin:
                                       linewidths=2,
                                       linestyles='--')
 
-            failure_set_contour = ax.contour(X,
+            boundary_contour = ax.contour(X,
                                              Y,
                                              lx,
                                              levels=[0.0],
                                              colors="saddlebrown",
                                              linewidths=2,
                                              linestyles='-')
+            if hasattr(self.dataset.dynamics, 'avoid_fn'):
+                avoid_vals = self.dataset.dynamics.avoid_fn(
+                    coords.cuda()[..., 1:]).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+                try:
+                    ax.contour(X, Y, avoid_vals, levels=[0.0], colors='red',
+                               linewidths=1.5, linestyles='--')
+                except Exception:
+                    pass
             if self.dataset.dynamics.name == 'Docking13D':
                 self._annotate_quat(ax, quat_slice, theta_yaw)
             if draw_target_set and hasattr(self.dataset.dynamics, 'reach_fn'):
@@ -185,13 +193,22 @@ class ExperimentVizMixin:
                                           linewidths=1,
                                           linestyles='--')
 
-                failure_set_contour = ax.contour(X,
+                boundary_contour = ax.contour(X,
                                                  Y,
                                                  lx,
                                                  levels=[0.0],
                                                  colors="brown",
                                                  linewidths=2,
                                                  linestyles='-')
+
+                if hasattr(self.dataset.dynamics, 'avoid_fn'):
+                    avoid_vals = self.dataset.dynamics.avoid_fn(
+                        coords.cuda()[..., 1:]).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
+                    try:
+                        ax.contour(X, Y, avoid_vals, levels=[0.0], colors='red',
+                                   linewidths=1.5, linestyles='--')
+                    except Exception:
+                        pass
 
                 if self.dataset.dynamics.name == 'Docking13D':
                     self._annotate_quat(ax, quat_slice, theta_yaw)
