@@ -36,6 +36,7 @@ from utils import modules
 from utils import diff_operators  # noqa: F401 — used transitively by io_to_dv
 from dynamics import dynamics as dynamics_module
 from utils.controllers.docking13d_mixin import Docking13DControllerMixin
+from utils.controllers.safety_filter import SafetyFilter
 
 
 class BRTController13D(Docking13DControllerMixin):
@@ -47,7 +48,7 @@ class BRTController13D(Docking13DControllerMixin):
 
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
                  search_window=0.5, search_resolution=0.1,
-                 max_search_expansions=1):
+                 max_search_expansions=1, safety_filter=None):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
@@ -67,6 +68,7 @@ class BRTController13D(Docking13DControllerMixin):
         self.search_window = search_window
         self.search_resolution = search_resolution
         self.max_search_expansions = max_search_expansions
+        self.safety_filter = safety_filter or SafetyFilter(mode=0)
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
@@ -140,6 +142,8 @@ class BRTController13D(Docking13DControllerMixin):
         # --- Diagnostic tracking ---
         self.diagnostic_history = []
         self._consecutive_v_increases = 0
+
+        self.safety_filter.reset()
 
     # ------------------------------------------------------------------
     # Value-function queries (dynamics-agnostic)
@@ -431,6 +435,9 @@ class BRTController13D(Docking13DControllerMixin):
             'omega_norm': float(np.linalg.norm(state[10:13])),
         })
 
+        # Safety filter post-processing
+        control = self.safety_filter.apply(state, control)
+
         # History
         self.state_history.append(
             state.copy() if isinstance(state, np.ndarray) else state)
@@ -521,6 +528,8 @@ class BRTController13D(Docking13DControllerMixin):
             'phase_transition_time': self.phase_transition_time,
             'brt_reacquisition_count': self.brt_reacquisition_count,
             'brt_time_adjustments': self.brt_time_adjustments,
+            'safety_filter_mode': self.safety_filter.mode,
+            'safety_filter_log': self.safety_filter.get_log(),
         }
 
         # --- Diagnostic summary --- #

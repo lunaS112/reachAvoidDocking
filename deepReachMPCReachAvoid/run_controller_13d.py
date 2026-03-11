@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.controllers import (
     BRTController13D, MPCController13D, MPCTerminalController13D,
+    SafetyFilter,
 )
 from utils.brt_visualization_13d import BRTVisualizer13D
 from utils.controllers.controller_animation_13d import ControllerAnimation13D
@@ -50,6 +51,7 @@ from dynamics import dynamics as dynamics_module
 
 CONTROLLER_LABELS = {
     'brt_13d':          'BRT 13D',
+    'brt_safety_13d':   'BRT+Safety 13D',
     'mpc_13d':          'MPC 13D',
     'mpc_terminal_13d': 'MPC+Terminal 13D',
 }
@@ -84,6 +86,22 @@ def build_controller(name, args):
             tMax=args.tMax,
             dt=args.dt,
             device=args.device,
+        )
+    elif name == 'brt_safety_13d':
+        sf = SafetyFilter(
+            mode=args.safety_filter_mode,
+            checkpoint_path=args.safety_checkpoint_path,
+            tMax=args.safety_tMax,
+            margin=args.safety_filter_margin,
+            gamma=args.safety_filter_gamma,
+            device=args.device,
+        )
+        return BRTController13D(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
         )
     elif name == 'mpc_13d':
         return MPCController13D(
@@ -389,6 +407,12 @@ def run_single(args):
     print(f"  Final dist    : {final_dist:.4f} m")
     print(f"  Final quat err: {np.degrees(final_qerr):.2f} deg")
 
+    # Safety filter summary
+    sf_log = result.get('safety_filter_log', [])
+    if sf_log:
+        active_steps = sum(1 for e in sf_log if e.get('filter_active', False))
+        print(f"  Safety filter : {active_steps}/{len(sf_log)} steps active")
+
     # ---- Save --------------------------------------------------------
     np.save(os.path.join(args.output_dir, 'trajectory.npy'),
             result['trajectory'])
@@ -688,6 +712,18 @@ def main():
     parent.add_argument('--max_sim_time', type=float, default=60.0)
     parent.add_argument('--output_dir', type=str, default='./outputs/single_13d')
 
+    # Safety filter arguments (for brt_safety_13d)
+    parent.add_argument('--safety_filter_mode', type=int, default=1,
+                        help='Safety filter mode: 0=off, 1=least-restrictive, 2=CBF-QP')
+    parent.add_argument('--safety_checkpoint_path', type=str, default=None,
+                        help='Path to avoid-only BRT checkpoint for safety filter')
+    parent.add_argument('--safety_tMax', type=float, default=None,
+                        help='tMax for safety BRT queries (None = use model default)')
+    parent.add_argument('--safety_filter_margin', type=float, default=0.1,
+                        help='Activation threshold delta for mode 1')
+    parent.add_argument('--safety_filter_gamma', type=float, default=0.2,
+                        help='CBF decay rate for mode 2')
+
     # MPC arguments
     parent.add_argument('--planning_horizon', type=float, default=20.0)
     parent.add_argument('--mpc_dt', type=float, default=0.5)
@@ -717,7 +753,8 @@ def main():
     # --- single ------------------------------------------------------ #
     sp_single = subparsers.add_parser('single', parents=[parent])
     sp_single.add_argument('--controller', type=str, required=True,
-                           choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
+                           choices=['brt_13d', 'brt_safety_13d',
+                                    'mpc_13d', 'mpc_terminal_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
     sp_single.add_argument('--sampling_method', type=str, default='uniform',
@@ -730,7 +767,8 @@ def main():
     # --- compare ----------------------------------------------------- #
     sp_compare = subparsers.add_parser('compare', parents=[parent])
     sp_compare.add_argument('--controllers', nargs='+', required=True,
-                            choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
+                            choices=['brt_13d', 'brt_safety_13d',
+                                     'mpc_13d', 'mpc_terminal_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)
     sp_compare.add_argument('--seed', type=int, default=42)
     sp_compare.add_argument('--sampling_method', type=str, default='uniform',
