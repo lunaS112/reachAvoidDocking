@@ -21,14 +21,41 @@ python run_controller.py single --controller brat \
 
 python run_controller.py single --controller brat \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --initial_px 3.1188486779158744 --initial_py 8.553503388304648 --initial_theta -2.701630548995958 --initial_omega -0.01365488906296819 \
-  --initial_vx -0.5148129080308737 --initial_vy -0.7221356967338857 \
+  --initial_px -3.407509855901665 --initial_py -2.9689989713225415 --initial_theta 0.49913273937622415 --initial_omega -0.017424178189499262 \
+  --initial_vx -1.026343555401426 --initial_vy -0.046729930795811336 \
   --output_dir ./outputs/brt_filter_1_test
 
+<<<<<<< HEAD
 python run_controller.py single --controller brat \
   --checkpoint_path $CKPT --safety_filter_mode 0\
   --tMax 12.5  --max_sim_time 60.0 \
   --output_dir ./outputs/brt_newGeom
+=======
+  "initial_state": [
+          -3.407509855901665,
+          -2.9689989713225415,
+          0.49913273937622415,
+          -0.017424178189499262,
+          -1.026343555401426,
+          -0.046729930795811336
+        ],
+
+########################### Cascaded controller runs #########################
+
+# Cascaded BRT single run
+python run_controller.py single --controller cascaded_brt \
+  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER \
+  --tMax 15.0 --inner_tMax 3.0 --max_sim_time 60.0 \
+  --output_dir ./outputs/single_cascaded_brt
+
+# Cascaded MPC+Terminal single run
+python run_controller.py single --controller cascaded_mpc_terminal \
+  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER \
+  --tMax 15.0 --inner_tMax 3.0 --effective_horizon 3.0 --max_sim_time 60.0 \
+  --num_samples 500 --num_refinement 10 \
+  --output_dir ./outputs/single_cascaded_mpc_terminal
+
+>>>>>>> parent of 42f3161... New failure set
 
 #################### Control effort penalty (fuel minimization) ##############
 
