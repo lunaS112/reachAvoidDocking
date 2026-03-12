@@ -1088,11 +1088,16 @@ class Docking13D(Dynamics):
         self.post_length = 0.2       # how far post extends in -y (m) = 0.2*h_c
 
         # Goal region: must be below the inflated post tip so it's outside the obstacle.
-        # Inflated post tip at y = -(post_length + chaser_buffer).
-        # Add clearance gap, then a wide band below.
-        goal_clearance = 0.134
+        # With orientation-dependent inflation, the worst-case Y-extent of the
+        # chaser within eps_q of the goal quaternion is:
+        #   cb_y_worst = 0.5 * (cos(eps_q) + sqrt(2)*sin(eps_q))
+        # For eps_q=0.20 rad: cb_y_worst ≈ 0.630m  (vs full sphere 0.866m).
+        # Inflated post tip at y = -(post_length + cb_y_worst).
+        self.cb_y_worst = 0.5 * (math.cos(self.eps_q)
+                                  + math.sqrt(2) * math.sin(self.eps_q))
+        goal_clearance = 0.07
         goal_band_height = 0.4
-        self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)
+        self.goal_y_max = -(self.post_length + self.cb_y_worst + goal_clearance)
         self.goal_y_min = self.goal_y_max - goal_band_height
         self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0
 
@@ -1585,24 +1590,35 @@ class Docking13D(Dynamics):
         return torch.max(goal_val, dim=-1).values * self.reach_fn_weight
 
     # ---------- Avoid set ----------
+    def _compute_cb_y(self, state):
+        """Orientation-dependent Y-direction chaser half-extent (support function).
+
+        For a 1m cube at orientation q, the max LVLH-Y extent of any corner is:
+            cb_y = 0.5 * (|R[0,1]| + |R[1,1]| + |R[2,1]|)
+        where R = quat_to_R_LVLH_to_body(q), and column 1 encodes the
+        LVLH-Y direction in body frame.
+
+        Range: 0.5 (aligned) to 0.866 (worst-case = full bounding sphere).
+        """
+        q = state[..., 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        R = self.quat_to_R_LVLH_to_body(q)
+        cb_y = 0.5 * (torch.abs(R[..., 0, 1])
+                       + torch.abs(R[..., 1, 1])
+                       + torch.abs(R[..., 2, 1]))
+        return cb_y
+
     def avoid_fn(self, state):
         """
         Obstacle = target body (rectangular prism y∈[0, h_t])
                  + docking post (1.2×1.2m peg, y∈[-post_length, 0]).
-        Both fully inflated by chaser_buffer on ALL faces.
 
-        Body inflated bounds:
-            x ∈ [-w_t/2 - cb, w_t/2 + cb]
-            y ∈ [-cb, h_t + cb]
-            z ∈ [-d_t/2 - cb, d_t/2 + cb]
+        Y-facing surfaces use orientation-dependent inflation cb_y(q)
+        (support function of the rotated chaser cube in the LVLH-Y direction).
+        All other faces use the full bounding-sphere radius cb.
 
-        Post inflated bounds:
-            x ∈ [-post_hw_x - cb, post_hw_x + cb]
-            y ∈ [-(post_length + cb), cb]
-            z ∈ [-post_hw_z - cb, post_hw_z + cb]
-
-        The goal set is placed below the inflated post tip
-        (y < -(post_length + cb)) so it is outside the obstacle.
+        This allows the goal set to sit closer to the post tip when the
+        chaser is properly aligned for docking.
 
         Returns: negative inside obstacle, positive outside (safe).
         """
@@ -1611,28 +1627,30 @@ class Docking13D(Dynamics):
         z = state[..., 2]
 
         cb = self.chaser_buffer
+        cb_y = self._compute_cb_y(state)  # orientation-dependent
 
-        # --- Target body SDF (rectangular prism y∈[0, h_t], fully inflated) ---
+        # --- Target body SDF (rectangular prism y∈[0, h_t]) ---
+        # X, Z faces: full bounding sphere.  Y faces: orientation-dependent.
         half_w = self.w_t / 2.0 + cb
         half_z = self.d_t / 2.0 + cb
         s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + cb), y - (self.h_t + cb)),
+                torch.maximum(-(y + cb_y), y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )
 
-        # --- Docking post SDF (peg y∈[-post_length, 0], fully inflated) ---
-        # The post -y tip is inflated to y = -(post_length + cb).
-        # The post +y face inflated to y = cb merges seamlessly with body -y face.
+        # --- Docking post SDF (peg y∈[-post_length, 0]) ---
+        # Tip (-Y face) and body-side (+Y merge) use cb_y.
+        # X, Z faces use full cb.
         post_hw_x_inf = self.post_hw_x + cb
         post_hw_z_inf = self.post_hw_z + cb
         s_post = torch.maximum(
             torch.abs(x) - post_hw_x_inf,
             torch.maximum(
-                torch.maximum(-(y + self.post_length + cb),
-                              y - cb),
+                torch.maximum(-(y + self.post_length + cb_y),
+                              y - cb_y),
                 torch.abs(z) - post_hw_z_inf
             )
         )
