@@ -31,8 +31,8 @@ def main():
     post_hw_z = 0.6
     post_length = 0.2
 
-    eps_p = 0.30
-    eps_q = 0.20  # rad
+    eps_p = 0.10
+    eps_q = 0.151  # rad (~5° per axis worst-case)
 
     # ── Orientation-dependent Y-inflation ──
     # cb_y_worst = max Y-extent of chaser at eps_q from goal quat
