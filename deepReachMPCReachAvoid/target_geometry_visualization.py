@@ -20,12 +20,12 @@ import matplotlib.patches as mpath_patches
 W_T = 6.0            # target body width (x)
 H_T = 3.0            # target body height (y)
 POST_HW_X = 0.6      # post half-width in x
-POST_LENGTH = 0.2     # post extent in -y
+POST_LENGTH = 0.2    # post extent in -y
 W_C, H_C = 1.0, 1.0  # chaser dimensions
 CHASER_BUFFER = np.sqrt(W_C**2 + H_C**2) / 2  # ≈ 0.707
 
-GOAL_CLEARANCE = 0.093
-GOAL_BAND_HEIGHT = 0.4
+GOAL_CLEARANCE = -0.007
+GOAL_BAND_HEIGHT = 0.5
 GOAL_Y_MAX = -(POST_LENGTH + CHASER_BUFFER + GOAL_CLEARANCE)   # ≈ -1.0
 GOAL_Y_MIN = GOAL_Y_MAX - GOAL_BAND_HEIGHT                     # ≈ -1.4
 GOAL_Y_CENTER = (GOAL_Y_MIN + GOAL_Y_MAX) / 2.0                # ≈ -1.2

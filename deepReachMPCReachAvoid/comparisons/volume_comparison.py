@@ -16,22 +16,21 @@ This script:
   5. Produces side-by-side contour plots and a volume summary table.
 
 Known limitations (documented per plan):
-  - Target-set norm differs: grid uses L-inf; DeepReach uses L2-weighted.
-  - Avoid-set geometry differs: grid uses semicircle centered at
-    (chaser_buffer, 0) with offset; DeepReach uses origin-centered
-    semicircle with cutout term and asymmetric scaling.
-  - These are inherent modelling differences and are expected to produce
-    some disagreement between the two value functions.
+  - Reach/avoid geometry is now aligned between grid and DeepReach:
+    both use body+post rectangle obstacle, matching goal band, and L2
+    velocity norm.
+  - DeepReach applies piecewise asymmetric shaping (a training aid)
+    to reach_fn and avoid_fn; grid uses raw SDFs.  The zero level
+    sets should match; interior/exterior magnitudes may differ.
 
 Usage:
-    python volume_comparison.py \
-        --checkpoint_path runs/Docking6D_RA_14sec/training/checkpoints/model_epoch_145000.pth \
-        --tMax 15 \
-        --time_horizons 5 10 15 \
+    python comparisons/volume_comparison.py \
+        --checkpoint_path CKPT \
+        --tMax 10 \
+        --time_horizons 3 6 10 \
         --n_monte_carlo 500000 \
         --slice_resolution 200 \
-        --output_dir ./outputs/volume_comparison \
-        --device cuda
+        --output_dir ./outputs/volume_comparison
 """
 
 import argparse
@@ -49,8 +48,9 @@ from matplotlib.colors import TwoSlopeNorm
 
 # ---- path setup ----
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-sys.path.insert(0, SCRIPT_DIR)
+DEEPREACH_DIR = os.path.dirname(SCRIPT_DIR)
+PROJECT_ROOT = os.path.dirname(DEEPREACH_DIR)
+sys.path.insert(0, DEEPREACH_DIR)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'gridBased6DImplementation'))
 
 from utils.controllers import BRATController
@@ -154,7 +154,7 @@ DEFAULT_SLICES = [
     },
 ]
 
-# State bounds for each dim (used for slice grids and Monte Carlo)
+# State bounds for each dim (used for slice grids)
 STATE_BOUNDS = np.array([
     [-15.0,  15.0],  # px
     [-15.0,  15.0],  # py
@@ -162,6 +162,20 @@ STATE_BOUNDS = np.array([
     [ -1.5,   1.5],  # vy
     [-np.pi, np.pi], # theta
     [ -1.0,   1.0],  # omega
+])
+
+# Focused Monte Carlo sampling bounds — tighter position window to ensure
+# adequate sampling density in 6D.  Uniform sampling over the full
+# STATE_BOUNDS (30×30 m² position area, hypervolume ≈ 101 800) yields
+# <0.02% hit rate on the BRAT set, making volume estimates unreliable.
+# These bounds cover the BRAT set for time horizons up to ~15 s.
+MC_BOUNDS = np.array([
+    [ -5.0,   5.0],  # px  (BRAT ⊂ ±5 m at t ≤ 15 s)
+    [ -5.0,   2.0],  # py  (goal ≈ −1.2 m, obstacle above y ≈ 0)
+    [ -1.5,   1.5],  # vx  (full grid range)
+    [ -1.5,   1.5],  # vy  (full grid range)
+    [-np.pi, np.pi], # theta (full range — rotational reachability is wide)
+    [ -1.0,   1.0],  # omega (full DeepReach range)
 ])
 
 
@@ -217,15 +231,23 @@ def evaluate_slice(combo, brat_ctrl, slice_def, t_physical, resolution,
 #  Monte Carlo volume estimation
 # ======================================================================
 def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
-                       seed=42):
+                       seed=42, bounds=None):
     """Estimate 6D BRAT volumes via uniform random sampling.
+
+    Args:
+        bounds: (6, 2) array of sampling bounds per dimension.
+                Defaults to MC_BOUNDS (tighter than STATE_BOUNDS).
 
     Returns dict with keys:
         grid_frac, dr_frac, overlap_frac, grid_only_frac, dr_only_frac,
-        jaccard, n_samples
+        jaccard, n_samples, hypervolume, grid_vol, dr_vol, overlap_vol
     """
+    if bounds is None:
+        bounds = MC_BOUNDS
+    hypervolume = float(np.prod(bounds[:, 1] - bounds[:, 0]))
+
     rng = np.random.RandomState(seed)
-    states = rng.uniform(STATE_BOUNDS[:, 0], STATE_BOUNDS[:, 1],
+    states = rng.uniform(bounds[:, 0], bounds[:, 1],
                          size=(n_samples, 6))
 
     t_idx = physical_time_to_index(t_physical, grid_times)
@@ -252,14 +274,22 @@ def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
     n = float(n_samples)
     jaccard = float(overlap.sum()) / float(union.sum()) if union.sum() > 0 else 0.0
 
+    grid_frac    = float(in_grid.sum() / n)
+    dr_frac      = float(in_dr.sum() / n)
+    overlap_frac = float(overlap.sum() / n)
+
     return {
-        'grid_frac':      float(in_grid.sum() / n),
-        'dr_frac':        float(in_dr.sum() / n),
-        'overlap_frac':   float(overlap.sum() / n),
+        'grid_frac':      grid_frac,
+        'dr_frac':        dr_frac,
+        'overlap_frac':   overlap_frac,
         'grid_only_frac': float(grid_only.sum() / n),
         'dr_only_frac':   float(dr_only.sum() / n),
         'jaccard':        jaccard,
         'n_samples':      n_samples,
+        'hypervolume':    hypervolume,
+        'grid_vol':       grid_frac * hypervolume,
+        'dr_vol':         dr_frac * hypervolume,
+        'overlap_vol':    overlap_frac * hypervolume,
     }
 
 
@@ -354,20 +384,31 @@ def plot_volume_vs_time(volume_results, save_path):
 
 def print_volume_table(volume_results):
     """Print a formatted volume comparison table to stdout."""
-    header = (f"{'Time(s)':>8} {'Grid BRAT%':>11} {'DR BRAT%':>11} "
-              f"{'Overlap%':>10} {'Grid-only%':>11} {'DR-only%':>10} "
+    has_vol = any('hypervolume' in v for v in volume_results.values())
+
+    header = (f"{'Time(s)':>8} {'Grid%':>8} {'DR%':>8} "
+              f"{'Overlap%':>9} {'Grid-only%':>11} {'DR-only%':>10} "
               f"{'Jaccard':>8}")
+    if has_vol:
+        header += f"  {'GridVol':>9} {'DRVol':>9} {'OvlpVol':>9}"
     sep = '-' * len(header)
     print('\n' + sep)
     print('VOLUME COMPARISON  (Monte Carlo)')
+    if has_vol:
+        hv = next(iter(volume_results.values())).get('hypervolume', 0)
+        print(f'  Sampling hypervolume: {hv:.1f}  (units: m²·(m/s)²·rad·(rad/s))')
     print(sep)
     print(header)
     print(sep)
     for t in sorted(volume_results.keys()):
         v = volume_results[t]
-        print(f"{t:>8.0f} {v['grid_frac']*100:>9.2f}% {v['dr_frac']*100:>9.2f}% "
-              f"{v['overlap_frac']*100:>9.2f}% {v['grid_only_frac']*100:>10.2f}% "
-              f"{v['dr_only_frac']*100:>9.2f}% {v['jaccard']:>8.4f}")
+        line = (f"{t:>8.0f} {v['grid_frac']*100:>6.2f}% {v['dr_frac']*100:>6.2f}% "
+                f"{v['overlap_frac']*100:>7.2f}% {v['grid_only_frac']*100:>10.2f}% "
+                f"{v['dr_only_frac']*100:>9.2f}% {v['jaccard']:>8.4f}")
+        if has_vol:
+            line += (f"  {v.get('grid_vol',0):>9.1f} {v.get('dr_vol',0):>9.1f} "
+                     f"{v.get('overlap_vol',0):>9.1f}")
+        print(line)
     print(sep + '\n')
 
 
@@ -385,7 +426,7 @@ def main():
     parser.add_argument('--time_horizons', type=float, nargs='+',
                         default=[5.0, 10.0, 15.0],
                         help='Time horizons (seconds) to evaluate')
-    parser.add_argument('--n_monte_carlo', type=int, default=500_000,
+    parser.add_argument('--n_monte_carlo', type=int, default=2_000_000,
                         help='Number of random samples for volume estimation')
     parser.add_argument('--slice_resolution', type=int, default=200,
                         help='Grid resolution per axis for 2D slice plots')
@@ -495,10 +536,13 @@ def main():
             'slice_resolution': args.slice_resolution,
             'grid_final_time': args.grid_final_time,
             'seed': args.seed,
+            'mc_bounds': MC_BOUNDS.tolist(),
+            'mc_hypervolume': float(np.prod(MC_BOUNDS[:, 1] - MC_BOUNDS[:, 0])),
             'notes': [
-                'Grid uses L-inf target sets; DeepReach uses weighted max.',
-                'Body+post obstacle geometry consistent between grid and DeepReach.',
-                'Grid params aligned to DeepReach: post_hw_x=0.6, post_length=0.2, eps_p=0.1, d_bar=0.',
+                'Grid and DeepReach reach/avoid geometry fully aligned (body+post obstacle, goal band, L2 velocity).',
+                'DeepReach applies piecewise asymmetric shaping; grid uses raw SDFs. Zero level sets should match.',
+                'Grid params: post_hw_x=0.6, post_length=0.2, eps_p=0.1, eps_v=0.1, eps_theta=0.04, eps_omega=0.05, d_bar=0.',
+                'MC sampling uses MC_BOUNDS (tighter than full state domain) for adequate 6D density.',
             ],
         },
         'volume': {str(k): v for k, v in volume_results.items()},

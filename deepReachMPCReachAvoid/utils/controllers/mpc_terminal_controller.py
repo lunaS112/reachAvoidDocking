@@ -38,7 +38,7 @@ from utils.MPC import MPC
 from dynamics import dynamics as dynamics_module
 from utils.controllers import clip_state_for_execution
 from utils.controllers.safety_filter import SafetyFilter
-from utils.controllers.min_time_search import find_min_brat_time_single, find_min_brat_time_batch
+from utils.controllers.min_time_search import find_min_brat_time_single, find_min_brat_time_batch, STATUS_HOLD
 
 
 class MPCTerminalController:
@@ -64,7 +64,7 @@ class MPCTerminalController:
                  exploration_factor=3.0, exploration_patience=2,
                  escape_thresh=0.5, safety_filter=None,
                  safety_margin_phase1=0.1, safety_margin_phase2=0.02,
-                 search_resolution=0.1):
+                 search_resolution=0.1, debug_phase2=False):
         """
         Args:
             checkpoint_path: Path to trained model checkpoint.
@@ -101,6 +101,7 @@ class MPCTerminalController:
         self.exploration_patience = exploration_patience
         self.escape_thresh = escape_thresh
         self.search_resolution = search_resolution
+        self.debug_phase2 = debug_phase2
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
@@ -209,6 +210,8 @@ class MPCTerminalController:
         self._control_mode = 'normal'   # 'normal' | 'exploring' | 'brat_fallback'
         self._exploration_factor = 1.0
         self._mode_entry_dist = None
+        self.phase2_debug_log = []
+        self._last_phase2_state_search = None
 
     # ------------------------------------------------------------------
     # Value function queries
@@ -370,6 +373,23 @@ class MPCTerminalController:
         values = self.dynamics.io_to_value(model_input, output)
         return values.reshape(N, T).cpu().numpy()
 
+    def _record_phase2_debug(self, entry):
+        """Persist one Phase 2 diagnostic entry and print a compact summary."""
+        self.phase2_debug_log.append(entry)
+
+        terminal = entry.get('terminal_search', {})
+        current = entry.get('current_state_search', {})
+        print(
+            f"[MPC+Terminal Phase2] t={entry['sim_time']:6.2f}s  "
+            f"mode={entry['control_mode']}  "
+            f"current_t*={entry['current_t_star']:5.2f}s ({entry['current_status']})  "
+            f"terminal_best_t*={terminal.get('best_t_star', float('nan')):5.2f}s "
+            f"({terminal.get('best_status', 'n/a')})  "
+            f"strict={terminal.get('strict_count', 0):3d}/{terminal.get('n_samples', 0):3d}  "
+            f"best_combined={entry.get('best_combined_cost', float('nan')): .4f}  "
+            f"Vcur(t*)={current.get('winner_value', float('nan')): .4f}"
+        )
+
     # ------------------------------------------------------------------
     # Phase tracking (extracted so BRAT fallback path can reuse it)
     # ------------------------------------------------------------------
@@ -398,10 +418,24 @@ class MPCTerminalController:
             # Per-step min-time query for the current state
             state_np = state if isinstance(state, np.ndarray) else np.array(state)
             value_fn = lambda times: self._value_at_times_single(state_np, times)
-            t_star, _status = find_min_brat_time_single(
-                value_fn, self.tMax,
-                resolution=self.search_resolution)
-            self.t_remaining = t_star
+            if self.debug_phase2:
+                t_star, _status, search_details = find_min_brat_time_single(
+                    value_fn, self.tMax,
+                    resolution=self.search_resolution,
+                    return_details=True,
+                    t_remaining=self.t_remaining)
+                self._last_phase2_state_search = search_details
+            else:
+                t_star, _status = find_min_brat_time_single(
+                    value_fn, self.tMax,
+                    resolution=self.search_resolution,
+                    t_remaining=self.t_remaining)
+                self._last_phase2_state_search = None
+            # STATUS_HOLD: count down; otherwise accept the searched t*
+            if _status == STATUS_HOLD:
+                self.t_remaining = max(t_star - self.dt, 0.01)
+            else:
+                self.t_remaining = t_star
             t_query = max(t_star, 0.01)
             phase = 2
         else:
@@ -622,6 +656,7 @@ class MPCTerminalController:
             'safety_filter_log': self.safety_filter.get_log(),
             # --- execution clamping ---
             'n_clipped_steps': n_clipped,
+            'phase2_debug_log': self.phase2_debug_log,
         }
         return result
 
@@ -659,6 +694,7 @@ class MPCTerminalController:
 
         # Iterative refinement with custom cost (MPC reachability + terminal)
         best_cost_val = float('inf')
+        final_phase2_debug = None
         for _ in range(self.num_refinement):
             # Roll out num_samples perturbed trajectories
             # state_trajs: (1, N, H+1, D),  permuted_controls: (1, N, H, D_u)
@@ -676,8 +712,15 @@ class MPCTerminalController:
                 # Per-sample min-time queries for variable-time terminal cost
                 term_np = terminal_states[0].detach().cpu().numpy()  # (N, D)
                 N = term_np.shape[0]
+                batch_debug = {}
+
                 def _vfn_batch(indices, times):
-                    return self._batch_value_grid(term_np[indices], times)
+                    values = self._batch_value_grid(term_np[indices], times)
+                    if self.debug_phase2:
+                        batch_debug['times'] = times.tolist()
+                        batch_debug['values'] = values
+                    return values
+
                 t_stars, _statuses = find_min_brat_time_batch(
                     _vfn_batch, N, self.tMax,
                     resolution=self.search_resolution)
@@ -717,6 +760,35 @@ class MPCTerminalController:
             self._last_reach_avoid = reach_avoid_cost[0, bi].item()
             self._last_terminal = terminal_values[0, bi].item()
 
+            if phase == 2 and self.debug_phase2:
+                best_idx_int = int(bi.item())
+                strict_count = int(np.sum(_statuses == 'strict'))
+                argmin_count = int(np.sum(_statuses == 'argmin'))
+                best_times = batch_debug['times']
+                best_values = batch_debug['values'][best_idx_int].tolist()
+                final_phase2_debug = {
+                    'current_state_search': self._last_phase2_state_search,
+                    'terminal_search': {
+                        'n_samples': int(N),
+                        'strict_count': strict_count,
+                        'argmin_count': argmin_count,
+                        't_star_min': float(np.min(t_stars)),
+                        't_star_mean': float(np.mean(t_stars)),
+                        't_star_max': float(np.max(t_stars)),
+                        'best_sample_idx': best_idx_int,
+                        'best_t_star': float(t_stars[best_idx_int]),
+                        'best_status': str(_statuses[best_idx_int]),
+                        'best_terminal_value': float(self._last_terminal),
+                        'best_search_profile': {
+                            'times': best_times,
+                            'values': best_values,
+                        },
+                    },
+                    'best_combined_cost': float(best_cost_val),
+                    'best_reach_avoid': float(self._last_reach_avoid),
+                    'best_terminal_value': float(self._last_terminal),
+                }
+
             # Update control tensors with the best sample's controls
             idx_ctrl = best_idx.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             idx_ctrl = idx_ctrl.expand(
@@ -726,6 +798,20 @@ class MPCTerminalController:
             self.mpc.control_tensors = best_controls.clone()
 
         first_control = self.mpc.control_tensors[0, 0, :].detach().cpu().numpy()
+        if phase == 2 and self.debug_phase2 and final_phase2_debug is not None:
+            self._record_phase2_debug({
+                'sim_time': float(sim_time),
+                'control_mode': self._control_mode,
+                'state': np.asarray(state, dtype=np.float64).tolist(),
+                'current_t_star': float(self.t_remaining),
+                'current_status': final_phase2_debug['current_state_search']['status'],
+                'current_state_search': final_phase2_debug['current_state_search'],
+                'terminal_search': final_phase2_debug['terminal_search'],
+                'best_combined_cost': final_phase2_debug['best_combined_cost'],
+                'best_reach_avoid': final_phase2_debug['best_reach_avoid'],
+                'best_terminal_value': final_phase2_debug['best_terminal_value'],
+                'applied_first_control': first_control.tolist(),
+            })
         return first_control, best_cost_val
 
     # ------------------------------------------------------------------

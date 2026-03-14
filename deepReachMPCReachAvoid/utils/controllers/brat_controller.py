@@ -31,7 +31,7 @@ from utils import diff_operators
 from dynamics import dynamics as dynamics_module
 from utils.controllers.safety_filter import SafetyFilter
 from utils.controllers import clip_state_for_execution
-from utils.controllers.min_time_search import find_min_brat_time_single
+from utils.controllers.min_time_search import find_min_brat_time_single, STATUS_HOLD
 
 
 class BRATController:
@@ -51,7 +51,8 @@ class BRATController:
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
                  search_resolution=0.1,
                  safety_filter=None,
-                 safety_margin_phase1=0.1, safety_margin_phase2=0.02):
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
+                 debug_phase2=False):
         """
         Initialize the BRAT controller.
         
@@ -68,6 +69,7 @@ class BRATController:
         self.dt = dt
         self.device = device
         self.search_resolution = search_resolution
+        self.debug_phase2 = debug_phase2
         
         # Derive experiment directory from checkpoint path
         # checkpoint_path: ./runs/EXPNAME/training/checkpoints/model_final.pth
@@ -153,6 +155,7 @@ class BRATController:
         # BRAT reacquisition tracking
         self.brat_reacquisition_count = 0
         self.brat_time_adjustments = []
+        self.phase2_debug_log = []
         
     def get_value(self, state, time):
         """
@@ -235,7 +238,7 @@ class BRATController:
         
         return dvds
     
-    def get_optimal_control(self, state, time):
+    def get_optimal_control(self, state, time, return_gradient=False):
         """
         Compute optimal bang-bang control from value function gradient.
         
@@ -254,7 +257,10 @@ class BRATController:
         u_y = -self.u_bar if dvds[3] > 0 else self.u_bar
         u_theta = -self.u_theta_bar if dvds[5] > 0 else self.u_theta_bar
         
-        return np.array([u_x, u_y, u_theta])
+        control = np.array([u_x, u_y, u_theta])
+        if return_gradient:
+            return control, dvds
+        return control
     
     def is_in_brat(self, state):
         """
@@ -357,8 +363,45 @@ class BRATController:
             status is 'strict' or 'argmin'.
         """
         value_fn = lambda times: self.get_values_batch(state, times)
+        if self.debug_phase2:
+            return find_min_brat_time_single(
+                value_fn, self.tMax,
+                resolution=self.search_resolution,
+                return_details=True,
+                t_remaining=self.t_remaining)
         return find_min_brat_time_single(
-            value_fn, self.tMax, resolution=self.search_resolution)
+            value_fn, self.tMax,
+            resolution=self.search_resolution,
+            t_remaining=self.t_remaining)
+
+    def _record_phase2_debug(self, sim_time, state, search_details,
+                             t_star, status, query_time, value, dvds,
+                             raw_control, applied_control):
+        """Persist high-signal Phase 2 diagnostics for postmortem analysis."""
+        entry = {
+            'sim_time': float(sim_time),
+            'state': np.asarray(state, dtype=np.float64).tolist(),
+            'value_tmax': float(self.get_value(state, self.tMax)),
+            'selected_t_star': float(t_star),
+            'selected_status': status,
+            'query_time': float(query_time),
+            'value_at_query': float(value),
+            'gradient_dvds': np.asarray(dvds, dtype=np.float64).tolist(),
+            'raw_control': np.asarray(raw_control, dtype=np.float64).tolist(),
+            'applied_control': np.asarray(applied_control, dtype=np.float64).tolist(),
+            'safety_filter_modified_control': bool(
+                not np.allclose(raw_control, applied_control)),
+            'search': search_details,
+        }
+        self.phase2_debug_log.append(entry)
+
+        print(
+            f"[BRAT Phase2] t={sim_time:6.2f}s  t*={t_star:5.2f}s ({status})  "
+            f"V(t*)={value: .4f}  V(tMax)={entry['value_tmax']: .4f}  "
+            f"neg={search_details['n_nonpositive']:3d}  "
+            f"u_raw={np.array2string(raw_control, precision=3)}"
+            f"  u_applied={np.array2string(applied_control, precision=3)}"
+        )
     
     def u_fn(self, state, sim_time):
         """
@@ -382,10 +425,24 @@ class BRATController:
             
         if self.in_brat_phase:
             # Phase 2: per-step min-time query (always returns a valid t*)
-            t_star, status = self._search_brat_time(state)
-            self.t_remaining = t_star
+            search_result = self._search_brat_time(state)
+            if self.debug_phase2:
+                t_star, status, search_details = search_result
+            else:
+                t_star, status = search_result
+                search_details = None
+            # STATUS_HOLD: count down; otherwise accept the searched t*
+            if status == STATUS_HOLD:
+                self.t_remaining = max(t_star - self.dt, 0.01)
+            else:
+                self.t_remaining = t_star
             query_time = max(t_star, 0.01)
-            control = self.get_optimal_control(state, query_time)
+            if self.debug_phase2:
+                control, dvds = self.get_optimal_control(
+                    state, query_time, return_gradient=True)
+            else:
+                control = self.get_optimal_control(state, query_time)
+                dvds = None
             value = self.get_value(state, query_time)
             phase = 2
 
@@ -404,9 +461,15 @@ class BRATController:
             phase = 1
             
         # Post-process through safety filter (no-op when mode=0)
+        raw_control = control.copy()
         self.safety_filter.set_margin(
             self.safety_margin_phase2 if self.in_brat_phase else self.safety_margin_phase1)
         control = self.safety_filter.apply(state, control)
+
+        if self.in_brat_phase and self.debug_phase2:
+            self._record_phase2_debug(
+                sim_time, state, search_details, t_star, status,
+                query_time, value, dvds, raw_control, control)
 
         # Record history
         self.state_history.append(state.copy() if isinstance(state, np.ndarray) else state)
@@ -516,6 +579,7 @@ class BRATController:
             'safety_filter_log': self.safety_filter.get_log(),
             # --- execution clamping ---
             'n_clipped_steps': n_clipped,
+            'phase2_debug_log': self.phase2_debug_log,
         }
         
         return result

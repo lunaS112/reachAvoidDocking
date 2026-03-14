@@ -81,6 +81,7 @@ def build_controller(name, args):
             safety_filter=sf,
             safety_margin_phase1=args.safety_margin_phase1,
             safety_margin_phase2=args.safety_margin_phase2,
+            debug_phase2=args.debug_phase2,
         )
     elif name == 'mpc':
         return MPCController(
@@ -109,6 +110,7 @@ def build_controller(name, args):
             safety_filter=sf,
             safety_margin_phase1=args.safety_margin_phase1,
             safety_margin_phase2=args.safety_margin_phase2,
+            debug_phase2=args.debug_phase2,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -264,6 +266,25 @@ def compute_metrics(all_results):
         'total_clipped_steps':  total_clipped,
         'n_rollouts_with_clipping': n_with_clipping,
     }
+
+
+def _to_jsonable(obj):
+    """Convert numpy / torch-adjacent containers into JSON-safe objects."""
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_jsonable(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_to_jsonable(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
 
 
 def print_comparison_table(metrics_by_controller):
@@ -460,6 +481,29 @@ def run_single(args):
         else:
             print("Never entered BRAT (stayed in Phase 1)")
 
+    phase2_debug = result.get('phase2_debug_log', [])
+    if args.debug_phase2:
+        print(f"Phase 2 debug entries captured: {len(phase2_debug)}")
+        if phase2_debug and not result['success']:
+            print("Last Phase 2 debug entries before failure:")
+            for entry in phase2_debug[-5:]:
+                if ctrl_type == 'brat':
+                    print(
+                        f"  t={entry['sim_time']:6.2f}s  "
+                        f"t*={entry['selected_t_star']:5.2f}s ({entry['selected_status']})  "
+                        f"V(t*)={entry['value_at_query']: .4f}  "
+                        f"V(tMax)={entry['value_tmax']: .4f}  "
+                        f"safety_override={entry['safety_filter_modified_control']}"
+                    )
+                elif ctrl_type == 'mpc_terminal':
+                    terminal = entry.get('terminal_search', {})
+                    print(
+                        f"  t={entry['sim_time']:6.2f}s  "
+                        f"current_t*={entry['current_t_star']:5.2f}s ({entry['current_status']})  "
+                        f"best_terminal_t*={terminal.get('best_t_star', float('nan')):5.2f}s  "
+                        f"best_combined={entry.get('best_combined_cost', float('nan')): .4f}"
+                    )
+
     # Safety filter stats
     sf_mode = result.get('safety_filter_mode', 0)
     sf_log = result.get('safety_filter_log', [])
@@ -489,6 +533,16 @@ def run_single(args):
 
     # Generic static plots (all controller types)
     result_dict = {display: result}
+
+    json_path = os.path.join(args.output_dir, 'single_run_results.json')
+    json_data = {
+        'args': vars(args),
+        'initial_state': initial_state.tolist(),
+        'result': _to_jsonable(result),
+    }
+    with open(json_path, 'w') as f:
+        json.dump(json_data, f, indent=2)
+    print(f"Saving run summary: {json_path}")
 
     traj_path = os.path.join(args.output_dir, 'trajectory.png')
     print(f"Generating trajectory plot: {traj_path}")
@@ -563,7 +617,8 @@ def run_compare(args):
                 checkpoint_path=avoid_ckpt_resolved,
                 device=args.device,
             )
-            avoid_tMax = avoid_ctrl.tMax
+            # Use the tMax from the trained model, not the BRATController default
+            avoid_tMax = avoid_ctrl.orig_opt.tMax
             avoid_filter_fn = lambda states: avoid_ctrl.get_values_batch_states(
                 states, avoid_tMax)
             print(f"  Avoid-BRT filter ready (tMax={avoid_tMax})")
@@ -831,6 +886,9 @@ def _add_shared_args(parser):
     parser.add_argument('--safety_filter_gamma', type=float, default=0.2,
                         help='Mode 2 CBF decay rate gamma '
                              '(default: 0.2, from ComboControl)')
+    parser.add_argument('--debug_phase2', action='store_true',
+                        help='Enable detailed Phase 2 search/control '
+                             'diagnostics for single-run debugging')
 
 
 def main():
