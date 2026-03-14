@@ -44,6 +44,9 @@ def simulate(s0, u_fn, dt, nt, f):
                         d_history.append(cell.cell_contents.__globals__['disturbance_history'][i-1])
                         
         s_history[i] = s_history[i-1] + dt*f(s_history[i-1], u_history[i-1])
+        # Wrap theta to [-pi, pi] so interpn stays within the periodic 2D grid
+        if len(s_history[i]) > 4:
+            s_history[i, 4] = (s_history[i, 4] + np.pi) % (2 * np.pi) - np.pi
         u_history[i] = u_fn(s_history[i], i*dt)
         t_history[i] = i*dt
         
@@ -268,36 +271,48 @@ def dock(s0, controller, dt, nt, f, save_animation, animation_save_path, show_br
         
     plot_trajectory(s_history, controller, save_path=trajectory_save_path, show_brt=show_brt)
 
-    # Score
-    eps = 0.01  # Tolerance for scoring, can be adjusted if needed
-    # Define docking parameters (match those from RA_docking_6D.py)
-    eps_p = controller.eps_p + eps*2   # Position tolerance for docking (m)
-    eps_v = controller.eps_v + eps  # Velocity tolerance for docking (m/s)
-    eps_theta = controller.eps_theta + eps # Angular position tolerance for docking (rad)
-    eps_omega = controller.eps_omega  + eps # Angular velocity tolerance for docking (rad/s)
-    
+    # Score — must match the target_set_4D / target_set_2D definitions exactly
+    eps = 0.01  # Small scoring margin
+
+    # Recompute goal band from controller geometry (matches target_set_4D)
+    cb = np.sqrt(controller.w_c**2 + controller.h_c**2) / 2
+    goal_clearance = -0.007
+    goal_band_height = 0.5
+    goal_y_max = -(controller.post_length + cb + goal_clearance)
+    goal_y_min = goal_y_max - goal_band_height
+
+    eps_p = controller.eps_p + eps    # Position tolerance (m)
+    eps_v = controller.eps_v + eps    # Velocity tolerance (m/s)
+    eps_theta = controller.eps_theta + eps  # Angular tolerance (rad)
+    eps_omega = controller.eps_omega + eps  # Angular velocity tolerance (rad/s)
+
     # Get final state
     final_state = s_history[-1]
-    
-    # Check if final state is within all tolerance bounds
     px, py = final_state[0], final_state[1]
     vx, vy = final_state[2], final_state[3]
     theta, omega = final_state[4], final_state[5]
-    
-    target_theta = np.pi/2 
-    
-    # Calculate distance from each constraint
-    position_distance = max(abs(px) - eps_p, abs(py) - eps_p)
-    velocity_distance = max(abs(vx) - eps_v, abs(vy) - eps_v)
-    orientation_distance = abs(theta - target_theta) - eps_theta
+
+    target_theta = np.pi/2
+
+    # Position: |px| within tolerance AND py inside goal band
+    x_dist = abs(px) - eps_p
+    y_dist = max(goal_y_min - py, py - goal_y_max) - eps
+    position_distance = max(x_dist, y_dist)
+
+    # Velocity: L2 norm (matches target_set_4D)
+    velocity_distance = np.sqrt(vx**2 + vy**2) - eps_v
+
+    # Orientation: wrapped angular distance (matches target_set_2D)
+    theta_error = np.arctan2(np.sin(theta - target_theta), np.cos(theta - target_theta))
+    orientation_distance = abs(theta_error) - eps_theta
     angular_vel_distance = abs(omega) - eps_omega
-    
+
     # Print out final state
     print(f'Final state: px={px:.2f}, py={py:.2f}, vx={vx:.2f}, vy={vy:.2f}, theta={theta - target_theta:.2f}, omega={omega:.2f}')
-    
+
     # Maximum distance from target set (negative if inside)
     max_distance = max(position_distance, velocity_distance, orientation_distance, angular_vel_distance)
-    
+
     # Check if spacecraft has successfully docked
     qualified = max_distance <= 0
     

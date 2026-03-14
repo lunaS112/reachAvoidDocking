@@ -9,7 +9,7 @@ from hj_reachability import sets
 from matplotlib.animation import FuncAnimation
 
 class Docking_translational(dynamics.ControlAndDisturbanceAffineDynamics):
-    def __init__(self, mc, orbit_alt, u_bar = 20.0, d_bar = 0.01):
+    def __init__(self, mc, orbit_alt, u_bar = 20.0, d_bar = 0.0):
         # Mass and orbital parameters
         self.mc = mc  # Mass of chaser spacecraft (kg)
         self.orbit_alt = orbit_alt * 1e3  # Altitude in meters
@@ -66,49 +66,70 @@ class Docking_translational(dynamics.ControlAndDisturbanceAffineDynamics):
             [0.0, 1.0]
         ])
 
-# Docking tolerances
-eps_p = 0.5  # Position tolerance (m)
-eps_v = 0.05  # Velocity tolerance (m/s)
-
 # Target geometry (centered at origin)
-w_t = 6.0  # Width of target (m) (along x-axis)
-h_t = 3.0  # Height of target (m) (along y-axis)
-dock_rad = 1.23  # Docking indentation radius (m) (centered at origin)
+w_t = 6.0        # Width of target body (m) (along x-axis)
+h_t = 3.0        # Height of target body (m) (along y-axis)
+post_hw_x = 0.6  # Docking post half-width in x (m)
+post_length = 0.2 # How far docking post extends in -y (m)
+w_c = 1.0        # Chaser width (m)
+h_c = 1.0        # Chaser height (m)
+chaser_buffer = np.sqrt(w_c**2 + h_c**2) / 2  # Minkowski inflation radius
+
+# Docking tolerances
+eps_p = 0.1  # Position tolerance (m)
+eps_v = 0.1  # Velocity tolerance (m/s)
+
+# Goal band in y (below inflated post tip)
+goal_clearance = -0.007
+goal_band_height = 0.5
+goal_y_max = -(post_length + chaser_buffer + goal_clearance)
+goal_y_min = goal_y_max - goal_band_height
 
 def target_set(state):
-    """Signed distance <= 0 if within docking position/velocity tolerances."""
+    """Signed distance <= 0 if within docking position/velocity tolerances.
+
+    Position: |px| <= eps_p AND py inside goal band [goal_y_min, goal_y_max].
+    Velocity: L2 norm.
+    """
     px = state[..., 0]
     py = state[..., 1]
     vx = state[..., 2]
     vy = state[..., 3]
-    # Distance from allowable box in (px,py,vx,vy)
-    gi = jnp.stack([
-        jnp.abs(px) - eps_p,
-        jnp.abs(py) - eps_p,
-        jnp.abs(vx) - eps_v,
-        jnp.abs(vy) - eps_v
-    ], axis=-1)
-    return jnp.max(gi, axis=-1)
-    
+
+    x_dist = jnp.abs(px) - eps_p
+    y_dist = jnp.maximum(goal_y_min - py, py - goal_y_max)
+    pos_dist = jnp.maximum(x_dist, y_dist)
+
+    vel_dist = jnp.sqrt(vx**2 + vy**2 + 1e-8) - eps_v
+
+    return jnp.maximum(pos_dist, vel_dist)
+
 def failure_set(state):
-    """Signed distance <= 0 if colliding with target body (rectangle) except bottom indentation."""
+    """Obstacle = target body + docking post, inflated by chaser_buffer.
+
+    Returns: negative inside obstacle, positive outside (safe).
+    """
     px = state[..., 0]
     py = state[..., 1]
-    # Rectangle signed distance: negative inside rectangle spanning y in [0, h_t]
-    s_rect = jnp.maximum(
-        jnp.abs(px) - w_t/2,
-        jnp.maximum(-py, py - h_t)
+
+    # Body SDF (inflated rectangle: y in [0, h_t])
+    s_body = jnp.maximum(
+        jnp.abs(px) - (w_t / 2.0 + chaser_buffer),
+        jnp.maximum(-(py + chaser_buffer), py - (h_t + chaser_buffer))
     )
-    # Bottom semicircular indentation centered at (0,0) covering py >= 0
-    dist_semi = jnp.sqrt(px**2 + py**2) - dock_rad
-    # For upper half of circle: ensure we only carve out if py >= 0
-    s_dock = jnp.maximum(-py, dist_semi)
-    # Failure region: inside rectangle but not inside indentation
-    return jnp.maximum(s_rect, -s_dock)
+
+    # Post SDF (inflated rectangle: y in [-post_length, 0])
+    s_post = jnp.maximum(
+        jnp.abs(px) - (post_hw_x + chaser_buffer),
+        jnp.maximum(-(py + post_length + chaser_buffer), py - chaser_buffer)
+    )
+
+    # Union of body + post
+    return jnp.minimum(s_body, s_post)
 
 # Define the state space and grid resolution
-state_domain = hj.sets.Box(lo = jnp.array([-15.0, -15.0, -2.5, -2.5]), 
-                           hi = jnp.array([15.0, 15.0, 2.5, 2.5]))
+state_domain = hj.sets.Box(lo = jnp.array([-15.0, -15.0, -1.5, -1.5]), 
+                           hi = jnp.array([15.0, 15.0, 1.5, 1.5]))
 grid_resolution = (51, 51, 31, 31)
 
 grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution)

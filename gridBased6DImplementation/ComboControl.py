@@ -111,9 +111,9 @@ class Docking_rotational(dynamics.ControlAndDisturbanceAffineDynamics):
 class ComboController:
     def __init__(self, mc=200.0, orbit_alt=400, post_hw_x=0.6, post_length=0.2,
                  w_t=6, h_t=3, w_c=1.0, h_c=1.0,
-                 eps_p=0.05, eps_v=0.05, eps_theta=0.01, eps_omega=0.005,
+                 eps_p=0.1, eps_v=0.1, eps_theta=0.04, eps_omega=0.05,
                  u_bar_4D=20.0, u_bar_2D=1.5,
-                 d_bar_4D=0.01, d_bar_2D=0.01,
+                 d_bar_4D=0.0, d_bar_2D=0.0,
                  final_time=-30.0, dt=0.1,
                  grid_resolution_4D=(51, 51, 31, 31),
                  grid_resolution_2D=(361, 141),
@@ -169,12 +169,12 @@ class ComboController:
         self.eps_omega = eps_omega # Angular velocity tolerance for docking (rad/s)
 
         # Define 4D system
-        self.state_domain_4D = hj.sets.Box(lo=jnp.array([-15.0 , -15.0, -2.5, -2.5]), hi=jnp.array([15.0, 15.0, 2.5, 2.5]))
+        self.state_domain_4D = hj.sets.Box(lo=jnp.array([-15.0 , -15.0, -1.5, -1.5]), hi=jnp.array([15.0, 15.0, 1.5, 1.5]))
         self.grid_resolution_4D = grid_resolution_4D
         self.grid_4D = hj.Grid.from_lattice_parameters_and_boundary_conditions(self.state_domain_4D, self.grid_resolution_4D)
 
         # Define 2D system
-        self.state_domain_2D = hj.sets.Box(lo = jnp.array([-np.pi, -5.0]), hi = jnp.array([np.pi, 5.0]))
+        self.state_domain_2D = hj.sets.Box(lo = jnp.array([-np.pi, -2.0]), hi = jnp.array([np.pi, 2.0]))
         self.grid_resolution_2D = grid_resolution_2D
         self.periodic_dims = [0]
         self.grid_2D = hj.Grid.from_lattice_parameters_and_boundary_conditions(
@@ -243,6 +243,11 @@ class ComboController:
             float(self.docking_problem_2D.d_bar),
             self.final_time, self.dt,
             self.grid_resolution_4D, self.grid_resolution_2D,
+            tuple(float(x) for x in self.state_domain_4D.lo),
+            tuple(float(x) for x in self.state_domain_4D.hi),
+            tuple(float(x) for x in self.state_domain_2D.lo),
+            tuple(float(x) for x in self.state_domain_2D.hi),
+            -0.007, 0.5,  # goal_clearance, goal_band_height (for cache invalidation)
         ]
         raw = str(key_parts).encode()
         return hashlib.sha256(raw).hexdigest()[:16]
@@ -283,7 +288,7 @@ class ComboController:
         """Signed distance <= 0 if within docking position/velocity tolerances.
 
         Position: |px| <= eps_p AND py inside goal band [goal_y_min, goal_y_max].
-        Velocity: L-inf.
+        Velocity: L2 norm.
         """
         px = state[..., 0]
         py = state[..., 1]
@@ -291,8 +296,8 @@ class ComboController:
         vy = state[..., 3]
 
         cb = np.sqrt(self.w_c**2 + self.h_c**2) / 2
-        goal_clearance = 0.093
-        goal_band_height = 0.4
+        goal_clearance = -0.007
+        goal_band_height = 0.5
         goal_y_max = -(self.post_length + cb + goal_clearance)
         goal_y_min = goal_y_max - goal_band_height
 
@@ -300,20 +305,18 @@ class ComboController:
         y_dist = jnp.maximum(goal_y_min - py, py - goal_y_max)
         pos_dist = jnp.maximum(x_dist, y_dist)
 
-        gi = jnp.stack([
-            pos_dist,
-            jnp.abs(vx) - self.eps_v,
-            jnp.abs(vy) - self.eps_v
-        ], axis=-1)
-        return jnp.max(gi, axis=-1)
+        vel_dist = jnp.sqrt(vx**2 + vy**2 + 1e-8) - self.eps_v
+
+        return jnp.maximum(pos_dist, vel_dist)
     
     def target_set_2D(self, state):
         """Signed distance <= 0 if within docking position,velocity,angular tolerances."""
         theta = state[..., 0]
         omega = state[..., 1]
-        # Distance from allowable box in (px,py,vx,vy)
+        # Wrapped angular distance to goal orientation (handles periodicity)
+        theta_error = jnp.arctan2(jnp.sin(theta - np.pi/2), jnp.cos(theta - np.pi/2))
         gi = jnp.stack([
-            jnp.abs(theta - np.pi/2) - self.eps_theta,
+            jnp.abs(theta_error) - self.eps_theta,
             jnp.abs(omega) - self.eps_omega],
             axis=-1)
         return jnp.max(gi, axis=-1)
@@ -372,29 +375,103 @@ class ComboController:
         time_grad = self.grid_4D.grad_values(time_values, self.solver_settings_4D.upwind_scheme)
         return np.array([
             interpn(
-                self.grid_4D.coordinate_vectors,
+                [np.array(v) for v in self.grid_4D.coordinate_vectors],
                 np.array(time_grad[..., i]),
                 np.atleast_2d(x),
                 method='linear',
                 bounds_error=False,
-                fill_value=np.inf).item() 
+                fill_value=np.inf).item()
             for i in range(4)
         ])
-    
+
     def grad_at_state_2D(self, x, t):
         time_values = self.values_2D[t]
-        time_grad = self.grid_2D.grad_values(time_values, self.solver_settings_4D.upwind_scheme)
+        time_grad = self.grid_2D.grad_values(time_values, self.solver_settings_2D.upwind_scheme)
         return np.array([
             interpn(
-                self.grid_2D.coordinate_vectors,
-                np.array(time_grad[..., i]),  # Take i-th component across all grid points
+                [np.array(v) for v in self.grid_2D.coordinate_vectors],
+                np.array(time_grad[..., i]),
                 np.atleast_2d(x),
                 method='linear',
                 bounds_error=False,
-                fill_value=np.inf).item() 
+                fill_value=np.inf).item()
             for i in range(2)
         ])
-        
+
+    def _find_min_time_index_4D(self, s_4D):
+        """Find minimum time index where V_4D(s_4D, t) <= 0.
+
+        Sweeps from smallest horizon (t=0) to largest via vectorized
+        linear interpolation across all time slices at once.
+        Returns first index where V <= 0, or argmin index if V > 0 everywhere.
+        """
+        coords = [np.array(v) for v in self.grid_4D.coordinate_vectors]
+        cell_idx = []
+        frac = []
+        for dim in range(4):
+            grid = coords[dim]
+            x = float(s_4D[dim])
+            if x <= grid[0]:
+                cell_idx.append(0); frac.append(0.0)
+            elif x >= grid[-1]:
+                cell_idx.append(len(grid) - 2); frac.append(1.0)
+            else:
+                i = int(np.searchsorted(grid, x)) - 1
+                i = max(0, min(i, len(grid) - 2))
+                cell_idx.append(i)
+                frac.append(float((x - grid[i]) / (grid[i + 1] - grid[i])))
+
+        result = np.zeros(len(self.times))
+        for d0 in range(2):
+            w0 = frac[0] if d0 else (1.0 - frac[0])
+            for d1 in range(2):
+                w01 = w0 * (frac[1] if d1 else (1.0 - frac[1]))
+                for d2 in range(2):
+                    w012 = w01 * (frac[2] if d2 else (1.0 - frac[2]))
+                    for d3 in range(2):
+                        w = w012 * (frac[3] if d3 else (1.0 - frac[3]))
+                        corner = np.asarray(self.values_4D[
+                            :, cell_idx[0]+d0, cell_idx[1]+d1,
+                            cell_idx[2]+d2, cell_idx[3]+d3])
+                        result += w * corner
+
+        neg_mask = result <= 0
+        if np.any(neg_mask):
+            return int(np.argmax(neg_mask))
+        return int(np.argmin(result))
+
+    def _find_min_time_index_2D(self, s_2D):
+        """Find minimum time index where V_2D(s_2D, t) <= 0."""
+        coords = [np.array(v) for v in self.grid_2D.coordinate_vectors]
+        cell_idx = []
+        frac = []
+        for dim in range(2):
+            grid = coords[dim]
+            x = float(s_2D[dim])
+            if x <= grid[0]:
+                cell_idx.append(0); frac.append(0.0)
+            elif x >= grid[-1]:
+                cell_idx.append(len(grid) - 2); frac.append(1.0)
+            else:
+                i = int(np.searchsorted(grid, x)) - 1
+                i = max(0, min(i, len(grid) - 2))
+                cell_idx.append(i)
+                frac.append(float((x - grid[i]) / (grid[i + 1] - grid[i])))
+
+        result = np.zeros(len(self.times))
+        for d0 in range(2):
+            w0 = frac[0] if d0 else (1.0 - frac[0])
+            for d1 in range(2):
+                w = w0 * (frac[1] if d1 else (1.0 - frac[1]))
+                corner = np.asarray(self.values_2D[
+                    :, cell_idx[0]+d0, cell_idx[1]+d1])
+                result += w * corner
+
+        neg_mask = result <= 0
+        if np.any(neg_mask):
+            return int(np.argmax(neg_mask))
+        return int(np.argmin(result))
+
     def u_fn(self, s, t):
         self.s_history.append(s)
         self.t_history.append(t)
@@ -403,34 +480,29 @@ class ComboController:
         s_4D = np.array([s[0], s[1], s[2], s[3]])
         s_2D = np.array([s[4], s[5]])
         
-        # Obtain the brt time since it is propocated backwards in time
-        brt_time = max(self.final_time, min(0, self.final_time + t))
-        
-        # Find the closest time index in your solved value function
-        time_index = np.argmin(np.abs(self.times - brt_time))
-        
-        # Get the value and gradient at the current time
-        value_4D = self.value_at_state_4D(s_4D, time_index)
-        value_2D = self.value_at_state_2D(s_2D, time_index)
-        
+        # Min-time search: find tightest BRT boundary for each subsystem
+        tidx_4D = self._find_min_time_index_4D(s_4D)
+        tidx_2D = self._find_min_time_index_2D(s_2D)
+
         if self.FILTER == 1:
+            value_4D = self.value_at_state_4D(s_4D, tidx_4D)
             if value_4D > -0.2:
-                ux, uy = self.U_4D(s_4D, time_index)
-                u_theta = self.U_2D(s_2D, time_index)
+                ux, uy = self.U_4D(s_4D, tidx_4D)
+                u_theta = self.U_2D(s_2D, tidx_2D)
                 u_safe = np.array([ux, uy, u_theta])
                 u = u_safe
             else:
-                u = self.U_nom(s, t)  
-        elif self.FILTER == 2:   
-            u_QP_4D = self.qp_controller_4D(s, time_index, gamma=0.2)
-            u_QP_2D = self.qp_controller_2D(s, time_index, gamma=0.2)
+                u = self.U_nom(s, t)
+        elif self.FILTER == 2:
+            u_QP_4D = self.qp_controller_4D(s, tidx_4D, gamma=0.2)
+            u_QP_2D = self.qp_controller_2D(s, tidx_2D, gamma=0.2)
             u_safe = np.array([u_QP_4D[0], u_QP_4D[1], u_QP_2D])
             u = u_safe
         elif self.FILTER == 3:
             u = self.U_nom(s, t)
         else:
-            ux, uy = self.U_4D(s_4D, time_index)
-            u_theta = self.U_2D(s_2D, time_index)
+            ux, uy = self.U_4D(s_4D, tidx_4D)
+            u_theta = self.U_2D(s_2D, tidx_2D)
             u_safe = np.array([ux, uy, u_theta])
             u = u_safe
                 
@@ -460,45 +532,45 @@ class ComboController:
         constraints = []
         constraints.append(u >= -self.u_bar_4D)
         constraints.append(u <= self.u_bar_4D)
-        constraints.append(cp.matmul(grad, full_dynamics) + gamma * self.value_at_state_4D(state,t) >= 0)
-        
+        constraints.append(cp.matmul(grad, full_dynamics) + gamma * self.value_at_state_4D(state,t) <= 0)
+
         # Define the objective function
         obj = cp.Minimize(cp.norm2(u - u_nom)**2)
 
         # Define the problem
         prob = cp.Problem(obj, constraints)
         prob.solve()
-    
+
         if prob.status == cp.OPTIMAL:
             u_QP = u.value
-        else: 
+        else:
             u_QP = self.U_4D(state, t)
         return u_QP
-    
+
     def qp_controller_2D(self, s, t, gamma, u_nom=None):
         if u_nom is None:
             u_nom = self.U_nom(s, t)
             u_nom = np.array([u_nom[2]])
-        else: 
+        else:
             u_nom = np.array([u_nom[2]])
 
         state = np.array([s[4], s[5]])
 
         u = cp.Variable(1)
-        
-        # QP contoller Calculation
+
+        # QP controller calculation
         grad = self.grad_at_state_2D(state, t)
         f_1 = self.docking_problem_2D.open_loop_dynamics(state, t)
         f_2 = self.docking_problem_2D.control_jacobian(state, t)
         f_3 = self.docking_problem_2D.disturbance_jacobian(state, t)
         d_worst_2D = self.docking_problem_2D.d_bar * np.sign(f_3.T @ grad)
         full_dynamics = f_1 + f_2 @ u + f_3 * d_worst_2D
-        
+
         # Define the constraints
         constraints = []
         constraints.append(u >= -self.u_bar_2D)
         constraints.append(u <= self.u_bar_2D)
-        constraints.append(cp.matmul(grad, full_dynamics) + gamma * self.value_at_state_2D(state,t) >= 0)
+        constraints.append(cp.matmul(grad, full_dynamics) + gamma * self.value_at_state_2D(state,t) <= 0)
         
         # Define the objective function
         obj = cp.Minimize(cp.norm2(u - u_nom)**2)
