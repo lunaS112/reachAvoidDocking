@@ -52,7 +52,9 @@ class BRATController:
                  search_resolution=0.1,
                  safety_filter=None,
                  safety_margin_phase1=0.1, safety_margin_phase2=0.02,
-                 debug_phase2=False):
+                 debug_phase2=False,
+                 gradient_fallback=True, grad_threshold=0.01,
+                 avoid_proximity_margin=1.0):
         """
         Initialize the BRAT controller.
         
@@ -63,6 +65,13 @@ class BRATController:
             dt: Control update frequency in seconds
             device: Torch device ('cuda' or 'cpu')
             search_resolution: Time step resolution for BRAT time search (seconds)
+            gradient_fallback: Enable L2 goal-directed fallback when Phase 1
+                gradient stagnates (default True).
+            grad_threshold: Norm of dvds on control-coupled dims below which
+                the gradient is considered stagnant (default 0.01).
+            avoid_proximity_margin: Obstacle SDF distance (m) below which
+                the fallback is hard-suppressed regardless of gradient
+                magnitude (default 1.0).
         """
         self.checkpoint_path = checkpoint_path
         self.tMax = tMax
@@ -71,12 +80,22 @@ class BRATController:
         self.search_resolution = search_resolution
         self.debug_phase2 = debug_phase2
         
+        # Gradient fallback parameters (Phase 1 only)
+        self.gradient_fallback = gradient_fallback
+        self.grad_threshold = grad_threshold
+        self.avoid_proximity_margin = avoid_proximity_margin
+        
         # Derive experiment directory from checkpoint path
         # checkpoint_path: ./runs/EXPNAME/training/checkpoints/model_final.pth
         self.experiment_dir = os.path.dirname(os.path.dirname(os.path.dirname(checkpoint_path)))
         
         # Load dynamics and model
         self._load_dynamics_and_model()
+        
+        # Derived fallback constants (PD gains for virtual gradient)
+        self.fallback_kp = 0.5 * self.u_bar
+        self.fallback_kd = 1.0 * self.u_bar
+        self.goal_state_np = self.dynamics.goal_state.cpu().numpy()
         
         # Safety filter (no-op when mode=0 or None)
         self.safety_filter = safety_filter or SafetyFilter(mode=0)
@@ -156,6 +175,9 @@ class BRATController:
         self.brat_reacquisition_count = 0
         self.brat_time_adjustments = []
         self.phase2_debug_log = []
+        
+        # Gradient fallback tracking (Phase 1)
+        self.fallback_weight_history = []
         
     def get_value(self, state, time):
         """
@@ -261,7 +283,44 @@ class BRATController:
         if return_gradient:
             return control, dvds
         return control
-    
+
+    # ------------------------------------------------------------------
+    # Gradient-fallback helpers (Phase 1 only)
+    # ------------------------------------------------------------------
+
+    def _bang_bang_from_dvds(self, dvds):
+        """Convert a 6-element gradient vector to bang-bang control."""
+        u_x = -self.u_bar if dvds[2] > 0 else self.u_bar
+        u_y = -self.u_bar if dvds[3] > 0 else self.u_bar
+        u_theta = -self.u_theta_bar if dvds[5] > 0 else self.u_theta_bar
+        return np.array([u_x, u_y, u_theta])
+
+    def _compute_l2_virtual_gradient(self, state):
+        """PD-like virtual gradient pointing toward the goal set.
+
+        Only populates control-coupled indices (vx=2, vy=3, omega=5).
+        Position/angle indices are zero since control does not appear
+        in dx/dt, dy/dt, or dtheta/dt directly.
+        """
+        goal = self.goal_state_np
+        pos_err = state[:2] - goal[:2]
+        vel_err = state[2:4] - goal[2:4]
+        theta_err = np.arctan2(np.sin(state[4] - goal[4]),
+                               np.cos(state[4] - goal[4]))
+        omega_err = state[5] - goal[5]
+
+        vg = np.zeros(6)
+        vg[2] = self.fallback_kp * pos_err[0] + self.fallback_kd * vel_err[0]
+        vg[3] = self.fallback_kp * pos_err[1] + self.fallback_kd * vel_err[1]
+        vg[5] = self.fallback_kp * theta_err + self.fallback_kd * omega_err
+        return vg
+
+    def _avoid_proximity_check(self, state):
+        """Return True if state is too close to the obstacle for fallback."""
+        with torch.no_grad():
+            s = torch.tensor(state, dtype=torch.float32, device=self.device)
+            return float(self.dynamics.avoid_fn(s)) < self.avoid_proximity_margin
+
     def is_in_brat(self, state):
         """
         Check if state is inside the BRAT (V(x, tMax) <= 0).
@@ -456,10 +515,23 @@ class BRATController:
                 })
         else:
             # Phase 1: Use fixed tMax value function
-            control = self.get_optimal_control(state, self.tMax)
+            control, dvds = self.get_optimal_control(
+                state, self.tMax, return_gradient=True)
             value = self.get_value(state, self.tMax)
             phase = 1
-            
+            fallback_weight = 0.0
+
+            if self.gradient_fallback:
+                grad_mag = np.linalg.norm(dvds[[2, 3, 5]])
+                if (grad_mag < self.grad_threshold
+                        and not self._avoid_proximity_check(state)):
+                    fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                    virtual_dvds = self._compute_l2_virtual_gradient(state)
+                    blended = dvds + fallback_weight * virtual_dvds
+                    control = self._bang_bang_from_dvds(blended)
+
+            self.fallback_weight_history.append(fallback_weight)
+
         # Post-process through safety filter (no-op when mode=0)
         raw_control = control.copy()
         self.safety_filter.set_margin(
@@ -580,6 +652,10 @@ class BRATController:
             # --- execution clamping ---
             'n_clipped_steps': n_clipped,
             'phase2_debug_log': self.phase2_debug_log,
+            # --- gradient fallback (Phase 1) ---
+            'fallback_weights': self.fallback_weight_history,
+            'n_fallback_steps': sum(
+                1 for w in self.fallback_weight_history if w > 0),
         }
         
         return result

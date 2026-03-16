@@ -20,7 +20,7 @@ python comparisons/gradient_quality_comparison.py \
     --n_ics 5 \
     --n_candidates 500000 \
     --device cuda \
-    --output_dir ./outputs/gradient_comparison
+    --output_dir ./outputs/gradient_comparison_HighSamp_grad_fallback
 
 # ---- Script 2: Value function approximation quality ----
 # IC inside both 10s BRATs

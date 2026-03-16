@@ -9,13 +9,19 @@ Two entry points:
   - find_min_brat_time_batch: N states, each gets its own t* via per-state
     sweep (used by MPC+Terminal for per-sample terminal cost).
 
-Both use a three-tier search strategy:
-  1. Hold: if t_remaining < argmin_threshold (default 1.0 s), return
-     t_remaining unchanged so the caller can decrement it like a countdown.
-  2. Strict (windowed): sweep two expanding windows around t_remaining —
-     first ±0.1 s, then ±0.2 s — and return the min t with V(x,t) <= 0.
-  3. Argmin: if both windows find no strict hit, return argmin_t V(x,t)
-     over the full grid as a last resort.
+find_min_brat_time_single uses a lazy-evaluation strategy when t_remaining
+is provided (Phase 2):
+  1. Strict (windowed): evaluate V only within ±0.2 s of t_remaining
+     (~5 grid points instead of the full ~140).  Search ±0.1 s first, then
+     the full ±0.2 s window.  Return the smallest t with V(x,t) <= 0.
+  2. Argmin: if both windows find no strict hit, evaluate the full grid
+     and return argmin_t V(x,t) as a last resort.
+
+When t_remaining is not provided, the full grid is evaluated for a global
+strict search followed by argmin fallback.
+
+find_min_brat_time_batch always evaluates the full grid (used for MPC
+terminal-cost queries where no per-sample t_remaining is available).
 """
 
 import numpy as np
@@ -76,11 +82,61 @@ def _summarize_single_search(times, values, t_star, status):
     return details
 
 
+def _summarize_window_search(win_times, win_values, t_star, status):
+    """Build a JSON-friendly summary from a windowed (partial) evaluation.
+
+    Same schema as ``_summarize_single_search`` but only covers the
+    evaluated window, avoiding the cost of a full-grid evaluation when a
+    strict hit is found nearby.
+    """
+    win_values = np.asarray(win_values)
+    strict_indices = np.flatnonzero(win_values <= 0)
+    argmin_idx = int(np.argmin(win_values))
+    winner_idx = int(strict_indices[0]) if len(strict_indices) else argmin_idx
+
+    details = {
+        'status': status,
+        'window_only': True,
+        'winner_idx': winner_idx,
+        'winner_time': float(t_star),
+        'winner_value': float(win_values[winner_idx]),
+        'argmin_idx': argmin_idx,
+        'argmin_time': float(win_times[argmin_idx]),
+        'argmin_value': float(win_values[argmin_idx]),
+        'n_nonpositive': int(np.sum(win_values <= 0)),
+        'value_min': float(np.min(win_values)),
+        'value_max': float(np.max(win_values)),
+        'value_at_tmax': None,
+        'times': win_times.tolist(),
+        'values': win_values.tolist(),
+        'local_window': [
+            {'idx': int(i), 'time': float(win_times[i]),
+             'value': float(win_values[i])}
+            for i in range(len(win_times))
+        ],
+    }
+    if len(strict_indices):
+        strict_idx = int(strict_indices[0])
+        details['strict_first_idx'] = strict_idx
+        details['strict_first_time'] = float(win_times[strict_idx])
+        details['strict_first_value'] = float(win_values[strict_idx])
+    else:
+        details['strict_first_idx'] = None
+        details['strict_first_time'] = None
+        details['strict_first_value'] = None
+    return details
+
+
 def find_min_brat_time_single(value_fn, tMax, resolution=0.1,
                               return_details=False,
                               t_remaining=None, argmin_threshold=1.0):
     """
     Find the minimum time t* where the state is inside the BRAT.
+
+    When *t_remaining* is provided (Phase 2), only the ±0.2 s window around
+    it is evaluated first (~5 grid points instead of ~140).  The expensive
+    full-grid evaluation is deferred to the argmin fallback path, which is
+    rarely needed when the state stays inside the BRAT.
 
     Args:
         value_fn: Callable(times) -> values.
@@ -90,14 +146,10 @@ def find_min_brat_time_single(value_fn, tMax, resolution=0.1,
         tMax: Upper bound of the time search grid.
         resolution: Spacing between time grid points (seconds).
         t_remaining: The caller's current t_remaining (seconds).  When
-                     t_remaining < argmin_threshold the function returns
-                     STATUS_HOLD immediately (no value_fn call); the caller
-                     is expected to decrement t_remaining by dt each step.
-                     When t_remaining >= argmin_threshold a windowed strict
-                     search is performed first (±0.1 s then ±0.2 s around
-                     t_remaining) before falling back to argmin.
-        argmin_threshold: Time remaining (seconds) below which the countdown
-                          / hold mode is activated (default 1.0 s).
+                     provided, a windowed strict search is performed first
+                     (±0.1 s then ±0.2 s around t_remaining) before falling
+                     back to argmin over the full grid.
+        argmin_threshold: (unused, kept for API compatibility)
 
     Returns:
         (t_star, status): t_star is the selected time (float), status is one
@@ -126,66 +178,71 @@ def find_min_brat_time_single(value_fn, tMax, resolution=0.1,
                 'local_window': [],
             })
         return (tMax, STATUS_ARGMIN)
-    '''
-    # 1. Hold: countdown mode when close to the end of the horizon
-    if t_remaining is not None and t_remaining < argmin_threshold:
-        t_star = float(t_remaining)
-        if return_details:
-            return (t_star, STATUS_HOLD, {
-                'status': STATUS_HOLD,
-                'winner_idx': None, 'winner_time': t_star, 'winner_value': None,
-                'argmin_idx': None, 'argmin_time': None, 'argmin_value': None,
-                'n_nonpositive': None,
-                'value_min': None, 'value_max': None, 'value_at_tmax': None,
-                'strict_first_idx': None, 'strict_first_time': None,
-                'strict_first_value': None,
-                'times': times.tolist(), 'values': [], 'local_window': [],
-            })
-        return (t_star, STATUS_HOLD)
-    '''
-    # Evaluate the full time grid (used by both strict windows and argmin)
-    values = value_fn(times)
 
     if t_remaining is not None:
-        # 2a. Strict window 1: ±0.1 s around t_remaining
-        mask1 = (times >= t_remaining - 0.1 - 1e-9) & \
-                (times <= t_remaining + 0.1 + 1e-9)
-        valid1 = mask1 & (values <= 0)
-        if np.any(valid1):
-            t_star = float(times[valid1][0])  # smallest valid t in window
-            if return_details:
-                return (t_star, STATUS_STRICT,
-                        _summarize_single_search(times, values, t_star, STATUS_STRICT))
-            return (t_star, STATUS_STRICT)
+        # --- Efficient path: evaluate only the ±0.2 s window first ---
+        # The outer window (±0.2 s) is a superset of the inner (±0.1 s),
+        # so a single small value_fn call covers both search tiers.
+        win_mask = (times >= t_remaining - 0.2 - 1e-9) & \
+                   (times <= t_remaining + 0.2 + 1e-9)
+        win_indices = np.flatnonzero(win_mask)
 
-        # 2b. Strict window 2: ±0.2 s around t_remaining
-        mask2 = (times >= t_remaining - 0.2 - 1e-9) & \
-                (times <= t_remaining + 0.2 + 1e-9)
-        valid2 = mask2 & (values <= 0)
-        if np.any(valid2):
-            t_star = float(times[valid2][0])
-            if return_details:
-                return (t_star, STATUS_STRICT,
-                        _summarize_single_search(times, values, t_star, STATUS_STRICT))
-            return (t_star, STATUS_STRICT)
+        if len(win_indices) > 0:
+            win_times = times[win_indices]
+            win_values = value_fn(win_times)
+
+            # Window 1: ±0.1 s (inner, tighter)
+            win1_sub = (win_times >= t_remaining - 0.1 - 1e-9) & \
+                       (win_times <= t_remaining + 0.1 + 1e-9)
+            valid1 = win1_sub & (win_values <= 0)
+            if np.any(valid1):
+                t_star = float(win_times[valid1][0])
+                if return_details:
+                    return (t_star, STATUS_STRICT,
+                            _summarize_window_search(
+                                win_times, win_values, t_star, STATUS_STRICT))
+                return (t_star, STATUS_STRICT)
+
+            # Window 2: ±0.2 s (outer, already evaluated)
+            valid2 = win_values <= 0
+            if np.any(valid2):
+                t_star = float(win_times[valid2][0])
+                if return_details:
+                    return (t_star, STATUS_STRICT,
+                            _summarize_window_search(
+                                win_times, win_values, t_star, STATUS_STRICT))
+                return (t_star, STATUS_STRICT)
+
+        # --- Argmin fallback: no strict hit in window, evaluate full grid ---
+        values = value_fn(times)
+        idx = int(np.argmin(values))
+        t_star = float(times[idx])
+        if return_details:
+            return (t_star, STATUS_ARGMIN,
+                    _summarize_single_search(times, values, t_star,
+                                             STATUS_ARGMIN))
+        return (t_star, STATUS_ARGMIN)
 
     else:
         # No t_remaining provided: global strict search (original behaviour)
+        values = value_fn(times)
         strict_mask = values <= 0
         if np.any(strict_mask):
             t_star = float(times[strict_mask][0])
             if return_details:
                 return (t_star, STATUS_STRICT,
-                        _summarize_single_search(times, values, t_star, STATUS_STRICT))
+                        _summarize_single_search(times, values, t_star,
+                                                 STATUS_STRICT))
             return (t_star, STATUS_STRICT)
 
-    # 3. Argmin fallback over the full grid
-    idx = int(np.argmin(values))
-    t_star = float(times[idx])
-    if return_details:
-        return (t_star, STATUS_ARGMIN,
-                _summarize_single_search(times, values, t_star, STATUS_ARGMIN))
-    return (t_star, STATUS_ARGMIN)
+        # Argmin fallback over the full grid
+        idx = int(np.argmin(values))
+        t_star = float(times[idx])
+        if return_details:
+            return (t_star, STATUS_ARGMIN,
+                    _summarize_single_search(times, values, t_star,
+                                             STATUS_ARGMIN))
+        return (t_star, STATUS_ARGMIN)
 
 
 def find_min_brat_time_batch(value_fn_batch, n_states, tMax,

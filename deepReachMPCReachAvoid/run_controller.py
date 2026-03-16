@@ -82,6 +82,9 @@ def build_controller(name, args):
             safety_margin_phase1=args.safety_margin_phase1,
             safety_margin_phase2=args.safety_margin_phase2,
             debug_phase2=args.debug_phase2,
+            gradient_fallback=args.gradient_fallback,
+            grad_threshold=args.grad_threshold,
+            avoid_proximity_margin=args.avoid_proximity_margin,
         )
     elif name == 'mpc':
         return MPCController(
@@ -470,6 +473,10 @@ def run_single(args):
         if len(phases) > 0:
             print(f"Time in Phase 1: {np.sum(phases == 1) * args.dt:.1f}s")
             print(f"Time in Phase 2: {np.sum(phases == 2) * args.dt:.1f}s")
+        n_fb = result.get('n_fallback_steps', 0)
+        n_p1 = int(np.sum(phases == 1)) if len(phases) > 0 else 0
+        if n_fb > 0 or args.gradient_fallback:
+            print(f"Gradient fallback: {n_fb}/{n_p1} Phase 1 steps")
 
     if ctrl_type == 'mpc_terminal':
         phases = result.get('phases', np.array([]))
@@ -889,6 +896,20 @@ def _add_shared_args(parser):
     parser.add_argument('--debug_phase2', action='store_true',
                         help='Enable detailed Phase 2 search/control '
                              'diagnostics for single-run debugging')
+    # Gradient fallback (BRAT Phase 1)
+    parser.add_argument('--gradient_fallback', action='store_true',
+                        default=True, dest='gradient_fallback',
+                        help='Enable L2 goal-directed gradient fallback in '
+                             'Phase 1 (default: enabled)')
+    parser.add_argument('--no_gradient_fallback', action='store_false',
+                        dest='gradient_fallback',
+                        help='Disable L2 gradient fallback in Phase 1')
+    parser.add_argument('--grad_threshold', type=float, default=0.01,
+                        help='Gradient norm below which fallback activates '
+                             '(default: 0.01)')
+    parser.add_argument('--avoid_proximity_margin', type=float, default=1.0,
+                        help='Obstacle SDF distance (m) below which fallback '
+                             'is suppressed (default: 1.0)')
 
 
 def main():
