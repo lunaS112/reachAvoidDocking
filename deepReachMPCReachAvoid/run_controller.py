@@ -427,12 +427,15 @@ def run_single(args):
     controller = build_controller(ctrl_type, args)
     dynamics = controller.dynamics
 
-    # Initial state
-    initial_state = np.array([
-        args.initial_px,  args.initial_py,
-        args.initial_vx,  args.initial_vy,
-        args.initial_theta, args.initial_omega,
-    ])
+    # Initial state (--initial_state takes priority over individual args)
+    if args.initial_state is not None:
+        initial_state = np.array(args.initial_state)
+    else:
+        initial_state = np.array([
+            args.initial_px,  args.initial_py,
+            args.initial_vx,  args.initial_vy,
+            args.initial_theta, args.initial_omega,
+        ])
     print(f"\nInitial state: px={initial_state[0]:.2f}, py={initial_state[1]:.2f}, "
           f"vx={initial_state[2]:.2f}, vy={initial_state[3]:.2f}, "
           f"theta={initial_state[4]:.2f}, omega={initial_state[5]:.2f}")
@@ -932,7 +935,12 @@ def main():
         '--controller', type=str, default='brat',
         choices=['brat', 'mpc', 'mpc_terminal'],
         help='Controller type to run')
-    # Initial state
+    # Initial state — either as a single 6-element list or individual components
+    sp_single.add_argument('--initial_state', type=float, nargs=6,
+                           metavar=('PX', 'PY', 'VX', 'VY', 'THETA', 'OMEGA'),
+                           default=None,
+                           help='Initial state as 6 floats: px py vx vy theta omega. '
+                                'Overrides individual --initial_* args if provided.')
     sp_single.add_argument('--initial_px',    type=float, default=2.0)
     sp_single.add_argument('--initial_py',    type=float, default=10.0)
     sp_single.add_argument('--initial_vx',    type=float, default=0.0)
