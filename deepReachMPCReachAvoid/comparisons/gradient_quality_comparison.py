@@ -9,6 +9,9 @@ Phase 1 (static gradient at tMax).  We compare:
   - Direct gradient cosine similarity and sign agreement on the
     control-relevant components (vx, vy, omega)
 
+ICs are selected near the outer edge of the 25s grid BRAT to showcase
+gradient quality far from the goal.
+
 Usage:
     python gradient_quality_comparison.py \
         --checkpoint_path ../runs/Docking6D_RA_10sec_NEW/training/checkpoints/model_final.pth \
@@ -36,7 +39,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'gridBased6DImplementation'))
 
 from utils.controllers import BRATController
 from comparisons.volume_comparison import (
-    physical_time_to_index, grid_value_6D, deepreach_value_6D, MC_BOUNDS,
+    physical_time_to_index, grid_value_6D, deepreach_value_6D,
 )
 
 # Lazy import for grid-based controller
@@ -47,6 +50,21 @@ def _get_combo_module():
         import importlib
         _combo_module = importlib.import_module('ComboControl')
     return _combo_module
+
+
+# First-principles IC sampling bounds (matches run_controller.py reasoning):
+#   - Position: ±13m (within dynamics ±15m with margin)
+#   - Velocity: ±0.75 m/s (braking distance ~2.8m keeps chaser in domain)
+#   - Theta: full range
+#   - Omega: ±0.50 rad/s (braking from 0.50 takes ~10s at alpha_max)
+GRADIENT_IC_BOUNDS = np.array([
+    [-13.0, 13.0],     # px (m)
+    [-13.0, 13.0],     # py (m)
+    [ -0.75,  0.75],   # vx (m/s)
+    [ -0.75,  0.75],   # vy (m/s)
+    [-np.pi, np.pi],   # theta (rad)
+    [ -0.50,  0.50],   # omega (rad/s)
+])
 
 
 # ======================================================================
@@ -63,17 +81,33 @@ def _load_dynamics_fn():
     return mod.f
 
 
+def _in_goal_set(state, dynamics):
+    """Check if a 6D state is inside the docking goal set."""
+    px, py, vx, vy, theta, omega = state
+    x_ok = np.abs(px) <= dynamics.eps_p
+    y_ok = dynamics.goal_y_min <= py <= dynamics.goal_y_max
+    vel_ok = np.sqrt(vx**2 + vy**2) <= dynamics.eps_v
+    theta_goal = float(dynamics.goal_state[4])
+    omega_goal = float(dynamics.goal_state[5])
+    theta_diff = np.abs(np.arctan2(
+        np.sin(theta - theta_goal), np.cos(theta - theta_goal)))
+    theta_ok = theta_diff <= dynamics.eps_theta
+    omega_ok = np.abs(omega - omega_goal) <= dynamics.eps_omega
+    return x_ok and y_ok and vel_ok and theta_ok and omega_ok
+
+
 # ======================================================================
 #  IC selection
 # ======================================================================
 def select_ics(combo, brat_ctrl, grid_times, grid_horizon, n_ics,
                n_candidates=500_000, seed=42):
-    """Sample ICs inside 25s grid BRAT but outside 10s DeepReach BRAT.
+    """Sample ICs near the outer edge of the grid BRAT, outside the DeepReach BRAT.
 
-    Returns (n_ics, 6) array of selected ICs, or fewer if not enough found.
+    Uses first-principles sampling bounds (GRADIENT_IC_BOUNDS) and selects
+    candidates whose grid value is closest to zero from below (outer boundary).
     """
     rng = np.random.RandomState(seed)
-    states = rng.uniform(MC_BOUNDS[:, 0], MC_BOUNDS[:, 1],
+    states = rng.uniform(GRADIENT_IC_BOUNDS[:, 0], GRADIENT_IC_BOUNDS[:, 1],
                          size=(n_candidates, 6))
 
     # Grid value at the specified horizon (e.g. 25s)
@@ -92,95 +126,133 @@ def select_ics(combo, brat_ctrl, grid_times, grid_horizon, n_ics,
             f"No ICs found inside grid BRAT (t={grid_horizon}s) but outside "
             f"DeepReach BRAT (tMax={brat_ctrl.tMax}s). Try increasing n_candidates.")
 
-    # Prefer ICs with moderate positive DeepReach value (clearly outside but not extreme)
-    dv_cand = dv[mask]
-    order = np.argsort(dv_cand)  # smallest positive first (barely outside)
+    # Sort by grid value closest to 0 from below -> near outer BRAT boundary
+    gv_cand = gv[mask]
+    order = np.argsort(-gv_cand)  # least negative first = closest to boundary
     selected = candidates[order[:n_ics]]
     print(f"  IC selection: {mask.sum()} candidates found, selected {len(selected)}")
+    print(f"  Grid values of selected ICs: "
+          f"[{gv_cand[order[:n_ics]].min():.4f}, {gv_cand[order[:n_ics]].max():.4f}]")
     return selected
 
 
 # ======================================================================
-#  Unified simulation
+#  Joint simulation (both controllers advance in lockstep)
 # ======================================================================
 def simulate_both(ic, combo, brat_ctrl, dynamics_fn, dt, max_sim_time,
                   grid_times):
     """Simulate both controllers from the same IC using shared dynamics.
 
+    Both controllers advance in lockstep. The loop continues until BOTH
+    controllers have docked or max_sim_time is reached.
+
     Returns (result_grid, result_dr) dicts with keys:
-        trajectory, controls, times, values, gradients, success
+        trajectory, controls, times, values, gradients,
+        goal_reached, goal_time, controller_type
     """
     num_steps = int(max_sim_time / dt)
 
-    def _run_one(controller_fn, value_fn, gradient_fn):
-        states = np.zeros((num_steps + 1, 6))
-        controls = np.zeros((num_steps, 3))
-        values = np.zeros(num_steps)
-        grads = np.zeros((num_steps, 6))
-        times = np.zeros(num_steps)
+    # Allocate arrays for both controllers
+    states_g = np.zeros((num_steps + 1, 6))
+    states_d = np.zeros((num_steps + 1, 6))
+    controls_g = np.zeros((num_steps, 3))
+    controls_d = np.zeros((num_steps, 3))
+    values_g = np.zeros(num_steps)
+    values_d = np.zeros(num_steps)
+    grads_g = np.zeros((num_steps, 6))
+    grads_d = np.zeros((num_steps, 6))
+    sim_times = np.zeros(num_steps)
 
-        states[0] = ic.copy()
+    states_g[0] = states_d[0] = ic.copy()
 
-        for k in range(num_steps):
-            t = k * dt
-            s = states[k]
-
-            # Get control from this controller
-            u = controller_fn(s, t)
-            controls[k] = u
-            times[k] = t
-
-            # Record value and gradient
-            values[k] = value_fn(s, t)
-            grads[k] = gradient_fn(s, t)
-
-            # Euler integration with shared dynamics
-            s_next = s + dt * dynamics_fn(s, u)
-            # Wrap theta to [-pi, pi]
-            s_next[4] = (s_next[4] + np.pi) % (2 * np.pi) - np.pi
-            states[k + 1] = s_next
-
-        return {
-            'trajectory': states,  # (num_steps+1, 6)
-            'controls': controls,  # (num_steps, 3)
-            'times': times,        # (num_steps,)
-            'values': values,      # (num_steps,)
-            'gradients': grads,    # (num_steps, 6)
-        }
-
-    # --- Grid controller ---
+    # Reset controllers
     combo.reset()
+    brat_ctrl.reset()
 
+    # Grid value/gradient helpers
     def grid_value(s, t):
         brt_time = max(combo.final_time, min(0, combo.final_time + t))
         tidx = int(np.argmin(np.abs(np.array(combo.times) - brt_time)))
-        s4d, s2d = s[:4], s[4:]
-        v4 = combo.value_at_state_4D(s4d, tidx)
-        v2 = combo.value_at_state_2D(s2d, tidx)
+        v4 = combo.value_at_state_4D(s[:4], tidx)
+        v2 = combo.value_at_state_2D(s[4:], tidx)
         return max(v4, v2)
 
     def grid_gradient(s, t):
         brt_time = max(combo.final_time, min(0, combo.final_time + t))
         tidx = int(np.argmin(np.abs(np.array(combo.times) - brt_time)))
-        g4 = combo.grad_at_state_4D(s[:4], tidx)  # (4,)
-        g2 = combo.grad_at_state_2D(s[4:], tidx)  # (2,)
-        return np.concatenate([g4, g2])  # (6,)
+        g4 = combo.grad_at_state_4D(s[:4], tidx)
+        g2 = combo.grad_at_state_2D(s[4:], tidx)
+        return np.concatenate([g4, g2])
 
-    result_grid = _run_one(combo.u_fn, grid_value, grid_gradient)
-    result_grid['controller_type'] = 'grid'
+    grid_docked = False
+    dr_docked = False
+    grid_dock_time = None
+    dr_dock_time = None
+    n_steps = num_steps
 
-    # --- DeepReach controller ---
-    brat_ctrl.reset()
+    for k in range(num_steps):
+        t = k * dt
+        sim_times[k] = t
 
-    def dr_value(s, t):
-        return brat_ctrl.get_value(s, brat_ctrl.tMax)
+        # Grid controller step
+        controls_g[k] = combo.u_fn(states_g[k], t)
+        values_g[k] = grid_value(states_g[k], t)
+        grads_g[k] = grid_gradient(states_g[k], t)
 
-    def dr_gradient(s, t):
-        return brat_ctrl.get_gradient(s, brat_ctrl.tMax)
+        # DeepReach controller step
+        controls_d[k] = brat_ctrl.u_fn(states_d[k], t)
+        values_d[k] = brat_ctrl.get_value(states_d[k], brat_ctrl.tMax)
+        grads_d[k] = brat_ctrl.get_gradient(states_d[k], brat_ctrl.tMax)
 
-    result_dr = _run_one(brat_ctrl.u_fn, dr_value, dr_gradient)
-    result_dr['controller_type'] = 'deepreach'
+        # Euler integration (independent trajectories, shared dynamics)
+        s_next_g = states_g[k] + dt * dynamics_fn(states_g[k], controls_g[k])
+        s_next_d = states_d[k] + dt * dynamics_fn(states_d[k], controls_d[k])
+        s_next_g[4] = (s_next_g[4] + np.pi) % (2 * np.pi) - np.pi
+        s_next_d[4] = (s_next_d[4] + np.pi) % (2 * np.pi) - np.pi
+        states_g[k + 1] = s_next_g
+        states_d[k + 1] = s_next_d
 
+        # Track docking (record first time each controller enters goal set)
+        if not grid_docked and _in_goal_set(s_next_g, brat_ctrl.dynamics):
+            grid_docked = True
+            grid_dock_time = (k + 1) * dt
+        if not dr_docked and _in_goal_set(s_next_d, brat_ctrl.dynamics):
+            dr_docked = True
+            dr_dock_time = (k + 1) * dt
+
+        # Only stop when BOTH have docked
+        if grid_docked and dr_docked:
+            n_steps = k + 1
+            break
+
+    # Report docking status
+    for label, docked, dock_time in [('Grid', grid_docked, grid_dock_time),
+                                      ('DeepReach', dr_docked, dr_dock_time)]:
+        if docked:
+            print(f"  {label} reached goal at t={dock_time:.2f}s")
+        else:
+            print(f"  {label} did NOT reach goal within {max_sim_time:.1f}s")
+
+    result_grid = {
+        'trajectory': states_g[:n_steps + 1],
+        'controls': controls_g[:n_steps],
+        'times': sim_times[:n_steps],
+        'values': values_g[:n_steps],
+        'gradients': grads_g[:n_steps],
+        'goal_reached': grid_docked,
+        'goal_time': grid_dock_time,
+        'controller_type': 'grid',
+    }
+    result_dr = {
+        'trajectory': states_d[:n_steps + 1],
+        'controls': controls_d[:n_steps],
+        'times': sim_times[:n_steps],
+        'values': values_d[:n_steps],
+        'gradients': grads_d[:n_steps],
+        'goal_reached': dr_docked,
+        'goal_time': dr_dock_time,
+        'controller_type': 'deepreach',
+    }
     return result_grid, result_dr
 
 
@@ -227,67 +299,81 @@ def trajectory_deviation(traj_grid, traj_dr):
     """L2 distance between trajectories at each step (position only)."""
     pos_grid = traj_grid[:, :2]
     pos_dr = traj_dr[:, :2]
-    min_len = min(len(pos_grid), len(pos_dr))
-    return np.linalg.norm(pos_grid[:min_len] - pos_dr[:min_len], axis=1)
+    return np.linalg.norm(pos_grid - pos_dr, axis=1)
 
 
 # ======================================================================
-#  Plotting
+#  Plotting helpers
 # ======================================================================
 def _draw_docking_scene(ax):
     """Draw target body, docking post, and goal region on ax."""
     from matplotlib.patches import Rectangle
-    # Target body (6m x 3m, bottom at y=0)
     body = Rectangle((-3, 0), 6, 3, color='gray', alpha=0.3, label='Target body')
     ax.add_patch(body)
-    # Docking post (1.2m x 0.2m, extends in -y)
     post = Rectangle((-0.6, -0.2), 1.2, 0.2, color='gray', alpha=0.5, label='Docking post')
     ax.add_patch(post)
-    # Goal region (aligned with DeepReach: y in [-1.4, -0.9], x in [-0.1, 0.1])
     goal = Rectangle((-0.1, -1.4), 0.2, 0.5, color='green', alpha=0.3, label='Goal')
     ax.add_patch(goal)
 
 
+def _add_dock_markers(ax, result_grid, result_dr):
+    """Add vertical docking-time lines to a time-series axis."""
+    if result_grid.get('goal_time') is not None:
+        ax.axvline(result_grid['goal_time'], color='blue', ls=':', alpha=0.6, lw=1)
+    if result_dr.get('goal_time') is not None:
+        ax.axvline(result_dr['goal_time'], color='red', ls=':', alpha=0.6, lw=1)
+
+
 def _add_brt_contours(ax, combo, brat_ctrl, grid_times, grid_horizon, dr_horizon,
-                       px_range=(-6, 6), py_range=(-6, 6), resolution=120):
+                       ic=None, px_range=(-15, 15), py_range=(-15, 15), resolution=120):
     """Draw zero level set contours of grid and DeepReach BRTs on a px-py plot.
 
-    Evaluates at vx=0, vy=0, theta=pi/2, omega=0 (nominal docking state).
+    When ic is provided, the non-position state components (vx, vy, theta, omega)
+    are taken from the IC. Otherwise defaults to nominal docking state.
     """
+    if ic is not None:
+        vx_fixed, vy_fixed = ic[2], ic[3]
+        theta_fixed, omega_fixed = ic[4], ic[5]
+    else:
+        vx_fixed, vy_fixed = 0.0, 0.0
+        theta_fixed, omega_fixed = np.pi / 2, 0.0
+
     px = np.linspace(*px_range, resolution)
     py = np.linspace(*py_range, resolution)
     PX, PY = np.meshgrid(px, py)
     flat = np.column_stack([
         PX.ravel(), PY.ravel(),
-        np.zeros(PX.size),          # vx = 0
-        np.zeros(PX.size),          # vy = 0
-        np.full(PX.size, np.pi/2),  # theta = pi/2
-        np.zeros(PX.size),          # omega = 0
+        np.full(PX.size, vx_fixed),
+        np.full(PX.size, vy_fixed),
+        np.full(PX.size, theta_fixed),
+        np.full(PX.size, omega_fixed),
     ])
 
     # Grid BRT
     grid_idx = physical_time_to_index(grid_horizon, grid_times)
     v_grid = grid_value_6D(combo, flat, grid_idx).reshape(PX.shape)
     ax.contour(PX, PY, v_grid, levels=[0], colors='purple', linewidths=1,
-               linestyles='dashed', label=f'Grid BRAT (t={grid_horizon}s)')
+               linestyles='dashed')
 
     # DeepReach BRT
     v_dr = deepreach_value_6D(brat_ctrl, flat, dr_horizon).reshape(PX.shape)
     ax.contour(PX, PY, v_dr, levels=[0], colors='green', linewidths=1,
-               linestyles='dashed', label=f'DeepReach BRAT (t={dr_horizon}s)')
+               linestyles='dashed')
 
 
-def plot_trajectory_overlay(result_grid, result_dr, ic_idx, save_path,
+# ======================================================================
+#  Plotting
+# ======================================================================
+def plot_trajectory_overlay(result_grid, result_dr, ic, ic_idx, save_path,
                             combo=None, brat_ctrl=None, grid_times=None,
                             grid_horizon=None, dr_horizon=None):
-    """2D position trajectory overlay with docking scene."""
+    """2D position trajectory overlay with docking scene and IC-dependent BRAT contours."""
     fig, ax = plt.subplots(figsize=(10, 8))
     _draw_docking_scene(ax)
 
-    # Draw BRT zero level set contours if controllers are provided
     if combo is not None and brat_ctrl is not None:
         _add_brt_contours(ax, combo, brat_ctrl, grid_times,
-                          grid_horizon, dr_horizon)
+                          grid_horizon, dr_horizon, ic=ic)
 
     tg = result_grid['trajectory']
     td = result_dr['trajectory']
@@ -297,10 +383,18 @@ def plot_trajectory_overlay(result_grid, result_dr, ic_idx, save_path,
     ax.plot(tg[-1, 0], tg[-1, 1], 'bs', ms=7)
     ax.plot(td[-1, 0], td[-1, 1], 'r^', ms=7)
 
+    # Add legend entries for BRAT contours
+    ax.plot([], [], color='purple', ls='--', lw=1, label=f'Grid BRAT ({grid_horizon}s)')
+    ax.plot([], [], color='green', ls='--', lw=1, label=f'DR BRAT ({dr_horizon}s)')
+
     ax.set_xlabel('px (m)')
     ax.set_ylabel('py (m)')
-    ax.set_title(f'Trajectory Comparison — IC {ic_idx}')
-    ax.legend(loc='best')
+    title = f'Trajectory Comparison — IC {ic_idx}'
+    if ic is not None:
+        title += (f'\nSlice: vx={ic[2]:.2f}, vy={ic[3]:.2f}, '
+                  f'\u03b8={ic[4]:.2f}, \u03c9={ic[5]:.2f}')
+    ax.set_title(title)
+    ax.legend(loc='best', fontsize=8)
     ax.set_aspect('equal')
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -308,24 +402,54 @@ def plot_trajectory_overlay(result_grid, result_dr, ic_idx, save_path,
     plt.close(fig)
 
 
-def plot_states(result_grid, result_dr, ic_idx, save_path):
-    """6 states vs time (3x2 subplots)."""
-    labels = ['px (m)', 'py (m)', 'vx (m/s)', 'vy (m/s)', 'θ (rad)', 'ω (rad/s)']
+def plot_states(result_grid, result_dr, ic_idx, save_path, dynamics=None):
+    """6 states vs time (3x2 subplots) with goal tolerance bands."""
+    labels = ['px (m)', 'py (m)', 'vx (m/s)', 'vy (m/s)', '\u03b8 (rad)', '\u03c9 (rad/s)']
     fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
     axes = axes.flatten()
 
     tg = result_grid['trajectory']
     td = result_dr['trajectory']
-    times_g = np.arange(tg.shape[0]) * (result_grid['times'][1] - result_grid['times'][0])
-    times_d = np.arange(td.shape[0]) * (result_dr['times'][1] - result_dr['times'][0])
+    dt = result_grid['times'][1] - result_grid['times'][0] if len(result_grid['times']) > 1 else 0.1
+    times_g = np.arange(tg.shape[0]) * dt
+    times_d = np.arange(td.shape[0]) * dt
+
+    # Goal targets and tolerance bands per state
+    goal_bands = None
+    if dynamics is not None:
+        goal = dynamics.goal_state.cpu().numpy()
+        goal_bands = [
+            (0.0, dynamics.eps_p),                         # px: center=0, half=eps_p
+            (None, None),                                  # py: asymmetric band
+            (0.0, dynamics.eps_v),                         # vx: center=0, half=eps_v
+            (0.0, dynamics.eps_v),                         # vy: center=0, half=eps_v
+            (float(goal[4]), dynamics.eps_theta),           # theta: center=pi/2
+            (float(goal[5]), dynamics.eps_omega),           # omega: center=0
+        ]
 
     for i, (ax, lbl) in enumerate(zip(axes, labels)):
         ax.plot(times_g, tg[:, i], 'b-', lw=1.2, label='Grid')
         ax.plot(times_d, td[:, i], 'r--', lw=1.2, label='DeepReach')
+
+        # Goal tolerance bands
+        if goal_bands is not None:
+            if i == 1:  # py has asymmetric goal band
+                ax.axhspan(dynamics.goal_y_min, dynamics.goal_y_max,
+                           alpha=0.15, color='green')
+                ax.axhline(dynamics.goal_y_center, color='green', ls=':', alpha=0.5)
+            else:
+                center, half = goal_bands[i]
+                ax.axhspan(center - half, center + half, alpha=0.15, color='green')
+                ax.axhline(center, color='green', ls=':', alpha=0.5)
+
+        # Docking time markers
+        _add_dock_markers(ax, result_grid, result_dr)
+
         ax.set_ylabel(lbl)
         ax.grid(alpha=0.3)
         if i == 0:
             ax.legend(fontsize=8)
+
     axes[-1].set_xlabel('Time (s)')
     axes[-2].set_xlabel('Time (s)')
     fig.suptitle(f'State Comparison — IC {ic_idx}', fontsize=13)
@@ -335,8 +459,8 @@ def plot_states(result_grid, result_dr, ic_idx, save_path):
 
 
 def plot_controls(result_grid, result_dr, ic_idx, save_path):
-    """3 controls vs time."""
-    labels = ['u_x (N)', 'u_y (N)', 'u_θ (N·m)']
+    """3 controls vs time with docking markers."""
+    labels = ['u_x (N)', 'u_y (N)', 'u_\u03b8 (N\u00b7m)']
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
 
     for i, (ax, lbl) in enumerate(zip(axes, labels)):
@@ -344,6 +468,7 @@ def plot_controls(result_grid, result_dr, ic_idx, save_path):
                 'b-', lw=1.2, where='post', label='Grid')
         ax.step(result_dr['times'], result_dr['controls'][:, i],
                 'r--', lw=1.2, where='post', label='DeepReach')
+        _add_dock_markers(ax, result_grid, result_dr)
         ax.set_ylabel(lbl)
         ax.grid(alpha=0.3)
         if i == 0:
@@ -355,8 +480,9 @@ def plot_controls(result_grid, result_dr, ic_idx, save_path):
     plt.close(fig)
 
 
-def plot_gradient_metrics(grad_metrics, times, ic_idx, save_path):
-    """Cosine similarity and sign agreement vs time."""
+def plot_gradient_metrics(grad_metrics, times, ic_idx, save_path,
+                          result_grid=None, result_dr=None):
+    """Cosine similarity and sign agreement vs time with docking markers."""
     fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
 
     # Cosine similarity
@@ -364,6 +490,8 @@ def plot_gradient_metrics(grad_metrics, times, ic_idx, save_path):
     ax.plot(times, grad_metrics['cosine_sim'], 'k-', lw=1.0)
     ax.axhline(1.0, color='green', ls=':', alpha=0.5)
     ax.axhline(0.0, color='gray', ls=':', alpha=0.3)
+    if result_grid is not None and result_dr is not None:
+        _add_dock_markers(ax, result_grid, result_dr)
     ax.set_ylabel('Cosine Similarity')
     ax.set_title(f'Gradient Comparison — IC {ic_idx}  |  '
                  f'Mean cos-sim = {grad_metrics["mean_cosine_sim"]:.4f}')
@@ -372,11 +500,10 @@ def plot_gradient_metrics(grad_metrics, times, ic_idx, save_path):
 
     # Per-component sign agreement
     ax = axes[1]
-    ctrl_labels = ['vx', 'vy', 'ω']
+    ctrl_labels = ['vx', 'vy', '\u03c9']
     colors = ['tab:blue', 'tab:orange', 'tab:green']
     for j, (lbl, c) in enumerate(zip(ctrl_labels, colors)):
         agree = grad_metrics['sign_agreement'][:, j].astype(float)
-        # Smooth with a rolling window for readability
         window = min(20, len(agree) // 5) if len(agree) > 20 else 1
         if window > 1:
             kernel = np.ones(window) / window
@@ -385,6 +512,8 @@ def plot_gradient_metrics(grad_metrics, times, ic_idx, save_path):
             smooth = agree
         ax.plot(times, smooth, color=c, lw=1.2,
                 label=f'{lbl} ({grad_metrics["sign_agreement_rate"][j]*100:.1f}%)')
+    if result_grid is not None and result_dr is not None:
+        _add_dock_markers(ax, result_grid, result_dr)
     ax.set_ylabel('Sign Agreement (smoothed)')
     ax.set_xlabel('Time (s)')
     ax.set_ylim(-0.05, 1.1)
@@ -405,7 +534,6 @@ def plot_aggregate(all_metrics, save_path):
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    # Cosine similarity
     ax = axes[0]
     ax.bar(range(n), cos_sims, color='steelblue')
     ax.axhline(np.mean(cos_sims), color='red', ls='--',
@@ -415,19 +543,17 @@ def plot_aggregate(all_metrics, save_path):
     ax.set_title('Gradient Cosine Similarity')
     ax.legend()
 
-    # Sign agreement per component
     ax = axes[1]
     x = np.arange(n)
     w = 0.25
     ax.bar(x - w, sign_rates[:, 0], w, label='vx', color='tab:blue')
     ax.bar(x, sign_rates[:, 1], w, label='vy', color='tab:orange')
-    ax.bar(x + w, sign_rates[:, 2], w, label='ω', color='tab:green')
+    ax.bar(x + w, sign_rates[:, 2], w, label='\u03c9', color='tab:green')
     ax.set_xlabel('IC index')
     ax.set_ylabel('Sign Agreement Rate')
     ax.set_title('Control Sign Agreement')
     ax.legend()
 
-    # Trajectory deviation
     ax = axes[2]
     ax.bar(range(n), traj_devs, color='coral')
     ax.axhline(np.mean(traj_devs), color='red', ls='--',
@@ -519,14 +645,12 @@ def main():
 
     for i, ic in enumerate(ics):
         print(f'\n--- IC {i}: {ic} ---')
-        combo.reset()
-        brat_ctrl.reset()
 
         result_grid, result_dr = simulate_both(
             ic, combo, brat_ctrl, dynamics_fn, args.dt, args.max_sim_time,
             grid_times)
 
-        # Gradient metrics
+        # Gradient metrics (trajectories are same length from joint sim)
         grad_met = compute_gradient_metrics(
             result_grid['gradients'], result_dr['gradients'])
 
@@ -535,6 +659,10 @@ def main():
                                     result_dr['trajectory'])
         grad_met['mean_traj_deviation'] = float(np.mean(tdev))
         grad_met['max_traj_deviation'] = float(np.max(tdev))
+        grad_met['goal_reached_grid'] = result_grid['goal_reached']
+        grad_met['goal_reached_dr'] = result_dr['goal_reached']
+        grad_met['goal_time_grid'] = result_grid['goal_time']
+        grad_met['goal_time_dr'] = result_dr['goal_time']
 
         all_metrics.append(grad_met)
         all_results.append((result_grid, result_dr))
@@ -543,25 +671,27 @@ def main():
         print(f"  Cosine similarity:  {grad_met['mean_cosine_sim']:.4f}")
         print(f"  Sign agreement:     vx={grad_met['sign_agreement_rate'][0]*100:.1f}%  "
               f"vy={grad_met['sign_agreement_rate'][1]*100:.1f}%  "
-              f"ω={grad_met['sign_agreement_rate'][2]*100:.1f}%")
+              f"\u03c9={grad_met['sign_agreement_rate'][2]*100:.1f}%")
         print(f"  Trajectory dev:     mean={grad_met['mean_traj_deviation']:.3f}m  "
               f"max={grad_met['max_traj_deviation']:.3f}m")
 
         # Per-IC plots
         ic_dir = os.path.join(args.output_dir, f'ic_{i}')
         os.makedirs(ic_dir, exist_ok=True)
-        plot_trajectory_overlay(result_grid, result_dr, i,
+        plot_trajectory_overlay(result_grid, result_dr, ic, i,
                                 os.path.join(ic_dir, 'trajectory.png'),
                                 combo=combo, brat_ctrl=brat_ctrl,
                                 grid_times=grid_times,
                                 grid_horizon=args.grid_time_horizon,
                                 dr_horizon=args.tMax)
         plot_states(result_grid, result_dr, i,
-                    os.path.join(ic_dir, 'states.png'))
+                    os.path.join(ic_dir, 'states.png'),
+                    dynamics=brat_ctrl.dynamics)
         plot_controls(result_grid, result_dr, i,
                       os.path.join(ic_dir, 'controls.png'))
         plot_gradient_metrics(grad_met, result_grid['times'], i,
-                              os.path.join(ic_dir, 'gradient_metrics.png'))
+                              os.path.join(ic_dir, 'gradient_metrics.png'),
+                              result_grid=result_grid, result_dr=result_dr)
 
     # ---- 6. Aggregate results ----
     if len(ics) > 1:
@@ -570,11 +700,11 @@ def main():
         cos_sims = [m['mean_cosine_sim'] for m in all_metrics]
         sign_rates = np.array([m['sign_agreement_rate'] for m in all_metrics])
         tdevs = [m['mean_traj_deviation'] for m in all_metrics]
-        print(f"  Cosine similarity:  {np.mean(cos_sims):.4f} ± {np.std(cos_sims):.4f}")
-        print(f"  Sign agreement vx:  {np.mean(sign_rates[:,0])*100:.1f}% ± {np.std(sign_rates[:,0])*100:.1f}%")
-        print(f"  Sign agreement vy:  {np.mean(sign_rates[:,1])*100:.1f}% ± {np.std(sign_rates[:,1])*100:.1f}%")
-        print(f"  Sign agreement ω:   {np.mean(sign_rates[:,2])*100:.1f}% ± {np.std(sign_rates[:,2])*100:.1f}%")
-        print(f"  Trajectory dev:     {np.mean(tdevs):.3f} ± {np.std(tdevs):.3f}m")
+        print(f"  Cosine similarity:  {np.mean(cos_sims):.4f} \u00b1 {np.std(cos_sims):.4f}")
+        print(f"  Sign agreement vx:  {np.mean(sign_rates[:,0])*100:.1f}% \u00b1 {np.std(sign_rates[:,0])*100:.1f}%")
+        print(f"  Sign agreement vy:  {np.mean(sign_rates[:,1])*100:.1f}% \u00b1 {np.std(sign_rates[:,1])*100:.1f}%")
+        print(f"  Sign agreement \u03c9:   {np.mean(sign_rates[:,2])*100:.1f}% \u00b1 {np.std(sign_rates[:,2])*100:.1f}%")
+        print(f"  Trajectory dev:     {np.mean(tdevs):.3f} \u00b1 {np.std(tdevs):.3f}m")
 
         plot_aggregate(all_metrics,
                        os.path.join(args.output_dir, 'aggregate_metrics.png'))
@@ -590,6 +720,7 @@ def main():
             'max_sim_time': args.max_sim_time,
             'n_ics': len(ics),
             'seed': args.seed,
+            'ic_bounds': GRADIENT_IC_BOUNDS.tolist(),
         },
         'ics': ics.tolist(),
         'per_ic': [
@@ -600,6 +731,10 @@ def main():
                 'sign_agreement_rate_omega': float(m['sign_agreement_rate'][2]),
                 'mean_traj_deviation': m['mean_traj_deviation'],
                 'max_traj_deviation': m['max_traj_deviation'],
+                'goal_reached_grid': m['goal_reached_grid'],
+                'goal_reached_dr': m['goal_reached_dr'],
+                'goal_time_grid': m['goal_time_grid'],
+                'goal_time_dr': m['goal_time_dr'],
             }
             for m in all_metrics
         ],

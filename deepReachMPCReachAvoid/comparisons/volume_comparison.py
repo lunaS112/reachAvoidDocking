@@ -230,9 +230,46 @@ def evaluate_slice(combo, brat_ctrl, slice_def, t_physical, resolution,
 # ======================================================================
 #  Monte Carlo volume estimation
 # ======================================================================
+def _sanity_check_goal(combo, brat_ctrl, t_physical, grid_times):
+    """Verify both value functions are negative at the goal state.
+
+    If either returns > 0, something is fundamentally wrong with the
+    value function loading or evaluation pipeline.
+    """
+    goal_state = np.array([[0.0, -1.2, 0.0, 0.0, np.pi / 2, 0.0]])
+    t_idx = physical_time_to_index(t_physical, grid_times)
+    gv = grid_value_6D(combo, goal_state, t_idx)
+    dv = deepreach_value_6D(brat_ctrl, goal_state, t_physical)
+    print(f"    Sanity check at goal state: grid_V={gv[0]:.6f}, DR_V={dv[0]:.6f}")
+    if gv[0] > 0:
+        print("    WARNING: Grid value is POSITIVE at the goal state — "
+              "grid solution may be incorrect or cache stale!")
+    if dv[0] > 0:
+        print("    WARNING: DeepReach value is POSITIVE at the goal state — "
+              "checkpoint may be incorrect!")
+    return gv[0], dv[0]
+
+
+# Focused sampling region near the goal state for diagnostic overlap
+# verification.  If uniform MC shows 0% overlap but focused shows
+# significant overlap, the BRATs genuinely differ only at non-optimal
+# velocity/attitude states (a model accuracy issue, not a code bug).
+FOCUSED_BOUNDS = np.array([
+    [-3.0,  3.0],   # px  (near goal)
+    [-3.0,  0.5],   # py  (goal ≈ -1.2)
+    [-0.5,  0.5],   # vx  (near docking velocity)
+    [-0.5,  0.5],   # vy
+    [ 0.5,  2.6],   # theta (near pi/2 ≈ 1.57)
+    [-0.3,  0.3],   # omega (near 0)
+])
+
+
 def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
                        seed=42, bounds=None):
     """Estimate 6D BRAT volumes via uniform random sampling.
+
+    Includes diagnostics for detecting NaN/inf contamination and a
+    focused near-goal sampling pass to verify overlap independently.
 
     Args:
         bounds: (6, 2) array of sampling bounds per dimension.
@@ -240,11 +277,15 @@ def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
 
     Returns dict with keys:
         grid_frac, dr_frac, overlap_frac, grid_only_frac, dr_only_frac,
-        jaccard, n_samples, hypervolume, grid_vol, dr_vol, overlap_vol
+        jaccard, n_samples, hypervolume, grid_vol, dr_vol, overlap_vol,
+        diagnostics (dict with raw counts and focused-region results)
     """
     if bounds is None:
         bounds = MC_BOUNDS
     hypervolume = float(np.prod(bounds[:, 1] - bounds[:, 0]))
+
+    # --- Sanity check at goal state ---
+    _sanity_check_goal(combo, brat_ctrl, t_physical, grid_times)
 
     rng = np.random.RandomState(seed)
     states = rng.uniform(bounds[:, 0], bounds[:, 1],
@@ -264,6 +305,16 @@ def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
     gv = np.concatenate(gv_all)
     dv = np.concatenate(dv_all)
 
+    # --- NaN/inf detection ---
+    n_gv_bad = int(np.sum(~np.isfinite(gv)))
+    n_dv_bad = int(np.sum(~np.isfinite(dv)))
+    if n_gv_bad > 0 or n_dv_bad > 0:
+        print(f"    WARNING: {n_gv_bad} non-finite grid values, "
+              f"{n_dv_bad} non-finite DR values out of {n_samples}")
+    # Treat non-finite as outside BRAT (positive)
+    gv = np.where(np.isfinite(gv), gv, np.inf)
+    dv = np.where(np.isfinite(dv), dv, np.inf)
+
     in_grid = gv <= 0
     in_dr   = dv <= 0
     overlap = in_grid & in_dr
@@ -271,12 +322,60 @@ def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
     dr_only   = in_dr & ~in_grid
     union = in_grid | in_dr
 
+    # --- Enhanced diagnostics: raw hit counts ---
+    print(f"    Hits: grid={in_grid.sum():,}, DR={in_dr.sum():,}, "
+          f"overlap={overlap.sum():,}, grid_only={grid_only.sum():,}, "
+          f"DR_only={dr_only.sum():,}")
+
     n = float(n_samples)
     jaccard = float(overlap.sum()) / float(union.sum()) if union.sum() > 0 else 0.0
 
     grid_frac    = float(in_grid.sum() / n)
     dr_frac      = float(in_dr.sum() / n)
     overlap_frac = float(overlap.sum() / n)
+
+    # --- Focused near-goal diagnostic sampling ---
+    n_focused = n_samples // 5
+    focused_hv = float(np.prod(FOCUSED_BOUNDS[:, 1] - FOCUSED_BOUNDS[:, 0]))
+    focused_states = rng.uniform(FOCUSED_BOUNDS[:, 0], FOCUSED_BOUNDS[:, 1],
+                                 size=(n_focused, 6))
+    fgv_all, fdv_all = [], []
+    for i in range(0, n_focused, chunk):
+        s = focused_states[i:i+chunk]
+        fgv_all.append(grid_value_6D(combo, s, t_idx))
+        fdv_all.append(deepreach_value_6D(brat_ctrl, s, t_physical))
+    fgv = np.concatenate(fgv_all)
+    fdv = np.concatenate(fdv_all)
+    fgv = np.where(np.isfinite(fgv), fgv, np.inf)
+    fdv = np.where(np.isfinite(fdv), fdv, np.inf)
+
+    f_in_grid = fgv <= 0
+    f_in_dr   = fdv <= 0
+    f_overlap = f_in_grid & f_in_dr
+    f_union   = f_in_grid | f_in_dr
+    f_jaccard = (float(f_overlap.sum()) / float(f_union.sum())
+                 if f_union.sum() > 0 else 0.0)
+    print(f"    Focused region ({n_focused:,} samples, "
+          f"hypervolume={focused_hv:.1f}):")
+    print(f"      grid={f_in_grid.sum():,}, DR={f_in_dr.sum():,}, "
+          f"overlap={f_overlap.sum():,}, Jaccard={f_jaccard:.4f}")
+
+    diagnostics = {
+        'n_gv_nonfinite': n_gv_bad,
+        'n_dv_nonfinite': n_dv_bad,
+        'raw_hits_grid': int(in_grid.sum()),
+        'raw_hits_dr': int(in_dr.sum()),
+        'raw_hits_overlap': int(overlap.sum()),
+        'raw_hits_grid_only': int(grid_only.sum()),
+        'raw_hits_dr_only': int(dr_only.sum()),
+        'focused_n_samples': n_focused,
+        'focused_hypervolume': focused_hv,
+        'focused_bounds': FOCUSED_BOUNDS.tolist(),
+        'focused_grid_frac': float(f_in_grid.sum() / n_focused),
+        'focused_dr_frac': float(f_in_dr.sum() / n_focused),
+        'focused_overlap_frac': float(f_overlap.sum() / n_focused),
+        'focused_jaccard': f_jaccard,
+    }
 
     return {
         'grid_frac':      grid_frac,
@@ -290,6 +389,7 @@ def monte_carlo_volume(combo, brat_ctrl, t_physical, grid_times, n_samples,
         'grid_vol':       grid_frac * hypervolume,
         'dr_vol':         dr_frac * hypervolume,
         'overlap_vol':    overlap_frac * hypervolume,
+        'diagnostics':    diagnostics,
     }
 
 
@@ -393,7 +493,7 @@ def print_volume_table(volume_results):
         header += f"  {'GridVol':>9} {'DRVol':>9} {'OvlpVol':>9}"
     sep = '-' * len(header)
     print('\n' + sep)
-    print('VOLUME COMPARISON  (Monte Carlo)')
+    print('VOLUME COMPARISON  (Monte Carlo — uniform sampling)')
     if has_vol:
         hv = next(iter(volume_results.values())).get('hypervolume', 0)
         print(f'  Sampling hypervolume: {hv:.1f}  (units: m²·(m/s)²·rad·(rad/s))')
@@ -409,7 +509,30 @@ def print_volume_table(volume_results):
             line += (f"  {v.get('grid_vol',0):>9.1f} {v.get('dr_vol',0):>9.1f} "
                      f"{v.get('overlap_vol',0):>9.1f}")
         print(line)
-    print(sep + '\n')
+    print(sep)
+
+    # Focused-region diagnostic table
+    has_focused = any('diagnostics' in v for v in volume_results.values())
+    if has_focused:
+        print('\nFOCUSED NEAR-GOAL REGION  (diagnostic — not used for volume estimate)')
+        f_header = (f"{'Time(s)':>8} {'Grid%':>8} {'DR%':>8} "
+                    f"{'Overlap%':>9} {'Jaccard':>8} {'N_samples':>10}")
+        f_sep = '-' * len(f_header)
+        print(f_sep)
+        print(f_header)
+        print(f_sep)
+        for t in sorted(volume_results.keys()):
+            diag = volume_results[t].get('diagnostics', {})
+            if not diag:
+                continue
+            print(f"{t:>8.0f} "
+                  f"{diag.get('focused_grid_frac', 0)*100:>6.2f}% "
+                  f"{diag.get('focused_dr_frac', 0)*100:>6.2f}% "
+                  f"{diag.get('focused_overlap_frac', 0)*100:>7.2f}% "
+                  f"{diag.get('focused_jaccard', 0):>8.4f} "
+                  f"{diag.get('focused_n_samples', 0):>10,}")
+        print(f_sep)
+    print()
 
 
 # ======================================================================
@@ -538,11 +661,15 @@ def main():
             'seed': args.seed,
             'mc_bounds': MC_BOUNDS.tolist(),
             'mc_hypervolume': float(np.prod(MC_BOUNDS[:, 1] - MC_BOUNDS[:, 0])),
+            'focused_bounds': FOCUSED_BOUNDS.tolist(),
+            'focused_hypervolume': float(np.prod(FOCUSED_BOUNDS[:, 1] - FOCUSED_BOUNDS[:, 0])),
             'notes': [
                 'Grid and DeepReach reach/avoid geometry fully aligned (body+post obstacle, goal band, L2 velocity).',
                 'DeepReach applies piecewise asymmetric shaping; grid uses raw SDFs. Zero level sets should match.',
                 'Grid params: post_hw_x=0.6, post_length=0.2, eps_p=0.1, eps_v=0.1, eps_theta=0.04, eps_omega=0.05, d_bar=0.',
                 'MC sampling uses MC_BOUNDS (tighter than full state domain) for adequate 6D density.',
+                'Focused near-goal sampling is diagnostic only — verifies overlap near optimal states.',
+                'Non-finite values (NaN/inf) are treated as outside BRAT (positive) and counted in diagnostics.',
             ],
         },
         'volume': {str(k): v for k, v in volume_results.items()},
