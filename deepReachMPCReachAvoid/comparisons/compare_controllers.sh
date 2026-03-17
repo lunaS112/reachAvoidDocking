@@ -7,8 +7,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../../.venv/bin/activate"
 
-CKPT="runs/Docking6D_RA_10sec/training/checkpoints/model_final.pth"
-CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_10sec_FixedScaling/training/checkpoints/model_final.pth"
 
 # ---- Script 1: Gradient quality outside learned BRAT ----
 # IC inside 25s grid BRAT, outside 10s DeepReach BRAT
@@ -20,7 +19,7 @@ python comparisons/gradient_quality_comparison.py \
     --n_ics 5 \
     --n_candidates 500000 \
     --device cuda \
-    --output_dir ./outputs/gradient_comparison_HighSamp_grad_fallback
+    --output_dir ./outputs/gradient_comparison_FixedScaling
 
 # ---- Script 2: Value function approximation quality ----
 # IC inside both 10s BRATs
@@ -32,9 +31,9 @@ python comparisons/value_function_comparison.py \
     --n_ics 5 \
     --n_candidates 500000 \
     --device cuda \
-    --output_dir ./outputs/value_comparison
+    --output_dir ./outputs/value_comparison_FixedScaling
 
 # ---- Script 3: Volume comparison ----
 python comparisons/volume_comparison.py \
     --checkpoint_path $CKPT --tMax 10 \
-    --time_horizons 3 6 8 10 --n_monte_carlo 500000
+    --time_horizons 3 6 8 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_FixedScaling
