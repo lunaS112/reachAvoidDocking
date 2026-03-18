@@ -3,7 +3,7 @@ MPC-Only Controller for Docking6D
 
 Direct-style MPC controller using random-shooting optimization with the
 reachability cost function. No learned value function is used -- this serves
-as a pure-MPC baseline for comparison against the BRT controller.
+as a pure-MPC baseline for comparison against the BRAT controller.
 
 At each simulation step the controller:
   1. Rolls out `num_samples` perturbed control sequences over the full
@@ -304,14 +304,19 @@ class MPCController:
 
     def _check_docked(self, state):
         """Check if all docking tolerances are met."""
+        d = self.dynamics
         px, py, vx, vy, theta, omega = state
-        pos_ok = np.sqrt(px**2 + py**2) <= self.dynamics.eps_p
-        vel_ok = np.sqrt(vx**2 + vy**2) <= self.dynamics.eps_v
+        x_ok = np.abs(px) <= d.eps_p
+        y_ok = d.goal_y_min <= py <= d.goal_y_max
+        pos_ok = x_ok and y_ok
+        vel_ok = np.sqrt(vx**2 + vy**2) <= d.eps_v
+        theta_goal = d.goal_state[4].item()
+        omega_goal = d.goal_state[5].item()
         theta_diff = np.abs(
-            np.arctan2(np.sin(theta - np.pi / 2),
-                       np.cos(theta - np.pi / 2)))
-        theta_ok = theta_diff <= self.dynamics.eps_theta
-        omega_ok = np.abs(omega) <= self.dynamics.eps_omega
+            np.arctan2(np.sin(theta - theta_goal),
+                       np.cos(theta - theta_goal)))
+        theta_ok = theta_diff <= d.eps_theta
+        omega_ok = np.abs(omega - omega_goal) <= d.eps_omega
         return pos_ok and vel_ok and theta_ok and omega_ok
 
     def _check_collision(self, state):

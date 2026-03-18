@@ -25,11 +25,9 @@ def clip_state_for_execution(state, dynamics):
 
 
 from utils.controllers.safety_filter import SafetyFilter
-from utils.controllers.brt_controller import BRTController
+from utils.controllers.brat_controller import BRATController
 from utils.controllers.mpc_controller import MPCController
 from utils.controllers.mpc_terminal_controller import MPCTerminalController
-from utils.controllers.cascaded_brt_controller import CascadedBRTController
-from utils.controllers.cascaded_mpc_terminal_controller import CascadedMPCTerminalController
 
 # 13D controllers
 from utils.controllers.brt_controller_13d import BRTController13D

@@ -1226,9 +1226,30 @@ class Experiment(ExperimentVizMixin, ABC):
         if fig is not None:
             plt.close(fig)
 
-        # self.validate_mpc_dataset_position_base_quat_scatter(
-        #     epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-        
+        # Docking13D: vary vx to show BRATs at different lateral velocities
+        if self.dataset.dynamics.name == 'Docking13D' and self.use_wandb:
+            vx_values = [-1.5, 0.0, 1.5]
+            for idx, vx_val in enumerate(vx_values):
+                cfg = dict(base_cfg)
+                slices = list(base_cfg['state_slices'])
+                slices[3] = vx_val  # vx (state index 3)
+                cfg['state_slices'] = slices
+
+                if cfg['z_axis_idx'] == -1:
+                    fig_vx = self.plotSingleFig(
+                        state_test_range, cfg, x_resolution, y_resolution, times,
+                        quat_slice=base_quat, theta_yaw=base_yaw, draw_target_set=True)
+                else:
+                    fig_vx = self.plotMultipleFigs(
+                        state_test_range, cfg, x_resolution, y_resolution, z_resolution, times,
+                        quat_slice=base_quat, theta_yaw=base_yaw, z_values=z_values, draw_target_set=True)
+
+                wandb.log({
+                    'step': epoch,
+                    f'val_plot_docking13d_vx{idx+1}': wandb.Image(fig_vx),
+                })
+                plt.close(fig_vx)
+
         if self.dataset.dynamics.name != 'Docking13D':
             # Plot velocity slice (vx vs vy) of the learned value function
             if self.dataset.dynamics.state_dim >= 4:  # Need at least vx, vy dimensions
@@ -1251,11 +1272,6 @@ class Experiment(ExperimentVizMixin, ABC):
                         'val_plot_rotation': wandb.Image(fig_rotation),
                     })
                 plt.close()
-            
-            # Also visualize MPC training dataset for comparison
-            self.validate_mpc_dataset_position(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-            self.validate_mpc_dataset_velocity(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-            self.validate_mpc_dataset_rotation(epoch, x_resolution, y_resolution, time_resolution)
         
         # Compute MPC ground truth - controlled by frequency 
         # Set self.mpc_ground_truth_frequency = N to run every N validation calls

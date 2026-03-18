@@ -7,29 +7,20 @@ import torch
 from tqdm import tqdm
 from pathlib import Path as pathlib
 
-def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
-    theta = np.linspace(0, np.pi, 100)
-    arc_x = dock_rad * np.cos(theta)
-    arc_y = dock_rad * np.sin(theta)
-
-    verts = []
-    codes = []
-
-    # Start at bottom-left corner
-    verts.append((-w_t/2, 0));             codes.append(Path.MOVETO)
-    # Left side up
-    verts.append((-w_t/2, h_t));           codes.append(Path.LINETO)
-    # Top across
-    verts.append((w_t/2, h_t));            codes.append(Path.LINETO)
-    # Right side down
-    verts.append((w_t/2, 0));              codes.append(Path.LINETO)
-    # Bottom-right segment to mouth
-    verts.append((dock_rad, 0));           codes.append(Path.LINETO)
-    # Semicircular mouth (from +R to -R)
-    for x, y in zip(arc_x, arc_y):
-        verts.append((x, y));              codes.append(Path.LINETO)
-    # Bottom-left segment back to start
-    verts.append((-w_t/2, 0));             codes.append(Path.LINETO)
+def draw_target_body(ax, w_t, h_t, post_hw_x, post_length, color='red', linewidth=2, alpha=0.7):
+    # Body rectangle + docking post as a single connected outline
+    verts = [
+        (-w_t/2, 0),
+        (-w_t/2, h_t),
+        (w_t/2, h_t),
+        (w_t/2, 0),
+        (post_hw_x, 0),
+        (post_hw_x, -post_length),
+        (-post_hw_x, -post_length),
+        (-post_hw_x, 0),
+        (-w_t/2, 0),
+    ]
+    codes = [Path.MOVETO] + [Path.LINETO] * (len(verts) - 1)
 
     path = Path(verts, codes)
     patch = patches.PathPatch(path, fill=False, color=color, linewidth=linewidth, alpha=alpha)
@@ -141,11 +132,12 @@ def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
 
     # Define body of target spacecraft
     if hasattr(dynamics_, 'avoid_fn'):
-        # Draw target spacecraft body with docking port cutout
+        # Draw target spacecraft body with docking post
         w_t = dynamics_.w_t
         h_t = dynamics_.h_t
-        dock_rad = dynamics_.dock_rad
-        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+        post_hw_x = dynamics_.post_hw_x
+        post_length = dynamics_.post_length
+        draw_target_body(ax, w_t, h_t, post_hw_x, post_length, color='red', linewidth=2, alpha=0.7)
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -211,12 +203,13 @@ def plotMPCTrajectories(mpc, initial_conditions, T, save_def:pathlib, max_trajs=
     
     # Add failure region (avoid_fn) visualization if available
     if hasattr(mpc.dynamics_, 'avoid_fn'):
-        # Draw target spacecraft body with docking port cutout
+        # Draw target spacecraft body with docking post
         w_t = mpc.dynamics_.w_t
         h_t = mpc.dynamics_.h_t
-        dock_rad = mpc.dynamics_.dock_rad
+        post_hw_x = mpc.dynamics_.post_hw_x
+        post_length = mpc.dynamics_.post_length
         
-        draw_target_body(ax1, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+        draw_target_body(ax1, w_t, h_t, post_hw_x, post_length, color='red', linewidth=2, alpha=0.7)
             
         ax1.set_xlabel('px (m)')
         ax1.set_ylabel('py (m)')
@@ -745,9 +738,10 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     if hasattr(mpc.dynamics_, 'avoid_fn'):
         w_t = mpc.dynamics_.w_t
         h_t = mpc.dynamics_.h_t
-        dock_rad = mpc.dynamics_.dock_rad
+        post_hw_x = mpc.dynamics_.post_hw_x
+        post_length = mpc.dynamics_.post_length
         
-        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+        draw_target_body(ax, w_t, h_t, post_hw_x, post_length, color='red', linewidth=2, alpha=0.7)
         reach_avoid_handles.append(
             mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target')
         )

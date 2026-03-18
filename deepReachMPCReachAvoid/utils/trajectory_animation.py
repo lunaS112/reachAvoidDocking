@@ -106,8 +106,9 @@ class TrajectoryAnim:
         # Create target satellite polygon (stationary)
         w_t = self.dynamics_.w_t
         h_t = self.dynamics_.h_t
-        doc_rad = self.dynamics_.dock_rad
-        viz.draw_target_body(self.ax_traj, w_t, h_t, doc_rad, color='red', linewidth=2.0, alpha=0.7)
+        post_hw_x = self.dynamics_.post_hw_x
+        post_length = self.dynamics_.post_length
+        viz.draw_target_body(self.ax_traj, w_t, h_t, post_hw_x, post_length, color='red', linewidth=2.0, alpha=0.7)
         
         # Add recent trajectory trace
         self.trace_line, = self.ax_traj.plot([], [], 'b-', linewidth=2, alpha=0.8)

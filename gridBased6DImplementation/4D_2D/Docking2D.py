@@ -8,7 +8,7 @@ from hj_reachability import dynamics
 from hj_reachability import sets
 
 class Docking_rotational(dynamics.ControlAndDisturbanceAffineDynamics):
-    def __init__(self, mc, u_bar = 1.5, d_bar = 0.01):
+    def __init__(self, mc, u_bar = 1.5, d_bar = 0.0):
         # Defineing dynamic parameters
         self.u_bar = u_bar  # Maximum control input
         self.d_bar = d_bar  # Maximum disturbance
@@ -47,16 +47,18 @@ class Docking_rotational(dynamics.ControlAndDisturbanceAffineDynamics):
                           [1.0/self.jc]])
 
  # Define docking parameters
-eps_theta = 0.01 # Angular position tolerance for docking (rad)
-eps_theta_dot = 0.005   # Angular velocity tolerance for docking (rad/s)
+eps_theta = 0.04     # Angular position tolerance for docking (rad)
+eps_theta_dot = 0.05 # Angular velocity tolerance for docking (rad/s)
+theta_goal = np.pi / 2  # Goal angle (rad)
 
 def target_set(state):
-    """Signed distance <= 0 if within docking position,velocity,angular tolerances."""
+    """Signed distance <= 0 if within docking angular position/velocity tolerances."""
     theta = state[..., 0]
     omega = state[..., 1]
-    # Distance from allowable box in (px,py,vx,vy)
+    # Wrapped angular distance to goal (handles periodicity)
+    theta_error = jnp.arctan2(jnp.sin(theta - theta_goal), jnp.cos(theta - theta_goal))
     gi = jnp.stack([
-        jnp.abs(theta) - eps_theta,
+        jnp.abs(theta_error) - eps_theta,
         jnp.abs(omega) - eps_theta_dot],
         axis=-1)
     return jnp.max(gi, axis=-1)

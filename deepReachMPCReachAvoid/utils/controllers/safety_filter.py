@@ -53,7 +53,8 @@ class SafetyFilter:
             tMax: Time horizon for V_avoid queries.  ``None`` = use the avoid
                 model's own ``orig_opt.tMax``.
             margin: Activation threshold delta for Mode 1 (meters, same units
-                as ``avoid_fn`` signed distance).
+                as ``avoid_fn`` signed distance).  Can be updated dynamically
+                via ``set_margin()``.
             gamma: CBF decay rate for Mode 2 (default 0.2, from ComboControl).
             device: Torch device string.
         """
@@ -162,6 +163,10 @@ class SafetyFilter:
     # ------------------------------------------------------------------
     # Reset / log access
     # ------------------------------------------------------------------
+
+    def set_margin(self, margin):
+        """Update the activation margin dynamically (e.g. per control phase)."""
+        self.margin = margin
 
     def reset(self):
         """Clear per-simulation log.  Call from the host controller's reset()."""
