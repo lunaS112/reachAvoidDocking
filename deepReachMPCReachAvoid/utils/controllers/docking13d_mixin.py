@@ -51,7 +51,7 @@ class Docking13DControllerMixin:
         Tolerances checked (matching reach_fn in dynamics):
             - x,z lateral ≤ eps_p + y inside goal band
             - lateral velocity (xz) ≤ eps_v_lateral
-            - axial velocity |vy| in [eps_v_axial_lo, eps_v_axial_hi]
+            - axial velocity vy in [eps_v_axial_lo, eps_v_axial_hi]
             - Quaternion angle error ≤ eps_q
             - pitch/yaw rate (wy,wz) ≤ eps_omega_pitchyaw
             - roll rate |wx| ≤ eps_omega_roll
@@ -74,8 +74,7 @@ class Docking13DControllerMixin:
 
         # Velocity: lateral (xz) and axial (y) separately
         vlat_ok = np.sqrt(vel[0]**2 + vel[2]**2) <= d.eps_v_lateral
-        vy_abs = abs(vel[1])
-        vax_ok = (d.eps_v_axial_lo <= vy_abs <= d.eps_v_axial_hi)
+        vax_ok = (d.eps_v_axial_lo <= vel[1] <= d.eps_v_axial_hi)
 
         # Attitude
         q_goal_np = d.q_goal.detach().cpu().numpy()

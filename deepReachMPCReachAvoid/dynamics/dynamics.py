@@ -1049,7 +1049,7 @@ class Docking13D(Dynamics):
 
         # Per-axis angular rate tolerances (reach_fn decomposes pitch/yaw vs roll)
         # Body-frame: wx = roll, wy/wz = pitch/yaw (after 90° yaw goal quat)
-        self.eps_omega_pitchyaw = 0.00262   # 0.15 °/s in rad/s
+        self.eps_omega_pitchyaw = 0.00698   # 0.4  °/s in rad/s (= eps_omega_roll)
         self.eps_omega_roll = 0.00698       # 0.4  °/s in rad/s
 
         # Legacy single-value aliases (used by state_range, controller checks)
@@ -1535,7 +1535,7 @@ class Docking13D(Dynamics):
         Signed distance <= 0 if within docking tolerances in:
           - position  (x,z lateral ≤ eps_p; y in goal band)
           - lateral velocity  (xz L2 ≤ eps_v_lateral)
-          - axial velocity    (|vy| in [eps_v_axial_lo, eps_v_axial_hi])
+          - axial velocity    (vy in [eps_v_axial_lo, eps_v_axial_hi])
           - attitude  (quaternion angle error ≤ eps_q)
           - pitch/yaw rate (wy,wz L2 ≤ eps_omega_pitchyaw)
           - roll rate (|wx| ≤ eps_omega_roll)
@@ -1560,11 +1560,10 @@ class Docking13D(Dynamics):
         # --- Lateral velocity (XZ plane) ---
         vlat_dist = torch.sqrt(vx**2 + vz**2 + 1e-8) - self.eps_v_lateral
 
-        # --- Axial velocity (Y): must be in [lo, hi] band ---
-        vy_abs = torch.abs(vy)
+        # --- Axial velocity (Y): must be in [+lo, +hi] band (positive = approaching) ---
         vax_dist = torch.maximum(
-            torch.tensor(self.eps_v_axial_lo, device=state.device, dtype=state.dtype) - vy_abs,
-            vy_abs - torch.tensor(self.eps_v_axial_hi, device=state.device, dtype=state.dtype),
+            torch.tensor(self.eps_v_axial_lo, device=state.device, dtype=state.dtype) - vy,
+            vy - torch.tensor(self.eps_v_axial_hi, device=state.device, dtype=state.dtype),
         )
 
         # --- Attitude ---
@@ -1584,7 +1583,7 @@ class Docking13D(Dynamics):
         vlat_dist  = torch.where(vlat_dist  < 0, vlat_dist  * 150,  torch.tanh(vlat_dist  * 1.0))
         vax_dist   = torch.where(vax_dist   < 0, vax_dist   * 86,   torch.tanh(vax_dist   * 1.0))
         att_dist   = torch.where(att_dist   < 0, att_dist   * 20,   torch.tanh(att_dist   * 1.0))
-        omg_py_dist = torch.where(omg_py_dist < 0, omg_py_dist * 1145, torch.tanh(omg_py_dist * 1.0))
+        omg_py_dist = torch.where(omg_py_dist < 0, omg_py_dist * 430,  torch.tanh(omg_py_dist * 1.0))
         omg_r_dist  = torch.where(omg_r_dist  < 0, omg_r_dist  * 430,  torch.tanh(omg_r_dist  * 1.0))
 
         goal_val = torch.stack([
