@@ -92,10 +92,12 @@ def build_controller(name, args):
             planning_horizon_sec=args.planning_horizon,
             mpc_dt=args.mpc_dt,
             dt=args.dt,
-            num_samples=args.num_samples,
-            num_refinement=args.num_refinement,
             device=args.device,
             safety_filter=sf,
+            gradient_lr=args.gradient_lr,
+            gradient_iters=getattr(args, 'gradient_iters', 80),
+            num_restarts=getattr(args, 'num_restarts', 16),
+            goal_weight=args.goal_weight,
         )
     elif name == 'mpc_terminal':
         return MPCTerminalController(
@@ -103,8 +105,6 @@ def build_controller(name, args):
             effective_horizon_sec=args.effective_horizon,
             tMax=args.tMax,
             dt=args.dt,
-            num_samples=args.num_samples,
-            num_refinement=args.num_refinement,
             device=args.device,
             effort_weight=args.effort_weight,
             exploration_factor=args.exploration_factor,
@@ -114,6 +114,9 @@ def build_controller(name, args):
             safety_margin_phase1=args.safety_margin_phase1,
             safety_margin_phase2=args.safety_margin_phase2,
             debug_phase2=args.debug_phase2,
+            gradient_lr=args.gradient_lr,
+            gradient_iters=args.gradient_iters,
+            num_restarts=args.num_restarts,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -853,9 +856,21 @@ def _add_shared_args(parser):
     parser.add_argument('--effective_horizon', type=float, default=1.0,
                         help='MPC+Terminal effective horizon (s)')
     parser.add_argument('--num_samples', type=int, default=100,
-                        help='MPC random-shooting samples')
+                        help='(Legacy) MPC random-shooting samples')
     parser.add_argument('--num_refinement', type=int, default=10,
-                        help='MPC iterative refinement passes')
+                        help='(Legacy) MPC iterative refinement passes')
+    # Gradient MPC (shared by mpc and mpc_terminal)
+    parser.add_argument('--gradient_lr', type=float, default=1.0,
+                        help='Adam learning rate for gradient MPC (default: 1.0)')
+    parser.add_argument('--gradient_iters', type=int, default=50,
+                        help='Adam iterations per MPC step (default: 50 for '
+                             'mpc_terminal, use 80 for mpc baseline)')
+    parser.add_argument('--num_restarts', type=int, default=8,
+                        help='Parallel restarts for gradient MPC (default: 8 '
+                             'for mpc_terminal, use 16 for mpc baseline)')
+    parser.add_argument('--goal_weight', type=float, default=0.01,
+                        help='Goal-directed cost weight for baseline MPC '
+                             '(default: 0.01)')
     parser.add_argument('--effort_weight', type=float, default=0.0,
                         help='Control effort penalty weight for MPC terminal '
                              'controllers (0.0 = disabled). Adds '
@@ -863,8 +878,8 @@ def _add_shared_args(parser):
                              'cost. Recommended range: 0.001 - 0.05.')
     # Graduated stagnation-escape tuning (MPC+Terminal controllers)
     parser.add_argument('--exploration_factor', type=float, default=3.0,
-                        help='Multiplier for MPC eps_var when in EXPLORING '
-                             'mode (default 3.0)')
+                        help='Multiplier for goal_weight escalation when in '
+                             'EXPLORING mode (default 3.0)')
     parser.add_argument('--exploration_patience', type=int, default=1,
                         help='Number of stagnation windows (each ~5 s) in '
                              'EXPLORING mode before switching to BRAT '
