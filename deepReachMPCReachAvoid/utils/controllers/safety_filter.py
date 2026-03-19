@@ -1,5 +1,5 @@
 """
-Safety Filter for Docking6D Controllers
+Safety Filter for Docking6D / Docking13D Controllers
 
 Toggleable post-processing filter that overrides or modifies the nominal
 controller output to enforce collision avoidance using a separately trained
@@ -10,8 +10,7 @@ Modes:
     1 -- Least-restrictive.  Hard switch to avoid-optimal bang-bang control
          when V_avoid(x, tMax) <= delta.
     2 -- CBF-QP.  Solve min ||u - u_nom||^2  s.t. grad_V · f(x,u) + gamma*V >= 0
-         and box control bounds.  Replicates ComboControl.py filter_mode=2
-         for the full 6D system.
+         and box control bounds.  (6D only for now.)
 
 Usage:
     sf = SafetyFilter(mode=1, checkpoint_path='runs/Docking6D_RA_avoid', ...)
@@ -54,7 +53,8 @@ class SafetyFilter:
             tMax: Time horizon for V_avoid queries.  ``None`` = use the avoid
                 model's own ``orig_opt.tMax``.
             margin: Activation threshold delta for Mode 1 (meters, same units
-                as ``avoid_fn`` signed distance).
+                as ``avoid_fn`` signed distance).  Can be updated dynamically
+                via ``set_margin()``.
             gamma: CBF decay rate for Mode 2 (default 0.2, from ComboControl).
             device: Torch device string.
         """
@@ -67,6 +67,7 @@ class SafetyFilter:
             self.avoid_dynamics = None
             self.avoid_model = None
             self.avoid_tMax = None
+            self._is_13d = False
             self._log = []
             return
 
@@ -151,8 +152,10 @@ class SafetyFilter:
         self.avoid_model.eval()
 
         self.avoid_tMax = tMax if tMax is not None else orig_opt.tMax
+        self._is_13d = (self.avoid_dynamics.state_dim == 13)
 
         print(f"[SafetyFilter] mode={self.mode}  "
+              f"dynamics={self.avoid_dynamics.name}  "
               f"checkpoint={os.path.basename(ckpt_file)}  "
               f"tMax={self.avoid_tMax}  margin={self.margin}  "
               f"gamma={self.gamma}")
@@ -160,6 +163,10 @@ class SafetyFilter:
     # ------------------------------------------------------------------
     # Reset / log access
     # ------------------------------------------------------------------
+
+    def set_margin(self, margin):
+        """Update the activation margin dynamically (e.g. per control phase)."""
+        self.margin = margin
 
     def reset(self):
         """Clear per-simulation log.  Call from the host controller's reset()."""
@@ -248,13 +255,21 @@ class SafetyFilter:
     # Safety control
     # ------------------------------------------------------------------
 
-    def _compute_safety_control(self, dvds):
+    def _compute_safety_control(self, dvds, state=None):
         """Avoid-mode optimal bang-bang control from the value function gradient.
 
         Maximises V_avoid (pushes state away from the failure set).
         Sign convention is OPPOSITE of reach-avoid:
             u_i = +u_max * sign(dV/dv_i)
+
+        Dispatches to 6D or 13D allocation based on loaded dynamics.
         """
+        if self._is_13d:
+            return self._compute_safety_control_13d(dvds, state)
+        return self._compute_safety_control_6d(dvds)
+
+    def _compute_safety_control_6d(self, dvds):
+        """6D bang-bang: 3-element [Fx, Fy, τ]."""
         u_bar = self.avoid_dynamics.u_bar
         u_theta_bar = self.avoid_dynamics.u_theta_bar
 
@@ -263,6 +278,35 @@ class SafetyFilter:
         u_theta = u_theta_bar if dvds[5] > 0 else -u_theta_bar
 
         return np.array([u_x, u_y, u_theta])
+
+    def _compute_safety_control_13d(self, dvds, state):
+        """13D bang-bang: 6-element [Fx, Fy, Fz, τx, τy, τz].
+
+        Uses rotation-aware force allocation (same logic as
+        Docking13DControllerMixin._compute_brt_control_13d) but with
+        OPPOSITE sign convention — maximise V_avoid instead of minimise.
+        """
+        q = np.asarray(state[6:10], dtype=np.float64)
+        q_norm = np.linalg.norm(q)
+        if q_norm > 1e-12:
+            q = q / q_norm
+        R = self.avoid_dynamics._quat_to_R_np(q)
+
+        # Force: body coefficients = R @ p_v / mc
+        p_v = np.asarray(dvds[3:6], dtype=np.float64)
+        coeff_body = (R @ p_v) / self.avoid_dynamics.mc
+        # Maximise V_avoid → sign is +F_bar when coeff > 0
+        F = np.where(coeff_body > 0, self.avoid_dynamics.F_bar,
+                     -self.avoid_dynamics.F_bar)
+
+        # Torque: effective coefficients = I^{-T} @ p_omega
+        I_np = self.avoid_dynamics.I.detach().cpu().numpy()
+        p_omega = np.asarray(dvds[10:13], dtype=np.float64)
+        coeff_tau = np.linalg.solve(I_np.T, p_omega)
+        tau = np.where(coeff_tau > 0, self.avoid_dynamics.tau_bar,
+                       -self.avoid_dynamics.tau_bar)
+
+        return np.concatenate([F, tau])
 
     # ------------------------------------------------------------------
     # Mode dispatch
@@ -308,7 +352,7 @@ class SafetyFilter:
             return u_nominal
 
         dvds = self._get_avoid_gradient(state)
-        u_safety = self._compute_safety_control(dvds)
+        u_safety = self._compute_safety_control(dvds, state)
 
         self._log.append({
             'V_avoid': V,
@@ -376,11 +420,11 @@ class SafetyFilter:
         if prob.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
             u_filtered = np.asarray(u.value).flatten()
         else:
-            u_filtered = self._compute_safety_control(dvds)
+            u_filtered = self._compute_safety_control(dvds, state)
 
         cbf_margin = float(a @ u_filtered - rhs)
 
-        u_safety = self._compute_safety_control(dvds)
+        u_safety = self._compute_safety_control(dvds, state)
         denom = np.linalg.norm(u_safety - u_nominal)
         alpha_eff = (np.linalg.norm(u_filtered - u_nominal) / denom
                      if denom > 1e-8 else 0.0)

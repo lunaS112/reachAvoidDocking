@@ -1226,9 +1226,6 @@ class Experiment(ExperimentVizMixin, ABC):
         if fig is not None:
             plt.close(fig)
 
-        # self.validate_mpc_dataset_position_base_quat_scatter(
-        #     epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-        
         if self.dataset.dynamics.name != 'Docking13D':
             # Plot velocity slice (vx vs vy) of the learned value function
             if self.dataset.dynamics.state_dim >= 4:  # Need at least vx, vy dimensions
@@ -1251,11 +1248,6 @@ class Experiment(ExperimentVizMixin, ABC):
                         'val_plot_rotation': wandb.Image(fig_rotation),
                     })
                 plt.close()
-            
-            # Also visualize MPC training dataset for comparison
-            self.validate_mpc_dataset_position(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-            self.validate_mpc_dataset_velocity(epoch, x_resolution, y_resolution, z_resolution, time_resolution)
-            self.validate_mpc_dataset_rotation(epoch, x_resolution, y_resolution, time_resolution)
         
         # Compute MPC ground truth - controlled by frequency 
         # Set self.mpc_ground_truth_frequency = N to run every N validation calls

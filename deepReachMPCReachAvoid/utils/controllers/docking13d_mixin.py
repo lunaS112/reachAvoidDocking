@@ -49,10 +49,12 @@ class Docking13DControllerMixin:
         """Check if all 13D docking tolerances are met.
 
         Tolerances checked (matching reach_fn in dynamics):
-            - x,z within eps_p of post axis + y inside goal band
-            - 3D velocity L2 <= eps_v
-            - Quaternion angle error <= eps_q
-            - 3D angular velocity L2 <= eps_omega
+            - x,z lateral ≤ eps_p + y inside goal band
+            - lateral velocity (xz) ≤ eps_v_lateral
+            - axial velocity vy in [eps_v_axial_lo, eps_v_axial_hi]
+            - Quaternion angle error ≤ eps_q
+            - pitch/yaw rate (wy,wz) ≤ eps_omega_pitchyaw
+            - roll rate |wx| ≤ eps_omega_roll
         """
         pos = np.asarray(state[:3], dtype=np.float64)
         vel = np.asarray(state[3:6], dtype=np.float64)
@@ -63,20 +65,27 @@ class Docking13DControllerMixin:
         if q_norm > 1e-12:
             q = q / q_norm
 
-        # Position: xz distance from post axis + y inside goal band
         d = self.dynamics
+
+        # Position: xz distance from post axis + y inside goal band
         xz_ok = np.sqrt(pos[0]**2 + pos[2]**2) <= d.eps_p
         y_ok = (d.goal_y_min <= pos[1] <= d.goal_y_max)
         pos_ok = xz_ok and y_ok
-        vel_ok = np.linalg.norm(vel) <= d.eps_v
 
-        q_goal_np = self.dynamics.q_goal.detach().cpu().numpy()
+        # Velocity: lateral (xz) and axial (y) separately
+        vlat_ok = np.sqrt(vel[0]**2 + vel[2]**2) <= d.eps_v_lateral
+        vax_ok = (d.eps_v_axial_lo <= vel[1] <= d.eps_v_axial_hi)
+
+        # Attitude
+        q_goal_np = d.q_goal.detach().cpu().numpy()
         att_err = _quat_error_angle_np(q, q_goal_np)
-        att_ok = att_err <= self.dynamics.eps_q
+        att_ok = att_err <= d.eps_q
 
-        omg_ok = np.linalg.norm(omega) <= self.dynamics.eps_omega
+        # Angular rate: pitch/yaw (wy,wz) and roll (wx) separately
+        omg_py_ok = np.sqrt(omega[1]**2 + omega[2]**2) <= d.eps_omega_pitchyaw
+        omg_r_ok = abs(omega[0]) <= d.eps_omega_roll
 
-        return pos_ok and vel_ok and att_ok and omg_ok
+        return pos_ok and vlat_ok and vax_ok and att_ok and omg_py_ok and omg_r_ok
 
     def _check_collision_13d(self, state):
         """Orientation-aware 3D collision check (8-corner chaser box)."""

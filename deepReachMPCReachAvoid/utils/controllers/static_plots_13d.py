@@ -7,8 +7,8 @@ Three public functions, each producing one PNG:
       2×2 grid: 3D trajectory, XY projection, XZ projection, distance-to-dock.
 
   • ``plot_states_13d``       → ``simulation_states.png``
-      4×2 grid: position, velocity, quaternion, angular velocity,
-      distance, value function, phase, summary text.
+      5×2 grid: position, velocity, quaternion, angular velocity,
+      distance, value function, phase, summary text, BRAT time.
 
   • ``plot_controls_13d``     → ``simulation_controls.png``
       2×2 grid: forces, torques, cumulative effort, force/torque magnitude.
@@ -264,13 +264,14 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 # --------------------------------------------------------------------------- #
 
 def plot_states_13d(result, dynamics, save_path=None):
-    """Create a 4×2 state time-series figure.
+    """Create a 5×2 state time-series figure.
 
     Panels:
       (0,0) Position (x,y,z)        (0,1) Velocity (vx,vy,vz)
       (1,0) Quaternion (q0-q3)      (1,1) Angular velocity (ωx,ωy,ωz)
       (2,0) Distance to target      (2,1) Value function
       (3,0) Phase                   (3,1) Summary text
+      (4,0) BRAT time (t*)          (4,1) (empty)
 
     Returns ``matplotlib.figure.Figure``.
     """
@@ -284,53 +285,116 @@ def plot_states_13d(result, dynamics, save_path=None):
     d = dynamics
     q_goal = _q_goal_np(dynamics)
 
-    fig, axes = plt.subplots(4, 2, figsize=(16, 18))
+    fig, axes = plt.subplots(5, 2, figsize=(16, 22))
 
     # ---- (0,0) Position ---------------------------------------------- #
     ax = axes[0, 0]
-    for i, (lbl, c) in enumerate(zip(['x', 'y', 'z'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    pos_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    for i, (lbl, c) in enumerate(zip(['x', 'y', 'z'], pos_colors)):
         ax.plot(times, traj[:, i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: x and z centered at 0 ± eps_p, y is [goal_y_min, goal_y_max]
+    ax.fill_between(times, -d.eps_p, d.eps_p,
+                    color='tab:blue', alpha=0.10, label=f'x,z goal ±{d.eps_p}m')
+    ax.fill_between(times, -d.eps_p, d.eps_p,
+                    color='tab:green', alpha=0.07)
+    ax.fill_between(times, d.goal_y_min, d.goal_y_max,
+                    color='tab:orange', alpha=0.12,
+                    label=f'y goal [{d.goal_y_min:.2f}, {d.goal_y_max:.2f}]')
+    # Green highlight where all position states are simultaneously in-tolerance
+    pos_in_tol = (
+        (np.abs(traj[:, 0]) <= d.eps_p) &
+        (np.abs(traj[:, 2]) <= d.eps_p) &
+        (traj[:, 1] >= d.goal_y_min) & (traj[:, 1] <= d.goal_y_max)
+    )
     ax.set_title('Position (m)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=pos_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (0,1) Velocity ---------------------------------------------- #
     ax = axes[0, 1]
-    for i, (lbl, c) in enumerate(zip(['vx', 'vy', 'vz'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    vel_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    for i, (lbl, c) in enumerate(zip(['vx', 'vy', 'vz'], vel_colors)):
         ax.plot(times, traj[:, 3 + i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: vx,vz at 0 ± eps_v_lateral; vy uses positive axial band
+    ax.fill_between(times, -d.eps_v_lateral, d.eps_v_lateral,
+                    color='tab:blue', alpha=0.10,
+                    label=f'vx,vz goal ±{d.eps_v_lateral}')
+    ax.fill_between(times, -d.eps_v_lateral, d.eps_v_lateral,
+                    color='tab:green', alpha=0.07)
+    ax.fill_between(times, d.eps_v_axial_lo, d.eps_v_axial_hi,
+                    color='tab:orange', alpha=0.12,
+                    label=f'vy goal [{d.eps_v_axial_lo}, {d.eps_v_axial_hi}]')
+    # Green highlight where all velocity states are simultaneously in-tolerance
+    vel_in_tol = (
+        (np.abs(traj[:, 3]) <= d.eps_v_lateral) &
+        (np.abs(traj[:, 5]) <= d.eps_v_lateral) &
+        (traj[:, 4] >= d.eps_v_axial_lo) & (traj[:, 4] <= d.eps_v_axial_hi)
+    )
     ax.set_title('Velocity (m/s)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=vel_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (1,0) Quaternion -------------------------------------------- #
     ax = axes[1, 0]
-    q_labels = ['q₀', 'q₁', 'q₂', 'q₃']
+    q_labels = ['q\u2080', 'q\u2081', 'q\u2082', 'q\u2083']
     q_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
     for i in range(4):
         ax.plot(times, traj[:, 6 + i], color=q_colors[i], lw=1.5,
                 label=q_labels[i])
-        ax.axhline(q_goal[i], color=q_colors[i], ls=':', lw=0.8, alpha=0.5)
-    ax.set_title('Quaternion')
+        ax.fill_between(times, q_goal[i] - d.eps_q, q_goal[i] + d.eps_q,
+                        color=q_colors[i], alpha=0.08)
+    # Green highlight where all quaternion components are simultaneously in-tolerance
+    quat_in_tol = np.ones(len(times), dtype=bool)
+    for i in range(4):
+        quat_in_tol &= (np.abs(traj[:, 6 + i] - q_goal[i]) <= d.eps_q)
+    ax.set_title(f'Quaternion (bands = q_goal ±{d.eps_q:.3f} rad)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=quat_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
     ax.legend(fontsize=8, ncol=2)
 
     # ---- (1,1) Angular velocity -------------------------------------- #
     ax = axes[1, 1]
-    for i, (lbl, c) in enumerate(zip(['ωx', 'ωy', 'ωz'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    omega_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    omega_labels = ['\u03c9x', '\u03c9y', '\u03c9z']
+    for i, (lbl, c) in enumerate(zip(omega_labels, omega_colors)):
         ax.plot(times, traj[:, 10 + i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: wx (roll) at 0 ± eps_omega_roll; wy,wz at 0 ± eps_omega_pitchyaw
+    ax.fill_between(times, -d.eps_omega_roll, d.eps_omega_roll,
+                    color='tab:blue', alpha=0.10,
+                    label=f'\u03c9x goal ±{d.eps_omega_roll:.4f}')
+    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
+                    color='tab:orange', alpha=0.10,
+                    label=f'\u03c9y,\u03c9z goal ±{d.eps_omega_pitchyaw:.4f}')
+    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
+                    color='tab:green', alpha=0.07)
+    # Green highlight where all angular velocity states are simultaneously in-tolerance
+    omg_in_tol = (
+        (np.abs(traj[:, 10]) <= d.eps_omega_roll) &
+        (np.abs(traj[:, 11]) <= d.eps_omega_pitchyaw) &
+        (np.abs(traj[:, 12]) <= d.eps_omega_pitchyaw)
+    )
     ax.set_title('Angular velocity (rad/s)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=omg_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (2,0) Distance ---------------------------------------------- #
     ax = axes[2, 0]
@@ -395,6 +459,64 @@ def plot_states_13d(result, dynamics, save_path=None):
             fontsize=11, verticalalignment='top', family='monospace',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     ax.set_title('Summary')
+
+    # ---- (4,0) BRAT time t* ----------------------------------------- #
+    ax = axes[4, 0]
+    t_rem = result.get('t_remaining')
+    phases_arr = np.asarray(result['phases']) if 'phases' in result else None
+
+    if t_rem is not None and phases_arr is not None:
+        t_rem = np.asarray(t_rem, dtype=np.float64)
+        n = min(len(times), len(t_rem), len(phases_arr))
+        t_plot = times[:n]
+        t_rem_plot = t_rem[:n]
+        ph_plot = phases_arr[:n]
+
+        # Background shading for Phase 1 (grey) vs Phase 2 (white)
+        phase1_mask = ph_plot == 1
+        if np.any(phase1_mask):
+            ax.fill_between(t_plot, 0, t_rem_plot.max() * 1.1,
+                            where=phase1_mask, color='gray', alpha=0.15,
+                            label='Phase 1', step='post')
+
+        # Plot t* line only during Phase 2 (mask Phase 1 as NaN)
+        t_star_line = t_rem_plot.copy()
+        t_star_line[phase1_mask] = np.nan
+        ax.plot(t_plot, t_star_line, 'b-', lw=1.5, label='t* (strict)')
+
+        # Overlay status markers from brt_time_adjustments (non-strict events)
+        adjustments = result.get('brt_time_adjustments', [])
+        argmin_times_list = []
+        argmin_tstar_list = []
+        hold_times_list = []
+        hold_tstar_list = []
+        for adj in adjustments:
+            st = adj.get('status', '')
+            if st == 'argmin':
+                argmin_times_list.append(adj['sim_time'])
+                argmin_tstar_list.append(adj['t_star'])
+            elif st == 'hold':
+                hold_times_list.append(adj['sim_time'])
+                hold_tstar_list.append(adj['t_star'])
+        if argmin_times_list:
+            ax.scatter(argmin_times_list, argmin_tstar_list,
+                       c='red', s=20, zorder=5, label='argmin')
+        if hold_times_list:
+            ax.scatter(hold_times_list, hold_tstar_list,
+                       c='goldenrod', s=20, zorder=5, label='hold')
+
+        ax.set_ylabel('t* (s)')
+        ax.legend(fontsize=7)
+    else:
+        ax.text(0.5, 0.5, 'No t_remaining data',
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=12, color='gray')
+    ax.set_title('BRAT Time Horizon t*')
+    ax.set_xlabel('Time (s)')
+    ax.grid(True, alpha=0.3)
+
+    # ---- (4,1) empty ------------------------------------------------- #
+    axes[4, 1].axis('off')
 
     plt.tight_layout()
 

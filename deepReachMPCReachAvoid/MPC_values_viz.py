@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # Required parameters
     T = 3
-    dt = 0.1
+    dt = 0.5
     style = "receding" # Can be "direct" or "receding"
     cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
     mpc_percentage = 0.8  # Used only if cost_type is "mixed"
