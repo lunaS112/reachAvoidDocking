@@ -177,6 +177,18 @@ class Dynamics(ABC):
 
     def clamp_verification_state(self, state):
         return state
+
+    def differentiable_step(self, state, control, dt):
+        """One Euler step with autograd-safe wrapping.
+
+        Default: dsdt() + Euler + equivalent_wrapped_state().
+        Override in subclasses where equivalent_wrapped_state() uses
+        non-differentiable ops (e.g., modulo for angle wrapping).
+        """
+        deriv = self.dsdt(state, control, None)
+        next_state = state + deriv * dt
+        return self.equivalent_wrapped_state(next_state)
+
     # ALL FOLLOWING METHODS USE REAL UNITS
 
     @abstractmethod
@@ -580,8 +592,8 @@ class Docking6D(Dynamics):
         self.post_length = 0.2  # how far post extends in -y (m) = 0.2*h_c
 
         # Goal region below inflated post tip (recomputed for 2D buffer)
-        goal_clearance = -0.007
-        goal_band_height = 0.5
+        goal_clearance = 0.143
+        goal_band_height = 0.2
         self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.0
         self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.4
         self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.2
@@ -688,6 +700,20 @@ class Docking6D(Dynamics):
                                             self.state_range_[5, 1].item())  # omega
         return wrapped_state
 
+    def differentiable_step(self, state, control, dt):
+        """Autograd-safe Euler step. Reuses dsdt() for CW dynamics;
+        replaces modulo theta wrapping with atan2."""
+        deriv = self.dsdt(state, control, None)
+        ns = state + deriv * dt
+        return torch.stack([
+            ns[..., 0],
+            ns[..., 1],
+            torch.clamp(ns[..., 2], self._vx_lo, self._vx_hi),
+            torch.clamp(ns[..., 3], self._vy_lo, self._vy_hi),
+            torch.atan2(torch.sin(ns[..., 4]), torch.cos(ns[..., 4])),
+            torch.clamp(ns[..., 5], self._omega_lo, self._omega_hi),
+        ], dim=-1)
+
     def periodic_transform_fn(self, input):
         output_shape = list(input.shape)
         output_shape[-1] = output_shape[-1] + 1  # Add one more dimension for cos(theta)
@@ -714,8 +740,15 @@ class Docking6D(Dynamics):
     # \dot \omega = u_theta/jc
 
     def _update_v_max(self):
-        """Derive v_max from the velocity bounds in state_range_ (indices 2, 3)."""
-        self.v_max = float(self.state_range_[2:4, 1].max().item())
+        """Cache velocity/omega bounds as Python scalars for fast access."""
+        sr = self.state_range_
+        self.v_max = float(sr[2:4, 1].max().item())
+        self._vx_lo = float(sr[2, 0].item())
+        self._vx_hi = float(sr[2, 1].item())
+        self._vy_lo = float(sr[3, 0].item())
+        self._vy_hi = float(sr[3, 1].item())
+        self._omega_lo = float(sr[5, 0].item())
+        self._omega_hi = float(sr[5, 1].item())
 
     def dsdt(self, state, control, disturbance):
         dsdt = torch.zeros_like(state)

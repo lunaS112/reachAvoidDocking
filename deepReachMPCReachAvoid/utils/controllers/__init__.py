@@ -29,6 +29,12 @@ from utils.controllers.brat_controller import BRATController
 from utils.controllers.mpc_controller import MPCController
 from utils.controllers.mpc_terminal_controller import MPCTerminalController
 
+# Grid-based HJ controller (requires jax, hj_reachability, cvxpy)
+try:
+    from utils.controllers.grid_based_controller import GridBasedController
+except ImportError:
+    GridBasedController = None
+
 # 13D controllers
 from utils.controllers.brt_controller_13d import BRTController13D
 from utils.controllers.mpc_controller_13d import MPCController13D

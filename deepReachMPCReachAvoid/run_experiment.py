@@ -149,8 +149,20 @@ if (mode == 'all') or (mode == 'train'):
                    help='MPC dt during refinement (default: use same --MPC_dt as curriculum)')
     p.add_argument('--refinement_lr', type=float, default=None,
                    help='Learning rate during refinement (default: keep curriculum LR)')
-    
-    
+
+    # Gradient-based MPC refinement
+    p.add_argument('--use_gradient_refinement', default=False, action='store_true',
+                   help='Use gradient-based MPC for label generation during refinement stage')
+    p.add_argument('--gradient_refinement_batch_size', type=int, default=256,
+                   help='States optimized simultaneously per GPU chunk (controls peak memory)')
+    p.add_argument('--gradient_refinement_iters', type=int, default=15,
+                   help='Adam iterations for gradient MPC label refinement')
+    p.add_argument('--gradient_refinement_lr', type=float, default=1.0,
+                   help='Adam learning rate for gradient MPC label refinement')
+    p.add_argument('--gradient_refinement_num_batches', type=int, default=None,
+                   help='Number of IC batches for gradient MPC refinement (default: use --num_MPC_batches)')
+
+
     '''parameters that you probably don't need to pay attention'''
     # simulation data source options
     p.add_argument('--tMin', type=float, default=0.0,
@@ -405,6 +417,13 @@ experiment.mpc_ground_truth_frequency = orig_opt.mpc_ground_truth_frequency
 # Set refinement parameters
 experiment.mpc_penalty_max = orig_opt.refinement_penalty_max
 experiment.refinement_lr = orig_opt.refinement_lr
+
+# Set gradient refinement parameters
+experiment.use_gradient_refinement = orig_opt.use_gradient_refinement
+experiment.gradient_refinement_batch_size = orig_opt.gradient_refinement_batch_size
+experiment.gradient_refinement_iters = orig_opt.gradient_refinement_iters
+experiment.gradient_refinement_lr = orig_opt.gradient_refinement_lr
+experiment.gradient_refinement_num_batches = orig_opt.gradient_refinement_num_batches
 
 if (mode == 'all') or (mode == 'train'):
     if dynamics.loss_type == 'brt_hjivi':

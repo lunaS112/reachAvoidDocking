@@ -5,10 +5,10 @@ source "${SCRIPT_DIR}/../.venv/bin/activate"
 
 # RUN IN TERMINAL FIRST
 
-CKPT="runs/Docking6D_RA_10sec_FixedScaling/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
 CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
-########################### Single controller runs ###########################
+#################### Gradient MPC Baseline (analytical cost only) ############
 
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_margin 0.05 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
@@ -49,30 +49,71 @@ python run_controller.py single --controller cascaded_mpc_terminal \
 ########################### 6D Geometry BRAT run #############################
 
 python run_controller.py single --controller brat \
-  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 90.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --gradient_fallback --grad_threshold 0.01 --avoid_proximity_margin 1.0 --skip_frames 10\
-  --initial_state -2.09787499 -3.60878275 -0.19819089 0.35746812 1.11985678 0.02817976 \
- --output_dir ./outputs/Collision_BRAT_SF_1
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
+  --initial_state  4.538664617848674 7.794189959332044 -0.6292057093074211 -0.40244653427131194 -1.837042145950629 0.4173335630816306 \
+  --skip_frames 10 \
+  --output_dir ./outputs/BRAT_collision_test
 
-#################### Control effort penalty (fuel minimization) ##############
+# Shorter horizon, faster per-step (less accurate but quicker)
+python run_controller.py single --controller mpc \
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
+  --planning_horizon 2.0 --mpc_dt 0.5 \
+  --gradient_iters 25 --num_restarts 4 --gradient_lr 1.0 --goal_weight 0.01 \
+  --skip_frames 10 \
+  --output_dir ./outputs/MPC_gradient_short_horizon_Test
 
-# MPC+Terminal with light effort penalty (safety-first, slight fuel savings)
+#################### Gradient MPC + Terminal Cost ############################
+
+# Single run: gradient MPC + learned terminal cost
 python run_controller.py single --controller mpc_terminal \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --num_samples 100 --num_refinement 10 \
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --effective_horizon 1.0 \
+  --gradient_iters 50 --num_restarts 8 --gradient_lr 1.0 \
+  --skip_frames 10 \
+  --output_dir ./outputs/MPC_terminal_gradient
+
+# MPC+Terminal with light effort penalty (fuel savings)
+python run_controller.py single --controller mpc_terminal \
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --effective_horizon 1.0 \
+  --gradient_iters 50 --num_restarts 8 --gradient_lr 1.0 \
   --effort_weight 0.005 \
-  --output_dir ./outputs/single_mpc_terminal_effort_light
+  --skip_frames 10 \
+  --output_dir ./outputs/MPC_terminal_gradient_effort_light
 
 # MPC+Terminal with moderate effort penalty
 python run_controller.py single --controller mpc_terminal \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --num_samples 100 --num_refinement 10 \
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --effective_horizon 1.0 \
+  --gradient_iters 50 --num_restarts 8 --gradient_lr 1.0 \
   --effort_weight 0.05 \
-  --output_dir ./outputs/single_mpc_terminal_effort_moderate
+  --skip_frames 10 \
+  --output_dir ./outputs/MPC_terminal_gradient_effort_moderate
+
+# MPC+Terminal with safety filter
+python run_controller.py single --controller mpc_terminal \
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --effective_horizon 1.0 --effort_weight 0.05 --planning_horizon 2.0 --mpc_dt 0.5\
+  --gradient_iters 10 --num_restarts 3 --gradient_lr 1.0 \
+  --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
+  --skip_frames 10 \
+  --output_dir ./outputs/MPC_terminal_gradient_SF_fast
 
 ########################### Comparison runs ##################################
 
-# UNIFORM IC
+# Quick 4-way comparison: BRAT vs MPC baseline vs MPC+Terminal vs Grid-Based
+python run_controller.py compare --controllers brat grid_based mpc mpc_terminal\
+  --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
+  --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
+  --mpc_gradient_iters 30 --mpc_num_restarts 4 --gradient_lr 1.0 --goal_weight 0.01 \
+  --mpc_terminal_gradient_iters 10 --mpc_terminal_num_restarts 1 \
+  --planning_horizon 2.0 --mpc_dt 0.5 --effective_horizon 1.0 \
+  --n_rollouts 100 --seed 17 --sampling_method uniform \
+  --output_dir ./outputs/4_way_comparison_100_uniform_IC_SF-1_HighSamp
+
+# Large-scale BRAT-only baseline (uniform IC)
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
   --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
@@ -90,6 +131,6 @@ python run_controller.py compare --controllers brat \
   --sampling_method uniform --output_dir ./outputs/BRAT_10000_uniform_IC_SF-1_FixedScaling
 # 6D Geometry: BRAT IC
 python run_controller.py compare --controllers brat \
-  --checkpoint_path $CKPT --safety_filter_mode 0 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 10000 --tMax 10 --max_sim_time 60.0 --gradient_fallback --grad_threshold 0.01\
+  --checkpoint_path $CKPT --safety_filter_mode 0 --safety_checkpoint_path $CKPT_AVOID \
+  --n_rollouts 10000 --tMax 10 --max_sim_time 60.0 --gradient_fallback --grad_threshold 0.01 \
   --sampling_method brat --output_dir ./outputs/BRAT_10000_brat_IC_SF-0_FixedScaling
