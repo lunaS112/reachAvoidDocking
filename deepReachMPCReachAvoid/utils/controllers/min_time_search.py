@@ -20,8 +20,10 @@ is provided (Phase 2):
 When t_remaining is not provided, the full grid is evaluated for a global
 strict search followed by argmin fallback.
 
-find_min_brat_time_batch always evaluates the full grid (used for MPC
-terminal-cost queries where no per-sample t_remaining is available).
+find_min_brat_time_batch supports the same formulation: when per-state
+t_remaining values are provided, each state uses the windowed strict
+search (±0.1 s then ±0.2 s) before falling back to argmin.  Without
+t_remaining, it evaluates the full grid with a global strict search.
 """
 
 import numpy as np
@@ -246,12 +248,22 @@ def find_min_brat_time_single(value_fn, tMax, resolution=0.1,
 
 
 def find_min_brat_time_batch(value_fn_batch, n_states, tMax,
-                              resolution=0.1, return_details=False):
+                              resolution=0.1, return_details=False,
+                              t_remaining=None):
     """
     Find per-state minimum BRAT times for a batch of N states.
 
     This is used by MPC+Terminal to assign each MPC sample its own t* so the
     terminal cost V(x_terminal, t*) is evaluated at the tightest time horizon.
+
+    When *t_remaining* is provided (a per-state array), each state uses the
+    same windowed strict search as find_min_brat_time_single:
+      1. Window ±0.1 s around t_remaining[i]: return first t with V <= 0.
+      2. Window ±0.2 s around t_remaining[i]: return first t with V <= 0.
+      3. Argmin fallback over the full grid.
+
+    When *t_remaining* is not provided, each state uses a global strict
+    search followed by argmin fallback (original behaviour).
 
     Args:
         value_fn_batch: Callable(states_indices, times) -> values.
@@ -263,6 +275,10 @@ def find_min_brat_time_batch(value_fn_batch, n_states, tMax,
         n_states: Total number of states in the batch.
         tMax: Upper bound of the time search grid.
         resolution: Spacing between time grid points (seconds).
+        t_remaining: Optional (N,) array of per-state t_remaining values.
+                     When provided, a windowed strict search is performed
+                     per state (±0.1 s then ±0.2 s around t_remaining[i])
+                     before falling back to argmin over the full grid.
 
     Returns:
         (t_stars, statuses): t_stars is a (N,) numpy float array of per-state
@@ -278,29 +294,85 @@ def find_min_brat_time_batch(value_fn_batch, n_states, tMax,
             return (t_stars, statuses, {'times': [], 'values': None})
         return (t_stars, statuses)
 
-    # values: (N, T)
     all_indices = np.arange(n_states)
-    values = value_fn_batch(all_indices, times)  # (N, T)
-
     t_stars = np.full(n_states, tMax)
     statuses = np.full(n_states, STATUS_ARGMIN, dtype=object)
 
-    # 1. Strict: per-state min t where V <= 0
-    strict_mask = values <= 0  # (N, T)
-    for i in range(n_states):
-        row = strict_mask[i]
-        if np.any(row):
-            t_stars[i] = times[np.argmax(row)]  # first True index
-            statuses[i] = STATUS_STRICT
-            continue
+    if t_remaining is not None:
+        # --- Lazy evaluation: window first, full grid only if needed ---
+        t_rem = np.asarray(t_remaining, dtype=float)
 
-        # 2. Argmin fallback
-        t_stars[i] = times[np.argmin(values[i])]
-        statuses[i] = STATUS_ARGMIN
+        # Build the union ±0.2 s window across all states (single eval call)
+        win_lo = np.min(t_rem) - 0.2 - 1e-9
+        win_hi = np.max(t_rem) + 0.2 + 1e-9
+        win_mask = (times >= win_lo) & (times <= win_hi)
+        win_indices = np.flatnonzero(win_mask)
+        win_times = times[win_indices]
 
-    if return_details:
-        return (t_stars, statuses, {
-            'times': times.tolist(),
-            'values': values,
-        })
-    return (t_stars, statuses)
+        # Phase 1: evaluate only window times for all states
+        win_values = value_fn_batch(all_indices, win_times)  # (N, len(win_times))
+
+        needs_argmin = []
+        for i in range(n_states):
+            row = win_values[i]
+            t_rem_i = t_rem[i]
+
+            # Window 1: ±0.1 s (inner, tighter)
+            w1 = (win_times >= t_rem_i - 0.1 - 1e-9) & \
+                 (win_times <= t_rem_i + 0.1 + 1e-9)
+            w1_valid = w1 & (row <= 0)
+            if np.any(w1_valid):
+                t_stars[i] = win_times[w1_valid][0]
+                statuses[i] = STATUS_STRICT
+                continue
+
+            # Window 2: ±0.2 s (outer, already evaluated)
+            w2 = (win_times >= t_rem_i - 0.2 - 1e-9) & \
+                 (win_times <= t_rem_i + 0.2 + 1e-9)
+            w2_valid = w2 & (row <= 0)
+            if np.any(w2_valid):
+                t_stars[i] = win_times[w2_valid][0]
+                statuses[i] = STATUS_STRICT
+                continue
+
+            needs_argmin.append(i)
+
+        # Phase 2: full grid only for states that need argmin fallback
+        if needs_argmin:
+            argmin_indices = np.array(needs_argmin)
+            full_values = value_fn_batch(argmin_indices, times)  # (len(needs_argmin), T)
+            for j, i in enumerate(needs_argmin):
+                t_stars[i] = times[np.argmin(full_values[j])]
+                statuses[i] = STATUS_ARGMIN
+
+        if return_details:
+            return (t_stars, statuses, {
+                'times': times.tolist(),
+                'win_times': win_times.tolist(),
+                'win_values': win_values,
+                'n_argmin_fallback': len(needs_argmin),
+            })
+        return (t_stars, statuses)
+
+    else:
+        # No t_remaining: global strict search (original behaviour)
+        values = value_fn_batch(all_indices, times)  # (N, T)
+
+        for i in range(n_states):
+            row_values = values[i]
+            strict_mask = row_values <= 0
+            if np.any(strict_mask):
+                t_stars[i] = times[strict_mask][0]
+                statuses[i] = STATUS_STRICT
+                continue
+
+            # Argmin fallback
+            t_stars[i] = times[np.argmin(row_values)]
+            statuses[i] = STATUS_ARGMIN
+
+        if return_details:
+            return (t_stars, statuses, {
+                'times': times.tolist(),
+                'values': values,
+            })
+        return (t_stars, statuses)

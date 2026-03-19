@@ -25,12 +25,14 @@ CONTROLLER_COLORS = {
     'brat': '#1f77b4',           # blue
     'mpc': '#ff7f0e',            # orange
     'mpc_terminal': '#2ca02c',   # green
+    'grid_based': '#d62728',     # red
 }
 
 CONTROLLER_LABELS = {
     'brat': 'BRAT',
     'mpc': 'MPC',
     'mpc_terminal': 'MPC+Terminal',
+    'grid_based': 'Grid-Based HJ',
 }
 
 

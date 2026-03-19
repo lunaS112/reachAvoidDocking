@@ -1377,9 +1377,24 @@ class Experiment(ExperimentVizMixin, ABC):
             for g in self.optim.param_groups:
                 g['lr'] = self.refinement_lr
             tqdm.write(f"  Refinement LR: {self.refinement_lr}")
-        self.dataset.generate_MPC_dataset(
-            self.dataset.tMax, 0.0, style="refinement"
-        )
+
+        if getattr(self, 'use_gradient_refinement', False):
+            num_batches = getattr(self, 'gradient_refinement_num_batches', None)
+            tqdm.write("  Using gradient-based MPC for refinement labels"
+                       + (f" ({num_batches} batches)" if num_batches else ""))
+            self.dataset.generate_gradient_MPC_dataset(
+                model=self.model,
+                device='cuda',
+                gradient_batch_size=getattr(self, 'gradient_refinement_batch_size', 256),
+                num_iters=getattr(self, 'gradient_refinement_iters', 15),
+                lr=getattr(self, 'gradient_refinement_lr', 1.0),
+                num_batches=num_batches,
+            )
+        else:
+            self.dataset.generate_MPC_dataset(
+                self.dataset.tMax, 0.0, style="refinement"
+            )
+
         self.dataset.mpc_time_sorted_indices = torch.argsort(self.dataset.MPC_inputs[:, 0])
 
     def dataset_refinement(self, time_interval_length, epoch):

@@ -245,6 +245,58 @@ class ReachabilityDataset(Dataset):
         gc.collect()
         torch.cuda.empty_cache()
 
+    def generate_gradient_MPC_dataset(self, model, device='cuda',
+                                       gradient_batch_size=256,
+                                       num_iters=15, lr=1.0,
+                                       num_batches=None):
+        """Generate MPC labels using gradient-based optimization.
+
+        Replaces sampling-based labels during refinement. Output format
+        is identical to generate_MPC_dataset().
+
+        Args:
+            model:                SingleBVPNet (current learned model).
+            device:               torch device.
+            gradient_batch_size:  States per GPU chunk (controls peak memory).
+            num_iters:            Adam iterations for gradient MPC.
+            lr:                   Adam learning rate.
+            num_batches:          IC batches for gradient refinement.
+                                  None falls back to self.num_MPC_batches.
+        """
+        from utils.gradient_mpc import generate_gradient_mpc_dataset
+
+        print("Generating gradient-based MPC dataset")
+        MPC_inputs, MPC_values = generate_gradient_mpc_dataset(
+            model=model,
+            dynamics=self.dynamics,
+            dataset=self,
+            device=device,
+            gradient_batch_size=gradient_batch_size,
+            num_iters=num_iters,
+            lr=lr,
+            num_batches=num_batches,
+        )
+
+        # Save to disk in same format as generate_MPC_dataset
+        if not os.path.exists("./data"):
+            os.makedirs("./data")
+        device_id = os.environ.get("CUDA_VISIBLE_DEVICES")
+        np.save("./data/MPC_inputs_gpu%s.npy" % device_id,
+                MPC_inputs.numpy(), allow_pickle=False)
+        np.save("./data/MPC_values_gpu%s.npy" % device_id,
+                MPC_values.numpy(), allow_pickle=False)
+        MPC_inputs_mmap = np.load(
+            "./data/MPC_inputs_gpu%s.npy" % device_id, mmap_mode="r")
+        MPC_values_mmap = np.load(
+            "./data/MPC_values_gpu%s.npy" % device_id, mmap_mode="r")
+        self.MPC_inputs = torch.from_numpy(MPC_inputs_mmap.copy()).detach()
+        self.MPC_values = torch.from_numpy(MPC_values_mmap.copy()).detach()
+
+        print("Generated %d gradient-MPC labels" % self.MPC_inputs.shape[0])
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def __getitem__(self, idx):
         # uniformly sample domain and include coordinates where source is non-zero
         model_states_normed = torch.empty((0, self.dynamics.state_dim))
