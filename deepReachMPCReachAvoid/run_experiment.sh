@@ -61,13 +61,15 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
  --use_wandb --wandb_project Docking6D_15sec --wandb_name Docking6D_15_exact_MedData --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
-# Post-curriculum refinement with false-positive penalty 
-python3 run_experiment.py --mode train --experiment_name Docking6D_RA_10sec_HighSamp --dynamics_class Docking6D --tMax 10 --pretrain --num_target_samples 10000 \
- --pretrain_iters 1000 --num_epochs 175000 --pause_epochs 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
+# Post-curriculum refinement with gradient-based MPC labels
+CUDA_VISIBLE_DEVICES=1 python3 run_experiment.py --mode train \
+ --experiment_name Docking6D_RA_10sec_GradRefine --dynamics_class Docking6D --tMax 10 --pretrain --set_mode reach_avoid \
+ --pretrain_iters 1000 --num_epochs 200000 --pause_epochs 2000 --num_target_samples 10000 --counter_end 100000 --num_nl 512 --lr 2e-5 \
  --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 150 --num_MPC_data_samples 20000 --numpoints 75000 --mpc_ground_truth_frequency 0 \
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
- --refinement_penalty_max 0.01 --epoch_till_refinement 10000 --refinement_dt 0.1 --refinement_lr 1e-6 \
- --use_wandb --wandb_project Docking6D_final --wandb_name Docking6D_10sec_HighSamp --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+ --refinement_penalty_max 0.0 --epoch_till_refinement 10000 --refinement_dt 0.1 --refinement_lr 1e-6 \
+ --use_gradient_refinement --gradient_refinement_num_batches 100 --gradient_refinement_batch_size 1024 --gradient_refinement_iters 25 \
+ --use_wandb --wandb_project Docking6D_final --wandb_name Docking6D_10sec_GradRefine --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
 # Inner BRT with tolerances and state range for precision docking
 python3 run_experiment.py --mode train --experiment_name Docking6D_Inner_3sec --dynamics_class Docking6D --tMax 3 \

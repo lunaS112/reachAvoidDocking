@@ -27,7 +27,7 @@ class DifferentiableValueFunction:
         """
         Args:
             model:    SingleBVPNet instance (weights will be frozen).
-            dynamics: Docking6D instance.
+            dynamics: Dynamics instance (currently Docking6D-specific layout).
             device:   torch device.
         """
         self.net = model.net  # FCBlock (SIREN backbone)
@@ -116,7 +116,7 @@ class GradientMPC:
         Args:
             dt:           Planning timestep in seconds.
             horizon:      Number of planning steps.
-            dynamics:     Docking6D instance.
+            dynamics:     Dynamics instance.
             device:       torch device.
             num_iters:    Adam iterations per MPC step.
             lr:           Adam learning rate.
@@ -129,79 +129,24 @@ class GradientMPC:
         self.lr = lr
         self.num_restarts = num_restarts
 
-        # Cache dynamics constants on device
-        self.n = float(dynamics.n)
-        self.mc = float(dynamics.mc)
-        self.jc = float(dynamics.jc)
+        self.dynamics = dynamics
 
-        # Velocity limit (for acceleration zeroing)
-        sr = dynamics.state_range_.float().to(device)
-        self.v_max = float(sr[2:4, 1].max().item())
-        self.vx_lo = float(sr[2, 0].item())
-        self.vx_hi = float(sr[2, 1].item())
-        self.vy_lo = float(sr[3, 0].item())
-        self.vy_hi = float(sr[3, 1].item())
-        self.omega_lo = float(sr[5, 0].item())
-        self.omega_hi = float(sr[5, 1].item())
-
-        # Control bounds as device tensors for broadcasting
         cr = dynamics.control_range_.float().to(device)
-        self.u_lo = cr[:, 0]  # (3,)
-        self.u_hi = cr[:, 1]  # (3,)
+        self.u_lo = cr[:, 0]  # (control_dim,)
+        self.u_hi = cr[:, 1]  # (control_dim,)
 
     def _differentiable_step(self, state, control):
-        """One Euler step using functional ops only (autograd-safe).
-
-        Args:
-            state:   (..., 6) tensor [px, py, vx, vy, theta, omega].
-            control: (..., 3) tensor [ux, uy, u_theta].
-        Returns:
-            (..., 6) next state tensor.
-        """
-        px, py, vx, vy, theta, omega = state.unbind(-1)
-        ux, uy, u_th = control.unbind(-1)
-
-        # CW dynamics
-        dpx = vx
-        dpy = vy
-        dvx = 3 * self.n**2 * px + 2 * self.n * vy + ux / self.mc
-        dvy = -2 * self.n * vx + uy / self.mc
-        dtheta = omega
-        domega = u_th / self.jc
-
-        # Velocity-limit acceleration zeroing (matches dsdt lines 731-739)
-        z = torch.zeros_like(dvx)
-        dvx = torch.where((vx >= self.v_max) & (dvx > 0), z, dvx)
-        dvx = torch.where((vx <= -self.v_max) & (dvx < 0), z, dvx)
-        dvy = torch.where((vy >= self.v_max) & (dvy > 0), z, dvy)
-        dvy = torch.where((vy <= -self.v_max) & (dvy < 0), z, dvy)
-
-        # Euler integration
-        next_px = px + dpx * self.dt
-        next_py = py + dpy * self.dt
-        next_vx = vx + dvx * self.dt
-        next_vy = vy + dvy * self.dt
-        next_theta = theta + dtheta * self.dt
-        next_omega = omega + domega * self.dt
-
-        # State wrapping (matches equivalent_wrapped_state lines 674-689)
-        next_theta = torch.atan2(torch.sin(next_theta), torch.cos(next_theta))
-        next_vx = torch.clamp(next_vx, self.vx_lo, self.vx_hi)
-        next_vy = torch.clamp(next_vy, self.vy_lo, self.vy_hi)
-        next_omega = torch.clamp(next_omega, self.omega_lo, self.omega_hi)
-
-        return torch.stack(
-            [next_px, next_py, next_vx, next_vy, next_theta, next_omega],
-            dim=-1)
+        """One Euler step — delegates to dynamics.differentiable_step()."""
+        return self.dynamics.differentiable_step(state, control, self.dt)
 
     def _differentiable_rollout(self, initial_state, controls):
         """Roll out a trajectory through differentiable dynamics.
 
         Args:
-            initial_state: (K, 6) tensor.
-            controls:      (K, H, 3) tensor.
+            initial_state: (K, state_dim) tensor.
+            controls:      (K, H, control_dim) tensor.
         Returns:
-            (K, H+1, 6) trajectory tensor.
+            (K, H+1, state_dim) trajectory tensor.
         """
         traj = [initial_state]
         state = initial_state
@@ -214,16 +159,17 @@ class GradientMPC:
         """Run multi-start gradient optimization.
 
         Args:
-            initial_state: (6,) tensor.
-            cost_fn:       callable(trajectory (K,H+1,6), controls (K,H,3)) -> (K,) costs.
-            warm_start:    optional (H, 3) tensor from previous step.
+            initial_state: (state_dim,) tensor.
+            cost_fn:       callable(traj (K,H+1,state_dim), controls (K,H,control_dim)) -> (K,).
+            warm_start:    optional (H, control_dim) tensor from previous step.
         Returns:
-            best_controls: (H, 3), best_cost: float, best_traj: (H+1, 6).
+            best_controls: (H, control_dim), best_cost: float, best_traj: (H+1, state_dim).
         """
         K = self.num_restarts
 
         # Initialize: slot 0 = warm-start or zeros, rest = uniform random
-        controls = torch.empty(K, self.horizon, 3, device=self.device)
+        cdim = self.dynamics.control_dim
+        controls = torch.empty(K, self.horizon, cdim, device=self.device)
         if warm_start is not None:
             controls[0] = warm_start
         else:
@@ -232,7 +178,7 @@ class GradientMPC:
             controls[1:] = (
                 self.u_lo
                 + (self.u_hi - self.u_lo)
-                * torch.rand(K - 1, self.horizon, 3, device=self.device)
+                * torch.rand(K - 1, self.horizon, cdim, device=self.device)
             )
 
         init_batch = initial_state.unsqueeze(0).expand(K, -1)
@@ -268,3 +214,284 @@ class GradientMPC:
                 controls_param.data.clamp_(self.u_lo, self.u_hi)
 
         return best_controls, best_cost, best_traj
+
+    def batch_optimize(self, initial_states, cost_fn, warm_start_controls):
+        """Optimize B states simultaneously with a single Adam optimizer.
+
+        Unlike optimize() which takes a single state with K restarts,
+        this uses the batch dimension directly: one state per slot, each
+        warm-started from its own control sequence.
+
+        Args:
+            initial_states:       (B, state_dim) tensor of initial conditions.
+            cost_fn:              callable(traj (B,H+1,state_dim), controls (B,H,control_dim)) -> (B,).
+            warm_start_controls:  (B, H, control_dim) tensor of initial control sequences.
+        Returns:
+            best_controls (B, H, control_dim), best_costs (B,), best_trajs (B, H+1, state_dim).
+        """
+        B = initial_states.shape[0]
+
+        controls_param = nn.Parameter(warm_start_controls.clone())
+        optimizer = torch.optim.Adam([controls_param], lr=self.lr)
+
+        best_costs = torch.full((B,), float('inf'), device=self.device)
+        best_controls = warm_start_controls.clone()
+        best_trajs = None
+
+        for _ in range(self.num_iters):
+            optimizer.zero_grad()
+
+            clamped = torch.clamp(controls_param, self.u_lo, self.u_hi)
+            trajectory = self._differentiable_rollout(initial_states, clamped)
+            costs = cost_fn(trajectory, clamped)
+            costs = torch.nan_to_num(costs, nan=float('inf'))
+
+            # Track per-state best across all iterations
+            with torch.no_grad():
+                improved = costs < best_costs
+                if improved.any():
+                    best_costs[improved] = costs[improved]
+                    best_controls[improved] = clamped[improved].detach().clone()
+                    if best_trajs is None:
+                        best_trajs = trajectory.detach().clone()
+                    else:
+                        best_trajs[improved] = trajectory[improved].detach().clone()
+
+            costs.sum().backward()
+            optimizer.step()
+
+            with torch.no_grad():
+                controls_param.data.clamp_(self.u_lo, self.u_hi)
+
+        # If no iteration improved (shouldn't happen), use warm-start trajectory
+        if best_trajs is None:
+            with torch.no_grad():
+                clamped = torch.clamp(warm_start_controls, self.u_lo, self.u_hi)
+                best_trajs = self._differentiable_rollout(initial_states, clamped)
+
+        return best_controls, best_costs, best_trajs
+
+
+# ---------------------------------------------------------------------------
+# Gradient-based MPC label generation for refinement stage
+# ---------------------------------------------------------------------------
+
+def _generate_warm_start(model, dynamics, initial_states, dt, horizon, device):
+    """Generate bang-bang control sequences by rolling out the learned policy.
+
+    Adapted from MPC.rollout_with_policy(). For each state, computes the
+    value function gradient via io_to_dv, extracts bang-bang control via
+    optimal_control, and steps the dynamics forward.
+
+    Args:
+        model:          SingleBVPNet (current learned model).
+        dynamics:       Dynamics instance.
+        initial_states: (B, state_dim) tensor on device.
+        dt:             Planning timestep in seconds.
+        horizon:        Number of planning steps.
+        device:         torch device.
+    Returns:
+        controls: (B, H, control_dim) bang-bang control sequences.
+    """
+    B = initial_states.shape[0]
+    controls = torch.zeros(B, horizon, dynamics.control_dim, device=device)
+    state = initial_states.clone()
+    time_remaining = torch.full((B, 1), horizon * dt, device=device)
+
+    for k in range(horizon):
+        # Build coord: [time_remaining, state] -> (B, 7)
+        coord = torch.cat([time_remaining, state], dim=-1)
+        norm_coord = dynamics.coord_to_input(coord)
+
+        # Query model (internally handles .detach().requires_grad_(True))
+        result = model({'coords': norm_coord})
+
+        # Value gradient via Jacobian
+        dvs = dynamics.io_to_dv(
+            result['model_in'],
+            result['model_out'].squeeze(dim=-1)
+        ).detach()
+
+        # Bang-bang control from gradient sign
+        u = dynamics.optimal_control(state, dvs[..., 1:])
+        u = dynamics.clamp_control(state, u)
+        controls[:, k, :] = u
+
+        # Step dynamics forward
+        dsdt_val = dynamics.dsdt(state, u, None)
+        state = dynamics.equivalent_wrapped_state(state + dsdt_val * dt)
+        time_remaining = time_remaining - dt
+
+    return controls
+
+
+def _bootstrap_labels(trajectories, dynamics, T, dt):
+    """Extract (time, state) -> cost-to-go labels from optimized trajectories.
+
+    Adapted from MPC.get_batch_data(). Computes cost-to-go at each timestep
+    along the trajectory and filters to in-range states. Supports reach_avoid,
+    avoid, and reach modes.
+
+    Args:
+        trajectories: (B, H+1, state_dim) optimized state trajectories.
+        dynamics:     Dynamics instance.
+        T:            Total time horizon (for time coordinate).
+        dt:           Timestep.
+    Returns:
+        (coords, value_labels) -- CPU tensors. coords normalized via coord_to_input.
+    """
+    device = trajectories.device
+    B, Hp1, D = trajectories.shape
+    H = Hp1 - 1
+
+    # Mode-aware cost computation (mirrors MPC.get_batch_data lines 55-71)
+    if dynamics.set_mode == 'reach_avoid':
+        reach_values = dynamics.reach_fn(trajectories)   # (B, H+1)
+        avoid_values = dynamics.avoid_fn(trajectories)   # (B, H+1)
+        # cummax is the mathematically correct running-max formulation;
+        # cost_fn uses global-max, yielding a slightly different validity mask
+        cummax_neg_avoid = torch.cummax(-avoid_values, dim=-1).values
+        ra_cost = torch.clamp(reach_values, min=cummax_neg_avoid)
+        _, min_idx = torch.min(ra_cost, dim=-1)
+    elif dynamics.set_mode in ('avoid', 'reach'):
+        lxs = dynamics.boundary_fn(trajectories)         # (B, H+1)
+        _, min_idx = torch.min(lxs, dim=-1)
+    else:
+        raise NotImplementedError(
+            f"set_mode '{dynamics.set_mode}' not supported")
+
+    coords_list = []
+    values_list = []
+    state_lo = dynamics.state_range_[:, 0].to(device) - 0.01
+    state_hi = dynamics.state_range_[:, 1].to(device) + 0.01
+
+    for i in range(H):
+        valid = (min_idx > i)  # (B,) bool — cost-to-go is valid before optimum
+        if valid.sum() == 0:
+            continue
+
+        # Coord: [T - i*dt, state_at_step_i]
+        coord_i = torch.zeros(valid.sum(), D + 1, device=device)
+        coord_i[:, 0] = T - i * dt
+        coord_i[:, 1:] = trajectories[valid, i, :]
+
+        # Cost-to-go from step i onward
+        if dynamics.set_mode == 'reach_avoid':
+            ra_cost_i = torch.clamp(
+                reach_values[valid, i:],
+                min=torch.max(-avoid_values[valid, i:],
+                              dim=-1).values.unsqueeze(-1))
+            value_i = torch.min(ra_cost_i, dim=-1).values
+        elif dynamics.set_mode in ('avoid', 'reach'):
+            value_i = torch.min(lxs[valid, i:], dim=-1).values
+
+        # In-range filter
+        in_range = (
+            torch.all(coord_i[:, 1:] >= state_lo, dim=-1)
+            & torch.all(coord_i[:, 1:] <= state_hi, dim=-1)
+            & ~torch.isnan(value_i)
+        )
+        if in_range.sum() == 0:
+            continue
+
+        coords_list.append(dynamics.coord_to_input(coord_i[in_range]))
+        values_list.append(value_i[in_range])
+
+    if len(coords_list) == 0:
+        return torch.empty(0, D + 1), torch.empty(0)
+
+    coords = torch.cat(coords_list, dim=0)
+    value_labels = torch.cat(values_list, dim=0)
+    return coords.detach().cpu(), value_labels.detach().cpu()
+
+
+def generate_gradient_mpc_dataset(model, dynamics, dataset, device,
+                                  gradient_batch_size=256, num_iters=15, lr=1.0,
+                                  num_batches=None):
+    """Generate MPC training labels using gradient-based trajectory optimization.
+
+    Warm-starts from the learned policy's bang-bang controls, then refines
+    via differentiable shooting + Adam. Produces labels in the same format
+    as generate_MPC_dataset().
+
+    Args:
+        model:                SingleBVPNet (current learned model).
+        dynamics:             Dynamics instance.
+        dataset:              ReachabilityDataset (for sampling and config).
+        device:               torch device string or object.
+        gradient_batch_size:  States per GPU chunk (controls peak memory).
+        num_iters:            Adam iterations per batch.
+        lr:                   Adam learning rate.
+        num_batches:          IC batches for gradient refinement.
+                              None falls back to dataset.num_MPC_batches.
+    Returns:
+        (MPC_inputs, MPC_values) as CPU tensors in same format as
+        generate_MPC_dataset().
+    """
+    from tqdm.autonotebook import tqdm as tqdm_auto
+
+    effective_dt = dataset.MPC_dt
+    if dataset.refinement_dt is not None:
+        effective_dt = dataset.refinement_dt
+        print(f"  Gradient refinement: using dt={effective_dt}")
+
+    tMax = dataset.tMax
+    horizon = math.ceil(tMax / effective_dt)
+
+    gmpc = GradientMPC(
+        dt=effective_dt,
+        horizon=horizon,
+        dynamics=dynamics,
+        device=device,
+        num_iters=num_iters,
+        lr=lr,
+        num_restarts=1,  # unused by batch_optimize, but keeps init consistent
+    )
+
+    # Cost function matching dynamics.cost_fn (reachability reach-avoid)
+    def cost_fn(trajectory, controls):
+        return dynamics.cost_fn(trajectory)
+
+    all_inputs = []
+    all_values = []
+
+    effective_num_batches = num_batches if num_batches is not None else dataset.num_MPC_batches
+
+    was_training = model.training
+    model.eval()
+    try:
+        for batch_idx in tqdm_auto(range(effective_num_batches),
+                                   desc="Gradient MPC labels"):
+            states = dataset.sample_init_state().to(device)
+            B = states.shape[0]
+
+            for chunk_start in range(0, B, gradient_batch_size):
+                chunk_end = min(chunk_start + gradient_batch_size, B)
+                chunk_states = states[chunk_start:chunk_end]
+
+                warm_controls = _generate_warm_start(
+                    model, dynamics, chunk_states, effective_dt, horizon, device)
+
+                best_controls, best_costs, best_trajs = gmpc.batch_optimize(
+                    chunk_states, cost_fn, warm_controls)
+
+                coords, values = _bootstrap_labels(
+                    best_trajs, dynamics, tMax, effective_dt)
+
+                if coords.shape[0] > 0:
+                    all_inputs.append(coords)
+                    all_values.append(values)
+
+                del warm_controls, best_controls, best_costs, best_trajs
+                torch.cuda.empty_cache()
+    finally:
+        if was_training:
+            model.train()
+
+    if len(all_inputs) == 0:
+        print("WARNING: Gradient MPC generated 0 labels")
+        return torch.empty(0, dynamics.state_dim + 1), torch.empty(0)
+
+    MPC_inputs = torch.cat(all_inputs, dim=0)
+    MPC_values = torch.cat(all_values, dim=0)
+    return MPC_inputs, MPC_values
