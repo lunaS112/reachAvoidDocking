@@ -35,7 +35,9 @@ sys.path.insert(0, os.path.join(_THIS_DIR, '..', '..'))
 from utils import modules
 from utils import diff_operators  # noqa: F401 — used transitively by io_to_dv
 from dynamics import dynamics as dynamics_module
-from utils.controllers.docking13d_mixin import Docking13DControllerMixin
+from utils.controllers.docking13d_mixin import Docking13DControllerMixin, _quat_mul_np
+from utils.controllers.safety_filter import SafetyFilter
+from utils.controllers.min_time_search import find_min_brat_time_single, STATUS_HOLD
 
 
 class BRTController13D(Docking13DControllerMixin):
@@ -46,33 +48,59 @@ class BRTController13D(Docking13DControllerMixin):
     """
 
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
-                 search_window=0.5, search_resolution=0.1,
-                 max_search_expansions=1):
+                 search_resolution=0.1, safety_filter=None,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
+                 debug_phase2=False,
+                 gradient_fallback=True, grad_threshold=0.01,
+                 avoid_proximity_margin=1.0):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
             tMax:                  BRT time-horizon cap (seconds).
             dt:                    Control / integration timestep (seconds).
             device:                Torch device ('cuda' or 'cpu').
-            search_window:         Initial half-width of BRT reacquisition
-                                   time search (seconds).
             search_resolution:     Time step for BRT time search (seconds).
-            max_search_expansions: Max window-doubling attempts before
-                                   falling back to Phase 1.
+            safety_margin_phase1:  Safety filter margin outside BRAT (Phase 1).
+                                   Higher value triggers filter earlier.
+            safety_margin_phase2:  Safety filter margin inside BRAT (Phase 2).
+                                   Lower value for minimal intervention.
+            debug_phase2:          Enable detailed Phase 2 search diagnostics.
+            gradient_fallback:     Enable L2 goal-directed fallback when
+                                   Phase 1 gradient stagnates (default True).
+            grad_threshold:        Norm of dvds on control-coupled dims below
+                                   which the gradient is considered stagnant.
+            avoid_proximity_margin: Obstacle SDF distance (m) below which
+                                   the fallback is hard-suppressed.
         """
         self.checkpoint_path = checkpoint_path
         self.tMax = tMax
         self.dt = dt
         self.device = device
-        self.search_window = search_window
         self.search_resolution = search_resolution
-        self.max_search_expansions = max_search_expansions
+        self.debug_phase2 = debug_phase2
+        self.safety_filter = safety_filter or SafetyFilter(mode=0)
+        self.safety_margin_phase1 = safety_margin_phase1
+        self.safety_margin_phase2 = safety_margin_phase2
+
+        # Gradient fallback parameters (Phase 1 only)
+        self.gradient_fallback = gradient_fallback
+        self.grad_threshold = grad_threshold
+        self.avoid_proximity_margin = avoid_proximity_margin
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(checkpoint_path)))
 
         self._load_dynamics_and_model()
+
+        # Derived fallback constants (PD gains for virtual gradient)
+        self.fallback_kp_trans = 0.5 * self.dynamics.F_bar
+        self.fallback_kd_trans = 1.0 * self.dynamics.F_bar
+        self.fallback_kp_rot = 0.5 * self.dynamics.tau_bar
+        self.fallback_kd_rot = 1.0 * self.dynamics.tau_bar
+        self.goal_state_np = self.dynamics.goal_state.cpu().numpy()
+        self.q_goal_np = self.dynamics.q_goal.detach().cpu().numpy()
+
         self.reset()
 
     # ------------------------------------------------------------------
@@ -136,10 +164,16 @@ class BRTController13D(Docking13DControllerMixin):
 
         self.brt_reacquisition_count = 0
         self.brt_time_adjustments = []
+        self.phase2_debug_log = []
+
+        # Gradient fallback tracking (Phase 1)
+        self.fallback_weight_history = []
 
         # --- Diagnostic tracking ---
         self.diagnostic_history = []
         self._consecutive_v_increases = 0
+
+        self.safety_filter.reset()
 
     # ------------------------------------------------------------------
     # Value-function queries (dynamics-agnostic)
@@ -261,29 +295,113 @@ class BRTController13D(Docking13DControllerMixin):
         return self.get_value(state, self.tMax) <= 0
 
     # ------------------------------------------------------------------
-    # BRT reacquisition (dynamics-agnostic)
+    # Gradient-fallback helpers (Phase 1 only)
     # ------------------------------------------------------------------
 
-    def _search_brt_time(self, state, current_time):
-        """Expanding-window search for the tightest BRT containing *state*."""
-        window = self.search_window
+    def _compute_l2_virtual_gradient(self, state):
+        """PD-like virtual gradient pointing toward the goal set.
 
-        for _ in range(1 + self.max_search_expansions):
-            t_low = max(current_time - window, 0.01)
-            t_high = min(current_time + window, self.tMax)
-            times = np.arange(t_low, t_high + self.search_resolution * 0.5,
-                              self.search_resolution)
-            if len(times) == 0:
-                window *= 2
-                continue
+        Only populates control-coupled indices:
+          [3:6]   — velocities (LVLH frame, matching real gradient convention)
+          [10:13] — angular velocities (body frame)
 
-            values = self.get_values_batch(state, times)
-            valid = values <= 0
-            if np.any(valid):
-                return float(np.min(times[valid]))
-            window *= 2
+        Translation uses position/velocity error in LVLH.
+        Rotation uses quaternion error converted to a rotation vector.
+        """
+        goal = self.goal_state_np
 
-        return None
+        # --- Translation (LVLH frame) ---
+        pos_err = state[0:3] - goal[0:3]
+        vel_err = state[3:6] - goal[3:6]
+
+        # --- Rotation (quaternion error → rotation vector) ---
+        q = np.asarray(state[6:10], dtype=np.float64)
+        q_norm = np.linalg.norm(q)
+        if q_norm > 1e-12:
+            q = q / q_norm
+
+        # Error quaternion: q_err = q_goal_conj ⊗ q
+        q_goal_conj = np.array([self.q_goal_np[0],
+                                -self.q_goal_np[1],
+                                -self.q_goal_np[2],
+                                -self.q_goal_np[3]])
+        q_err = _quat_mul_np(q_goal_conj, q)
+
+        # Shortest path: ensure scalar part >= 0
+        if q_err[0] < 0:
+            q_err = -q_err
+
+        # Rotation vector (body frame): 2 * q_err_vec / |q_err_scalar|
+        qv_norm = np.linalg.norm(q_err[1:4])
+        if abs(q_err[0]) > 1e-12:
+            err_vec = 2.0 * q_err[1:4] * np.arctan2(qv_norm, q_err[0]) / max(qv_norm, 1e-12)
+        else:
+            err_vec = 2.0 * q_err[1:4]
+
+        omega_err = state[10:13] - goal[10:13]
+
+        # --- Assemble virtual gradient (same shape as dvds) ---
+        vg = np.zeros(self.state_dim)
+        vg[3:6] = self.fallback_kp_trans * pos_err + self.fallback_kd_trans * vel_err
+        vg[10:13] = self.fallback_kp_rot * err_vec + self.fallback_kd_rot * omega_err
+        return vg
+
+    def _avoid_proximity_check(self, state):
+        """Return True if state is too close to the obstacle for fallback."""
+        with torch.no_grad():
+            s = torch.tensor(state, dtype=torch.float32, device=self.device)
+            return float(self.dynamics.avoid_fn(s)) < self.avoid_proximity_margin
+
+    # ------------------------------------------------------------------
+    # BRAT min-time search (delegates to shared utility)
+    # ------------------------------------------------------------------
+
+    def _search_brat_time(self, state):
+        """Find the minimum time t* where V(x, t*) <= 0.
+
+        Delegates to the shared find_min_brat_time_single utility which
+        always returns a valid (t_star, status) — no Phase 1 fallback needed.
+        """
+        value_fn = lambda times: self.get_values_batch(state, times)
+        if self.debug_phase2:
+            return find_min_brat_time_single(
+                value_fn, self.tMax,
+                resolution=self.search_resolution,
+                return_details=True,
+                t_remaining=self.t_remaining)
+        return find_min_brat_time_single(
+            value_fn, self.tMax,
+            resolution=self.search_resolution,
+            t_remaining=self.t_remaining)
+
+    def _record_phase2_debug(self, sim_time, state, search_details,
+                             t_star, status, query_time, value, dvds,
+                             raw_control, applied_control):
+        """Persist high-signal Phase 2 diagnostics for postmortem analysis."""
+        entry = {
+            'sim_time': float(sim_time),
+            'state': np.asarray(state, dtype=np.float64).tolist(),
+            'value_tmax': float(self.get_value(state, self.tMax)),
+            'selected_t_star': float(t_star),
+            'selected_status': status,
+            'query_time': float(query_time),
+            'value_at_query': float(value),
+            'gradient_dvds': np.asarray(dvds, dtype=np.float64).tolist(),
+            'raw_control': np.asarray(raw_control, dtype=np.float64).tolist(),
+            'applied_control': np.asarray(applied_control, dtype=np.float64).tolist(),
+            'safety_filter_modified_control': bool(
+                not np.allclose(raw_control, applied_control)),
+            'search': search_details,
+        }
+        self.phase2_debug_log.append(entry)
+
+        print(
+            f"[BRAT Phase2] t={sim_time:6.2f}s  t*={t_star:5.2f}s ({status})  "
+            f"V(t*)={value: .4f}  V(tMax)={entry['value_tmax']: .4f}  "
+            f"neg={search_details['n_nonpositive']:3d}  "
+            f"u_raw={np.array2string(raw_control, precision=3)}"
+            f"  u_applied={np.array2string(applied_control, precision=3)}"
+        )
 
     # ------------------------------------------------------------------
     # Diagnostics
@@ -337,39 +455,56 @@ class BRTController13D(Docking13DControllerMixin):
         if not self.in_brt_phase:
             if self.is_in_brt(state):
                 self.in_brt_phase = True
-                self.t_remaining = self.tMax
                 self.phase_transition_time = sim_time
-                print(f"  [BRT13D] Entered BRT at t={sim_time:.2f}s -> Phase 2")
+                print(f"  [BRT13D] Entered BRAT at t={sim_time:.2f}s -> Phase 2")
 
         if self.in_brt_phase:
-            query_time = max(self.t_remaining, 0.01)
+            # Phase 2: per-step min-time query (always returns a valid t*)
+            search_result = self._search_brat_time(state)
+            if self.debug_phase2:
+                t_star, status, search_details = search_result
+            else:
+                t_star, status = search_result
+                search_details = None
+            # STATUS_HOLD: count down; otherwise accept the searched t*
+            if status == STATUS_HOLD:
+                self.t_remaining = max(t_star - self.dt, 0.01)
+            else:
+                self.t_remaining = t_star
+            query_time = max(t_star, 0.01)
+            if self.debug_phase2:
+                control, dvds = self.get_optimal_control(state, query_time)
+            else:
+                control, dvds = self.get_optimal_control(state, query_time)
             value = self.get_value(state, query_time)
-
-            if value > 0:
-                # Left the BRT — try to reacquire
-                new_time = self._search_brt_time(state, query_time)
-                if new_time is not None:
-                    self.brt_reacquisition_count += 1
-                    self.brt_time_adjustments.append({
-                        'sim_time': sim_time,
-                        'old_time': query_time,
-                        'new_time': new_time,
-                        'value_before': value,
-                    })
-                    self.t_remaining = new_time
-                else:
-                    self.in_brt_phase = False
-
-        if self.in_brt_phase:
-            query_time = max(self.t_remaining, 0.01)
-            control, dvds = self.get_optimal_control(state, query_time)
-            value = self.get_value(state, query_time)
-            self.t_remaining -= self.dt
             phase = 2
+
+            if status != 'strict':
+                self.brt_reacquisition_count += 1
+                self.brt_time_adjustments.append({
+                    'sim_time': sim_time,
+                    't_star': t_star,
+                    'status': status,
+                    'value': value,
+                })
         else:
+            # Phase 1: Use fixed tMax value function
             control, dvds = self.get_optimal_control(state, self.tMax)
             value = self.get_value(state, self.tMax)
             phase = 1
+            fallback_weight = 0.0
+
+            if self.gradient_fallback:
+                ctrl_dims = np.concatenate([dvds[3:6], dvds[10:13]])
+                grad_mag = np.linalg.norm(ctrl_dims)
+                if (grad_mag < self.grad_threshold
+                        and not self._avoid_proximity_check(state)):
+                    fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                    virtual_dvds = self._compute_l2_virtual_gradient(state)
+                    blended = dvds + fallback_weight * virtual_dvds
+                    control = self._compute_brt_control_13d(blended, state)
+
+            self.fallback_weight_history.append(fallback_weight)
 
         # --- Per-step diagnostics ---
         grad_mag = float(np.linalg.norm(dvds))
@@ -430,6 +565,18 @@ class BRTController13D(Docking13DControllerMixin):
             'velocity_norm': float(np.linalg.norm(state[3:6])),
             'omega_norm': float(np.linalg.norm(state[10:13])),
         })
+
+        # Safety filter post-processing (phase-dependent margin)
+        raw_control = control.copy()
+        self.safety_filter.set_margin(
+            self.safety_margin_phase2 if self.in_brt_phase
+            else self.safety_margin_phase1)
+        control = self.safety_filter.apply(state, control)
+
+        if self.in_brt_phase and self.debug_phase2:
+            self._record_phase2_debug(
+                sim_time, state, search_details, t_star, status,
+                query_time, value, dvds, raw_control, control)
 
         # History
         self.state_history.append(
@@ -521,6 +668,13 @@ class BRTController13D(Docking13DControllerMixin):
             'phase_transition_time': self.phase_transition_time,
             'brt_reacquisition_count': self.brt_reacquisition_count,
             'brt_time_adjustments': self.brt_time_adjustments,
+            'safety_filter_mode': self.safety_filter.mode,
+            'safety_filter_log': self.safety_filter.get_log(),
+            'phase2_debug_log': self.phase2_debug_log,
+            # --- gradient fallback (Phase 1) ---
+            'fallback_weights': self.fallback_weight_history,
+            'n_fallback_steps': sum(
+                1 for w in self.fallback_weight_history if w > 0),
         }
 
         # --- Diagnostic summary --- #
@@ -657,6 +811,6 @@ class BRTController13D(Docking13DControllerMixin):
             'τx (N·m)': [6, u[:, 3], {'color': 'r'}],
             'τy (N·m)': [6, u[:, 4], {'color': 'g'}],
             'τz (N·m)': [6, u[:, 5], {'color': 'b'}],
-            'Distance (m)': [7, np.sqrt(s[:, 0]**2 + s[:, 1]**2 + s[:, 2]**2),
+            'Distance (m)': [7, np.sqrt(s[:, 0]**2 + (s[:, 1] - self.dynamics.goal_y_center)**2 + s[:, 2]**2),
                              {'color': 'orange'}],
         }

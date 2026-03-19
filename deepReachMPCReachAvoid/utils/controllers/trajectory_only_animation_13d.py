@@ -23,6 +23,8 @@ Usage:
 from __future__ import annotations
 
 import numpy as np
+
+from utils.controllers.anim_utils import select_key_frames
 import warnings
 
 from utils.brt_visualization_13d import (
@@ -52,16 +54,7 @@ class TrajectoryAnimation13D:
     def __init__(self, dynamics):
         self.dynamics = dynamics
 
-    # ------------------------------------------------------------------ #
-    #  Key-frame selection
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _select_key_frames(n_total: int, max_frames: int = 60) -> np.ndarray:
-        """Return at most *max_frames* evenly-spaced frame indices."""
-        if n_total <= max_frames:
-            return np.arange(n_total)
-        return np.linspace(0, n_total - 1, max_frames, dtype=int)
+    # Key-frame helper imported from anim_utils
 
     # ------------------------------------------------------------------ #
     #  Interactive Plotly HTML
@@ -84,7 +77,7 @@ class TrajectoryAnimation13D:
 
         traj = result['trajectory']
         times = result['times']
-        key_idx = self._select_key_frames(len(traj), max_frames)
+        key_idx = select_key_frames(len(traj), max_frames)
 
         scene_limits = compute_scene_limits(
             traj, self.dynamics, padding=1.5)
@@ -125,7 +118,7 @@ class TrajectoryAnimation13D:
             traces_per_frame.append((start_idx, len(frame_trace_list)))
 
             if (count + 1) % 20 == 0 or count == len(key_idx) - 1:
-                print(f"  Frame {count + 1}/{len(key_idx)} done.")
+                print(f"  [{count + 1}/{len(key_idx)}]")
 
         # --- Build slider steps --------------------------------------- #
         total_traces = len(all_traces)
@@ -174,7 +167,7 @@ class TrajectoryAnimation13D:
         # Inject Play / Pause JS that cycles through slider steps
         _inject_play_pause_js(output_path, interval_ms=500)
 
-        print(f"[Animation] HTML written to {output_path}")
+        print(f"[Animation] HTML saved to {output_path}")
 
     # ------------------------------------------------------------------ #
     #  MP4 animation (Matplotlib)
@@ -199,9 +192,10 @@ class TrajectoryAnimation13D:
         traj = result['trajectory']
         sim_times = result['times']
         values = result.get('values', None)
-        key_idx = self._select_key_frames(len(traj), max_frames)
+        key_idx = select_key_frames(len(traj), max_frames)
 
-        all_dists = np.linalg.norm(traj[:, :3], axis=1)
+        goal_center = np.array([0.0, self.dynamics.goal_y_center, 0.0])
+        all_dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
         dist_hi = all_dists.max() * 1.1 + 0.5
 
         scene_limits = state_range_limits(self.dynamics)
@@ -270,14 +264,14 @@ class TrajectoryAnimation13D:
                 line_val.set_data(t_slice, values[:idx + 1])
             title_text.set_text(f"t = {sim_times[idx]:.1f}s")
 
-        print("[Animation] Rendering MP4 frames (trajectory only)...")
+        print("[Animation] Rendering MP4 (trajectory only)...")
         anim = FuncAnimation(fig, update, frames=len(key_idx),
                              interval=1000 / fps)
         try:
             writer = FFMpegWriter(fps=fps,
                                   metadata=dict(title='Docking 13D — MPC'))
             anim.save(output_path, writer=writer)
-            print(f"[Animation] MP4 written to {output_path}")
+            print(f"[Animation] MP4 saved to {output_path}")
         except FileNotFoundError:
             warnings.warn("ffmpeg not found — cannot produce MP4. "
                           "Install ffmpeg or use generate_interactive_html().")

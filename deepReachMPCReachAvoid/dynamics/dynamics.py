@@ -1072,10 +1072,23 @@ class Docking13D(Dynamics):
         self.I = self.inertia_tensor_body()  # 3x3 torch tensor on CUDA later
 
         # Docking tolerances
-        self.eps_p = 0.3
-        self.eps_v = 0.1
-        self.eps_q = 0.20       # radians (~11.5°), attitude error tolerance
-        self.eps_omega = 0.05
+        self.eps_p = 0.10           # lateral XZ position (m)
+        self.eps_q = 0.151          # attitude quaternion angle (rad) ≈ 5° per axis worst-case
+
+        # Per-axis velocity tolerances (reach_fn decomposes lateral vs axial)
+        self.eps_v_lateral = 0.02   # lateral XZ velocity (m/s)
+        self.eps_v_axial_lo = 0.03  # minimum axial closing speed (m/s)
+        self.eps_v_axial_hi = 0.10  # maximum axial closing speed (m/s)
+
+        # Per-axis angular rate tolerances (reach_fn decomposes pitch/yaw vs roll)
+        # Body-frame: wx = roll, wy/wz = pitch/yaw (after 90° yaw goal quat)
+        self.eps_omega_pitchyaw = 0.00698   # 0.4  °/s in rad/s (= eps_omega_roll)
+        self.eps_omega_roll = 0.00698       # 0.4  °/s in rad/s
+
+        # Legacy single-value aliases (used by state_range, controller checks)
+        self.eps_v = 0.10           # envelope for velocity L2 (controller compat)
+        self.eps_omega = 0.00698    # envelope for omega L2 (controller compat)
+
         self.v_max = 2.0        # Max linear velocity (m/s) - matches state_range
         self.omega_max = 1.5    # Max angular velocity (rad/s) - matches state_range
 
@@ -1093,13 +1106,18 @@ class Docking13D(Dynamics):
         self.post_length = 0.2       # how far post extends in -y (m) = 0.2*h_c
 
         # Goal region: must be below the inflated post tip so it's outside the obstacle.
-        # Inflated post tip at y = -(post_length + chaser_buffer).
-        # Add clearance gap, then a wide band below.
-        goal_clearance = 0.134  # gap between inflated post tip and goal top (gives round -1.2)
-        goal_band_height = 0.4  # y-band height (increased from 0.1)
-        self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.2
-        self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.6
-        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.4
+        # With orientation-dependent inflation, the worst-case Y-extent of the
+        # chaser within eps_q of the goal quaternion is:
+        #   cb_y_worst = 0.5 * (cos(eps_q) + sqrt(2)*sin(eps_q))
+        # For eps_q=0.151 rad: cb_y_worst ≈ 0.601m  (vs full sphere 0.866m).
+        # Inflated post tip at y = -(post_length + cb_y_worst).
+        self.cb_y_worst = 0.5 * (math.cos(self.eps_q)
+                                  + math.sqrt(2) * math.sin(self.eps_q))
+        goal_clearance = 0.07
+        goal_band_height = 0.4
+        self.goal_y_max = -(self.post_length + self.cb_y_worst + goal_clearance)
+        self.goal_y_min = self.goal_y_max - goal_band_height
+        self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0
 
         # Goal: rotation-ALIGNED — chaser must match goal attitude.
         # 90° yaw so chaser body -Y faces target +Y.
@@ -1120,14 +1138,16 @@ class Docking13D(Dynamics):
             self.goal_state = torch.tensor(goal_state)
 
         # BRAT parameters
-        self.reach_fn_weight = 0.72
+        self.reach_fn_weight = 1.0
         self.avoid_fn_weight = 0.5
         self.set_mode = set_mode
 
         if set_mode == 'reach_avoid':
             l_type = 'brat_hjivi'
+        elif set_mode == 'avoid':
+            l_type = 'brt_hjivi'
         else:
-            raise NotImplementedError('Only reach_avoid mode is implemented')
+            raise NotImplementedError(f"set_mode '{set_mode}' is not implemented for Docking13D")
 
         # (HJ/DeepReach) ranges (ASSUMPTION: expand from planar; tune as needed)
         self.state_dim = 13
@@ -1354,6 +1374,29 @@ class Docking13D(Dynamics):
         Tier 4 (40%): Broader uniform sampling centred on goal
         """
         num_samples = int(num_samples)
+
+        if self.set_mode == 'avoid':
+            samples = torch.zeros(num_samples, self.state_dim)
+            margin = 3.0
+            cb = self.chaser_buffer
+            half_w = self.w_t / 2 + cb + margin
+            h_min = -(self.post_length + cb + margin)
+            h_max = self.h_t + cb + margin
+            half_z = self.d_t / 2 + cb + margin
+            samples[:, 0] = torch.empty(num_samples).uniform_(-half_w, half_w)
+            samples[:, 1] = torch.empty(num_samples).uniform_(h_min, h_max)
+            samples[:, 2] = torch.empty(num_samples).uniform_(-half_z, half_z)
+            for dim in range(3, self.state_dim):
+                lo, hi = self.state_range_[dim]
+                samples[:, dim] = torch.empty(num_samples).uniform_(lo.item(), hi.item())
+            # Normalize quaternions to unit sphere, canonical form (q0 >= 0)
+            q = samples[:, 6:10]
+            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+            sign = torch.sign(q[:, 0:1])
+            sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+            samples[:, 6:10] = q * sign
+            return samples
+
         samples = torch.zeros(num_samples, self.state_dim)
         idx = 0
 
@@ -1520,69 +1563,97 @@ class Docking13D(Dynamics):
     # ---------- Reach set ----------
     def reach_fn(self, state):
         """
-        Rotation-aligned docking-post goal.
+        Rotation-aligned docking-post goal with per-axis tolerances.
 
         Signed distance <= 0 if within docking tolerances in:
-          - position  (x,z near post axis; y in goal band)
-          - velocity  (3D L2)
-          - attitude  (angle error vs q_goal)
-          - omega     (3D L2)
+          - position  (x,z lateral ≤ eps_p; y in goal band)
+          - lateral velocity  (xz L2 ≤ eps_v_lateral)
+          - axial velocity    (vy in [eps_v_axial_lo, eps_v_axial_hi])
+          - attitude  (quaternion angle error ≤ eps_q)
+          - pitch/yaw rate (wy,wz L2 ≤ eps_omega_pitchyaw)
+          - roll rate (|wx| ≤ eps_omega_roll)
+
+        Inner scales are normalised so each component reaches depth ≈ −3
+        at the goal centre, giving the NN uniform gradient visibility.
         """
         x, y, z = state[..., 0], state[..., 1], state[..., 2]
         vx, vy, vz = state[..., 3], state[..., 4], state[..., 5]
         q = state[..., 6:10]
-        omega = state[..., 10:13]
+        wx, wy, wz = state[..., 10], state[..., 11], state[..., 12]
 
-        goal = self.goal_state.to(state.device)
         qg = self.q_goal.to(state.device)
-        omegag = goal[10:13]
 
         # --- Position: x,z near post axis + y inside goal band ---
         xz_dist = torch.sqrt(x**2 + z**2 + 1e-8) - self.eps_p
         y_lo = torch.tensor(self.goal_y_min, device=state.device, dtype=state.dtype)
         y_hi = torch.tensor(self.goal_y_max, device=state.device, dtype=state.dtype)
-        y_dist = torch.maximum(y_lo - y, y - y_hi)  # <=0 when inside band
+        y_dist = torch.maximum(y_lo - y, y - y_hi)
         pos_dist = torch.maximum(xz_dist, y_dist)
 
-        # --- Velocity ---
-        vel_dist = torch.sqrt(vx**2 + vy**2 + vz**2 + 1e-8) - self.eps_v
+        # --- Lateral velocity (XZ plane) ---
+        vlat_dist = torch.sqrt(vx**2 + vz**2 + 1e-8) - self.eps_v_lateral
+
+        # --- Axial velocity (Y): must be in [+lo, +hi] band (positive = approaching) ---
+        vax_dist = torch.maximum(
+            torch.tensor(self.eps_v_axial_lo, device=state.device, dtype=state.dtype) - vy,
+            vy - torch.tensor(self.eps_v_axial_hi, device=state.device, dtype=state.dtype),
+        )
 
         # --- Attitude ---
         att_dist = self.quat_error_angle(
             q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg
         ) - self.eps_q
 
-        # --- Angular velocity ---
-        omg_dist = torch.sqrt(torch.sum((omega - omegag)**2, dim=-1) + 1e-8) - self.eps_omega
+        # --- Pitch/yaw angular rate (wy, wz) ---
+        omg_py_dist = torch.sqrt(wy**2 + wz**2 + 1e-8) - self.eps_omega_pitchyaw
 
-        # Piecewise linear shaping
-        pos_dist = torch.where(pos_dist < 0, pos_dist * 15, pos_dist * 0.1)
-        vel_dist = torch.where(vel_dist < 0, vel_dist * 15, vel_dist * 1.0)
-        att_dist = torch.where(att_dist < 0, att_dist * 150, att_dist * 0.5)
-        omg_dist = torch.where(omg_dist < 0, omg_dist * 30, omg_dist * 1.0)
+        # --- Roll angular rate (wx) ---
+        omg_r_dist = torch.abs(wx) - self.eps_omega_roll
 
-        goal_val = torch.stack([pos_dist, vel_dist, att_dist, omg_dist], dim=-1)
+        # Piecewise shaping: linear inside (scale → depth ≈ −3), tanh outside
+        # Inner scales = 3 / eps  (normalised to equal depth)
+        pos_dist   = torch.where(pos_dist   < 0, pos_dist   * 30,   torch.tanh(pos_dist   * 0.5))
+        vlat_dist  = torch.where(vlat_dist  < 0, vlat_dist  * 150,  torch.tanh(vlat_dist  * 1.0))
+        vax_dist   = torch.where(vax_dist   < 0, vax_dist   * 86,   torch.tanh(vax_dist   * 1.0))
+        att_dist   = torch.where(att_dist   < 0, att_dist   * 20,   torch.tanh(att_dist   * 1.0))
+        omg_py_dist = torch.where(omg_py_dist < 0, omg_py_dist * 430,  torch.tanh(omg_py_dist * 1.0))
+        omg_r_dist  = torch.where(omg_r_dist  < 0, omg_r_dist  * 430,  torch.tanh(omg_r_dist  * 1.0))
+
+        goal_val = torch.stack([
+            pos_dist, vlat_dist, vax_dist, att_dist, omg_py_dist, omg_r_dist,
+        ], dim=-1)
         return torch.max(goal_val, dim=-1).values * self.reach_fn_weight
 
     # ---------- Avoid set ----------
+    def _compute_cb_y(self, state):
+        """Orientation-dependent Y-direction chaser half-extent (support function).
+
+        For a 1m cube at orientation q, the max LVLH-Y extent of any corner is:
+            cb_y = 0.5 * (|R[0,1]| + |R[1,1]| + |R[2,1]|)
+        where R = quat_to_R_LVLH_to_body(q), and column 1 encodes the
+        LVLH-Y direction in body frame.
+
+        Range: 0.5 (aligned) to 0.866 (worst-case = full bounding sphere).
+        """
+        q = state[..., 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        R = self.quat_to_R_LVLH_to_body(q)
+        cb_y = 0.5 * (torch.abs(R[..., 0, 1])
+                       + torch.abs(R[..., 1, 1])
+                       + torch.abs(R[..., 2, 1]))
+        return cb_y
+
     def avoid_fn(self, state):
         """
         Obstacle = target body (rectangular prism y∈[0, h_t])
                  + docking post (1.2×1.2m peg, y∈[-post_length, 0]).
-        Both fully inflated by chaser_buffer on ALL faces.
 
-        Body inflated bounds:
-            x ∈ [-w_t/2 - cb, w_t/2 + cb]
-            y ∈ [-cb, h_t + cb]
-            z ∈ [-d_t/2 - cb, d_t/2 + cb]
+        Y-facing surfaces use orientation-dependent inflation cb_y(q)
+        (support function of the rotated chaser cube in the LVLH-Y direction).
+        All other faces use the full bounding-sphere radius cb.
 
-        Post inflated bounds:
-            x ∈ [-post_hw_x - cb, post_hw_x + cb]
-            y ∈ [-(post_length + cb), cb]
-            z ∈ [-post_hw_z - cb, post_hw_z + cb]
-
-        The goal set is placed below the inflated post tip
-        (y < -(post_length + cb)) so it is outside the obstacle.
+        This allows the goal set to sit closer to the post tip when the
+        chaser is properly aligned for docking.
 
         Returns: negative inside obstacle, positive outside (safe).
         """
@@ -1591,28 +1662,30 @@ class Docking13D(Dynamics):
         z = state[..., 2]
 
         cb = self.chaser_buffer
+        cb_y = self._compute_cb_y(state)  # orientation-dependent
 
-        # --- Target body SDF (rectangular prism y∈[0, h_t], fully inflated) ---
+        # --- Target body SDF (rectangular prism y∈[0, h_t]) ---
+        # X, Z faces: full bounding sphere.  Y faces: orientation-dependent.
         half_w = self.w_t / 2.0 + cb
         half_z = self.d_t / 2.0 + cb
         s_body = torch.maximum(
             torch.abs(x) - half_w,
             torch.maximum(
-                torch.maximum(-(y + cb), y - (self.h_t + cb)),
+                torch.maximum(-(y + cb_y), y - (self.h_t + cb)),
                 torch.abs(z) - half_z
             )
         )
 
-        # --- Docking post SDF (peg y∈[-post_length, 0], fully inflated) ---
-        # The post -y tip is inflated to y = -(post_length + cb).
-        # The post +y face inflated to y = cb merges seamlessly with body -y face.
+        # --- Docking post SDF (peg y∈[-post_length, 0]) ---
+        # Tip (-Y face) and body-side (+Y merge) use cb_y.
+        # X, Z faces use full cb.
         post_hw_x_inf = self.post_hw_x + cb
         post_hw_z_inf = self.post_hw_z + cb
         s_post = torch.maximum(
             torch.abs(x) - post_hw_x_inf,
             torch.maximum(
-                torch.maximum(-(y + self.post_length + cb),
-                              y - cb),
+                torch.maximum(-(y + self.post_length + cb_y),
+                              y - cb_y),
                 torch.abs(z) - post_hw_z_inf
             )
         )
@@ -1620,21 +1693,33 @@ class Docking13D(Dynamics):
         # Union of body + post (take the one we're deeper inside)
         s_fail = torch.minimum(s_body, s_post)
 
-        # Piecewise shaping
-        s_fail = torch.where(s_fail < 0, s_fail * 0.75, s_fail * 50.0)
+        # Piecewise shaping: steep linear inside, tanh-bounded outside
+        if self.set_mode == 'reach_avoid':
+            s_fail = torch.where(s_fail < 0, s_fail * 5.0, torch.tanh(s_fail * 5.0))
+        elif self.set_mode == 'avoid':
+            pass
+
         return s_fail * self.avoid_fn_weight
 
     def boundary_fn(self, state):
         if self.set_mode == 'reach_avoid':
             return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
-        raise NotImplementedError
+        elif self.set_mode == 'avoid':
+            return self.avoid_fn(state)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def cost_fn(self, state_traj):
-        # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
-        # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
-        reach_values = self.reach_fn(state_traj)
-        avoid_values = self.avoid_fn(state_traj)
-        return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
+        if self.set_mode == 'avoid':
+            return torch.min(self.boundary_fn(state_traj), dim=-1).values
+        elif self.set_mode == 'reach_avoid':
+            # Correct reach-avoid cost: min_t max{l(x(t)), max_{k<=t}{-g(x(k))}}
+            # where l(x) is reach_fn (target set) and g(x) is avoid_fn (obstacle)
+            reach_values = self.reach_fn(state_traj)
+            avoid_values = self.avoid_fn(state_traj)
+            return torch.min(torch.clamp(reach_values, min=torch.max(-avoid_values, dim=-1).values.unsqueeze(-1)), dim=-1).values
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def check_collision_oriented(self, state):
         """Check if any corner of the oriented 3D chaser box collides with the target body.
@@ -1701,20 +1786,19 @@ class Docking13D(Dynamics):
         return False  # safe
 
     def hamiltonian(self, state, dvds):
-        if self.set_mode != 'reach_avoid':
-            raise NotImplementedError
-        opt_control = self.optimal_control(state, dvds)
-        dsdt_ = self.dsdt(state, opt_control, None)
-        return torch.sum(dvds * dsdt_, dim=-1)
+        if self.set_mode in ['avoid', 'reach_avoid']:
+            opt_control = self.optimal_control(state, dvds)
+            dsdt_ = self.dsdt(state, opt_control, None)
+            return torch.sum(dvds * dsdt_, dim=-1)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
     def optimal_control(self, state, dvds):
         """
-        Bang-bang control for reach-avoid, but:
+        Bang-bang control:
           - Force optimal sign depends on attitude: dv/dv · (R^T F_b)/m = (R dv_v)/m · F_b
+          - Reach-avoid minimises V (drives toward target); avoid maximises V (drives away from obstacle)
         """
-        if self.set_mode != 'reach_avoid':
-            raise NotImplementedError
-
         q = state[...,6:10]
         q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
         R_L2B = self.quat_to_R_LVLH_to_body(q)
@@ -1726,18 +1810,27 @@ class Docking13D(Dynamics):
         # where (R p_v) gives body-frame coefficients.
         coeff_body = torch.matmul(R_L2B, p_v.unsqueeze(-1)).squeeze(-1) / self.mc
 
-        Fx = torch.where(coeff_body[...,0] > 0, -self.F_bar, self.F_bar)
-        Fy = torch.where(coeff_body[...,1] > 0, -self.F_bar, self.F_bar)
-        Fz = torch.where(coeff_body[...,2] > 0, -self.F_bar, self.F_bar)
-
         # Costates for omega: omega_dot includes I^{-1} tau
         p_omega = dvds[...,10:13]  # ∂V/∂omega
         # maximize p_omega · (I^{-1} tau) => (I^{-T} p_omega) · tau
         coeff_tau = torch.linalg.solve(self.I.transpose(0,1), p_omega.unsqueeze(-1)).squeeze(-1)
 
-        tx = torch.where(coeff_tau[...,0] > 0, -self.tau_bar, self.tau_bar)
-        ty = torch.where(coeff_tau[...,1] > 0, -self.tau_bar, self.tau_bar)
-        tz = torch.where(coeff_tau[...,2] > 0, -self.tau_bar, self.tau_bar)
+        if self.set_mode == 'reach_avoid':
+            Fx = torch.where(coeff_body[...,0] > 0, -self.F_bar, self.F_bar)
+            Fy = torch.where(coeff_body[...,1] > 0, -self.F_bar, self.F_bar)
+            Fz = torch.where(coeff_body[...,2] > 0, -self.F_bar, self.F_bar)
+            tx = torch.where(coeff_tau[...,0] > 0, -self.tau_bar, self.tau_bar)
+            ty = torch.where(coeff_tau[...,1] > 0, -self.tau_bar, self.tau_bar)
+            tz = torch.where(coeff_tau[...,2] > 0, -self.tau_bar, self.tau_bar)
+        elif self.set_mode == 'avoid':
+            Fx = torch.where(coeff_body[...,0] > 0, self.F_bar, -self.F_bar)
+            Fy = torch.where(coeff_body[...,1] > 0, self.F_bar, -self.F_bar)
+            Fz = torch.where(coeff_body[...,2] > 0, self.F_bar, -self.F_bar)
+            tx = torch.where(coeff_tau[...,0] > 0, self.tau_bar, -self.tau_bar)
+            ty = torch.where(coeff_tau[...,1] > 0, self.tau_bar, -self.tau_bar)
+            tz = torch.where(coeff_tau[...,2] > 0, self.tau_bar, -self.tau_bar)
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
         return torch.stack([Fx, Fy, Fz, tx, ty, tz], dim=-1)
 
@@ -1812,13 +1905,24 @@ class Docking13D(Dynamics):
         q1 = float(self.q_goal[1].cpu()) if self.q_goal[1].is_cuda else float(self.q_goal[1])
         q2 = float(self.q_goal[2].cpu()) if self.q_goal[2].is_cuda else float(self.q_goal[2])
         q3 = float(self.q_goal[3].cpu()) if self.q_goal[3].is_cuda else float(self.q_goal[3])
-        return {
-            'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
-            'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
-            'x_axis_idx': 0,
-            'y_axis_idx': 1,
-            'z_axis_idx': 2,
-        }
+        if self.set_mode == 'reach_avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
+                'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 2,
+            }
+        elif self.set_mode == 'avoid':
+            return {
+                'state_slices': [0, 0, 0, 0, 0, 0, q0, q1, q2, q3, 0, 0, 0],
+                'state_labels': ['x', 'y', 'z', 'vx', 'vy', 'vz', 'q0', 'q1', 'q2', 'q3', 'wx', 'wy', 'wz'],
+                'x_axis_idx': 0,
+                'y_axis_idx': 1,
+                'z_axis_idx': 2,
+            }
+        else:
+            raise NotImplementedError(f"set_mode '{self.set_mode}' is not implemented for Docking13D")
 
 
 class Quadrotor(Dynamics):

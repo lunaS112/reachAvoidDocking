@@ -22,22 +22,22 @@ import json
 import os
 import pickle
 import sys
-import time
-
 import numpy as np
 import torch
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.controllers import (
     BRTController13D, MPCController13D, MPCTerminalController13D,
+    SafetyFilter,
 )
 from utils.brt_visualization_13d import BRTVisualizer13D
 from utils.controllers.controller_animation_13d import ControllerAnimation13D
 from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation13D
+from utils.controllers.slice_gif_13d import SliceGIF13D
+from utils.controllers.combined_gif_13d import CombinedGIF13D
 from utils.controllers.docking13d_mixin import _quat_error_angle_np
 from utils.controllers.static_plots_13d import (
     plot_trajectory_13d, plot_states_13d, plot_controls_13d,
@@ -51,22 +51,11 @@ from dynamics import dynamics as dynamics_module
 
 CONTROLLER_LABELS = {
     'brt_13d':          'BRT 13D',
+    'brt_safety_13d':   'BRT+Safety 13D',
     'mpc_13d':          'MPC 13D',
     'mpc_terminal_13d': 'MPC+Terminal 13D',
 }
 
-CONTROLLER_COLORS = {
-    'brt_13d':          '#1f77b4',
-    'mpc_13d':          '#ff7f0e',
-    'mpc_terminal_13d': '#2ca02c',
-}
-
-STATE_LABELS = [
-    'x', 'y', 'z',             # position [m]
-    'vx', 'vy', 'vz',          # velocity [m/s]
-    'q0', 'q1', 'q2', 'q3',    # quaternion
-    'wx', 'wy', 'wz',          # angular velocity [rad/s]
-]
 
 
 def _fmt_state(state):
@@ -97,6 +86,22 @@ def build_controller(name, args):
             tMax=args.tMax,
             dt=args.dt,
             device=args.device,
+        )
+    elif name == 'brt_safety_13d':
+        sf = SafetyFilter(
+            mode=args.safety_filter_mode,
+            checkpoint_path=args.safety_checkpoint_path,
+            tMax=args.safety_tMax,
+            margin=args.safety_filter_margin,
+            gamma=args.safety_filter_gamma,
+            device=args.device,
+        )
+        return BRTController13D(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
         )
     elif name == 'mpc_13d':
         return MPCController13D(
@@ -167,8 +172,8 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
     if value_filter_fn is not None:
         # When filtering by BRAT, tighten bounds to improve acceptance
         # rate.  Wider bounds for longer-horizon models (bigger BRAT).
-        sample_lo[:3] = np.maximum(sample_lo[:3], -1.5)
-        sample_hi[:3] = np.minimum(sample_hi[:3],  1.5)
+        sample_lo[:3] = np.maximum(sample_lo[:3], -4.0)
+        sample_hi[:3] = np.minimum(sample_hi[:3],  4.0)
         sample_lo[3:6] = np.maximum(sample_lo[3:6], -0.3)
         sample_hi[3:6] = np.minimum(sample_hi[3:6],  0.3)
         sample_lo[10:13] = np.maximum(sample_lo[10:13], -0.3)
@@ -389,7 +394,9 @@ def run_single(args):
                else 'COLLISION' if result['collision']
                else 'TIMEOUT')
     traj = result['trajectory']
-    final_dist = float(np.linalg.norm(traj[-1, :3]))
+    # Distance to goal center (matches reach_fn / goal band definition)
+    goal_center = np.array([0.0, dynamics.goal_y_center, 0.0])
+    final_dist = float(np.linalg.norm(traj[-1, :3] - goal_center))
     final_qerr = float(_quat_error_angle_np(
         traj[-1, 6:10], dynamics.q_goal.cpu().numpy()))
     print(f"  Outcome       : {outcome}")
@@ -400,15 +407,21 @@ def run_single(args):
     print(f"  Final dist    : {final_dist:.4f} m")
     print(f"  Final quat err: {np.degrees(final_qerr):.2f} deg")
 
+    # Safety filter summary
+    sf_log = result.get('safety_filter_log', [])
+    if sf_log:
+        active_steps = sum(1 for e in sf_log if e.get('filter_active', False))
+        print(f"  Safety filter : {active_steps}/{len(sf_log)} steps active")
+
     # ---- Save --------------------------------------------------------
     np.save(os.path.join(args.output_dir, 'trajectory.npy'),
             result['trajectory'])
     np.save(os.path.join(args.output_dir, 'controls.npy'),
             result['controls'])
-    print(f"\n  Saved to: {args.output_dir}/")
+    print(f"\n  Saved to {args.output_dir}/")
 
     # ---- Static plots (always) ----------------------------------------
-    print("  Generating plots ...")
+    print("  Generating static plots...")
     plot_trajectory_13d(
         result, dynamics,
         os.path.join(args.output_dir, 'trajectory.png'))
@@ -449,6 +462,27 @@ def run_single(args):
                     result, mp4_path, fps=args.viz_fps,
                     max_frames=args.viz_max_frames)
 
+    # ---- 2-D BRT slice GIFs (optional) --------------------------------
+    if getattr(args, 'viz_gifs', False) and hasattr(controller, 'model'):
+        brt_viz_for_gif = BRTVisualizer13D(controller, backend='plotly')
+        slice_gif = SliceGIF13D(brt_viz_for_gif, dynamics)
+        slice_gif.generate(
+            result, args.output_dir,
+            max_frames=args.viz_max_frames,
+            resolution=getattr(args, 'viz_gif_resolution', 80),
+            fps=getattr(args, 'viz_gif_fps', 5),
+        )
+        # Combined 4-panel GIF (3 slices + 3-D isometric)
+        combined_gif = CombinedGIF13D(brt_viz_for_gif, dynamics)
+        combined_gif.generate(
+            result,
+            os.path.join(args.output_dir, 'brt_combined.gif'),
+            max_frames=args.viz_max_frames,
+            resolution=getattr(args, 'viz_gif_resolution', 80),
+            resolution_3d=min(30, getattr(args, 'viz_gif_resolution', 80) // 3),
+            fps=getattr(args, 'viz_gif_fps', 5),
+        )
+
 
 def run_compare(args):
     """Run N rollouts per controller and compare."""
@@ -483,8 +517,68 @@ def run_compare(args):
     print(f"  {len(ics)} valid ICs obtained.")
     np.save(os.path.join(args.output_dir, 'initial_conditions.npy'), ics)
 
+    # ---- Helper: build detail record for one rollout -------------------
+    q_goal_np = (dynamics.q_goal.cpu().numpy()
+                 if hasattr(dynamics, 'q_goal')
+                 else np.array([1, 0, 0, 0]))
+    goal_center = np.array([0.0, dynamics.goal_y_center, 0.0])
+
+    def _detail(i, result):
+        fs = result['final_state']
+        q = fs[6:10] / (np.linalg.norm(fs[6:10]) + 1e-12)
+        dot = np.clip(np.abs(np.dot(q, q_goal_np)), 0, 1)
+        return {
+            'rollout_idx': i,
+            'initial_state': ics[i].tolist(),
+            'final_state': fs.tolist(),
+            'quat_err_deg': round(float(np.degrees(2 * np.arccos(dot))), 4),
+            'final_dist': round(float(np.linalg.norm(fs[:3] - goal_center)), 4),
+            'sim_time': round(float(result['times'][-1]), 4),
+            'control_effort': round(float(result['control_effort']), 4),
+            'wall_time': round(float(result['wall_time']), 4),
+        }
+
+    def _save_checkpoint(all_results_so_far, tag='checkpoint'):
+        """Write comparison_results.json with whatever rollouts are done."""
+        json_path = os.path.join(args.output_dir, 'comparison_results.json')
+        json_data = {
+            '_metadata': {
+                'sampling_method': sampling_label,
+                'num_rollouts': args.num_rollouts,
+                'seed': args.seed,
+                'tMax': args.tMax,
+                'max_sim_time': args.max_sim_time,
+                'checkpoint_path': args.checkpoint_path,
+                'status': tag,
+            }
+        }
+        for cn in all_results_so_far:
+            disp = CONTROLLER_LABELS.get(cn, cn)
+            results = all_results_so_far[cn]
+            m = compute_metrics(results)
+            entry = {k: (float(v) if isinstance(v, (np.floating, float))
+                         else int(v)) for k, v in m.items()}
+            colls, docks, touts = [], [], []
+            for j, r in enumerate(results):
+                d = _detail(j, r)
+                if r['collision']:
+                    colls.append(d)
+                elif r['docked']:
+                    docks.append(d)
+                else:
+                    touts.append(d)
+            entry['collisions'] = colls
+            entry['docked'] = docks
+            entry['timeouts'] = touts
+            json_data[disp] = entry
+        with open(json_path, 'w') as f:
+            json.dump(json_data, f, indent=2)
+
     # ---- Run each controller ------------------------------------------
+    CHECKPOINT_INTERVAL = 100
+
     metrics_all = {}
+    all_results = {}
     for ctrl_name in args.controllers:
         display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
         _banner(f"{display}  ({len(ics)} rollouts)", char='-')
@@ -503,16 +597,101 @@ def run_compare(args):
                   f"wall={res['wall_time']:.1f}s")
             results.append(res)
 
+            # Periodic checkpoint every CHECKPOINT_INTERVAL rollouts
+            if (i + 1) % CHECKPOINT_INTERVAL == 0:
+                all_results[ctrl_name] = results
+                _save_checkpoint(all_results,
+                                 tag=f'checkpoint_{ctrl_name}_{i+1}')
+                print(f"  ** Checkpoint saved ({i+1}/{len(ics)} rollouts)")
+
+        all_results[ctrl_name] = results
         m = compute_metrics(results)
         metrics_all[display] = m
 
     # ---- Summary table ------------------------------------------------
     print_comparison_table(metrics_all)
 
+    # ---- Collect detailed per-rollout outcomes ------------------------
+    detailed_by_name = {}
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        results = all_results[ctrl_name]
+
+        collisions = []
+        docked_list = []
+        timeouts = []
+
+        for i, result in enumerate(results):
+            detail = _detail(i, result)
+
+            if result['collision']:
+                collisions.append(detail)
+            elif result['docked']:
+                docked_list.append(detail)
+            else:
+                timeouts.append(detail)
+
+        detailed_by_name[display] = {
+            'collisions': collisions,
+            'docked': docked_list,
+            'timeouts': timeouts,
+        }
+
+    # ---- Save collision ICs per controller as .npy --------------------
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        coll_details = detailed_by_name[display]['collisions']
+        if coll_details:
+            collision_ics = np.array([c['initial_state'] for c in coll_details])
+            collision_path = os.path.join(
+                args.output_dir, f'collision_ics_{ctrl_name}.npy')
+            np.save(collision_path, collision_ics)
+            print(f"  {display}: {len(coll_details)} collision IC(s) "
+                  f"saved to {collision_path}")
+
+    # ---- Save timeout ICs per controller as .npy ----------------------
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        tout_details = detailed_by_name[display]['timeouts']
+        if tout_details:
+            timeout_ics = np.array([c['initial_state'] for c in tout_details])
+            timeout_path = os.path.join(
+                args.output_dir, f'timeout_ics_{ctrl_name}.npy')
+            np.save(timeout_path, timeout_ics)
+            print(f"  {display}: {len(tout_details)} timeout IC(s) "
+                  f"saved to {timeout_path}")
+
+    # ---- Print failure summary ----------------------------------------
+    print('\n' + '-' * 60)
+    print('  FAILURE SUMMARY')
+    print('-' * 60)
+    for ctrl_name in args.controllers:
+        display = CONTROLLER_LABELS.get(ctrl_name, ctrl_name)
+        coll = detailed_by_name[display]['collisions']
+        tout = detailed_by_name[display]['timeouts']
+        if coll:
+            print(f"\n  {display}  ({len(coll)} collision(s)):")
+            for c in coll:
+                ic = c['initial_state']
+                print(f"    rollout {c['rollout_idx']:>3d}  "
+                      f"pos=({ic[0]:+.2f},{ic[1]:+.2f},{ic[2]:+.2f})  "
+                      f"t_coll={c['sim_time']:.1f}s")
+        if tout:
+            print(f"\n  {display}  ({len(tout)} timeout(s)):")
+            for c in tout:
+                ic = c['initial_state']
+                print(f"    rollout {c['rollout_idx']:>3d}  "
+                      f"pos=({ic[0]:+.2f},{ic[1]:+.2f},{ic[2]:+.2f})  "
+                      f"dist={c['final_dist']:.3f}m  "
+                      f"q_err={c['quat_err_deg']:.1f}°")
+        if not coll and not tout:
+            print(f"\n  {display}: no failures")
+    print('-' * 60)
+
+    # ---- Final JSON save (reuses checkpoint helper) --------------------
+    _save_checkpoint(all_results, tag='final')
     json_path = os.path.join(args.output_dir, 'comparison_results.json')
-    with open(json_path, 'w') as f:
-        json.dump(metrics_all, f, indent=2)
-    print(f"  Saved to: {json_path}")
+    print(f"\n  Results saved to: {json_path}")
 
 # ------------------------------------------------------------------ #
 #  CLI
@@ -533,6 +712,18 @@ def main():
     parent.add_argument('--max_sim_time', type=float, default=60.0)
     parent.add_argument('--output_dir', type=str, default='./outputs/single_13d')
 
+    # Safety filter arguments (for brt_safety_13d)
+    parent.add_argument('--safety_filter_mode', type=int, default=1,
+                        help='Safety filter mode: 0=off, 1=least-restrictive, 2=CBF-QP')
+    parent.add_argument('--safety_checkpoint_path', type=str, default=None,
+                        help='Path to avoid-only BRT checkpoint for safety filter')
+    parent.add_argument('--safety_tMax', type=float, default=None,
+                        help='tMax for safety BRT queries (None = use model default)')
+    parent.add_argument('--safety_filter_margin', type=float, default=0.1,
+                        help='Activation threshold delta for mode 1')
+    parent.add_argument('--safety_filter_gamma', type=float, default=0.2,
+                        help='CBF decay rate for mode 2')
+
     # MPC arguments
     parent.add_argument('--planning_horizon', type=float, default=20.0)
     parent.add_argument('--mpc_dt', type=float, default=0.5)
@@ -549,6 +740,12 @@ def main():
                         help='Generate interactive HTML visualisation.')
     parent.add_argument('--viz_mp4', action='store_true',
                         help='Generate MP4 animation.')
+    parent.add_argument('--viz_gifs', action='store_true',
+                        help='Generate 2-D BRT slice GIFs (XY, XZ, YZ).')
+    parent.add_argument('--viz_gif_resolution', type=int, default=80,
+                        help='Grid resolution for slice GIFs.')
+    parent.add_argument('--viz_gif_fps', type=int, default=5,
+                        help='Frames per second for slice GIFs (default: 3).')
     parent.add_argument('--viz_resolution', type=int, default=40)
     parent.add_argument('--viz_max_frames', type=int, default=50)
     parent.add_argument('--viz_fps', type=int, default=10)
@@ -556,7 +753,8 @@ def main():
     # --- single ------------------------------------------------------ #
     sp_single = subparsers.add_parser('single', parents=[parent])
     sp_single.add_argument('--controller', type=str, required=True,
-                           choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
+                           choices=['brt_13d', 'brt_safety_13d',
+                                    'mpc_13d', 'mpc_terminal_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
     sp_single.add_argument('--sampling_method', type=str, default='uniform',
@@ -569,7 +767,8 @@ def main():
     # --- compare ----------------------------------------------------- #
     sp_compare = subparsers.add_parser('compare', parents=[parent])
     sp_compare.add_argument('--controllers', nargs='+', required=True,
-                            choices=['brt_13d', 'mpc_13d', 'mpc_terminal_13d'])
+                            choices=['brt_13d', 'brt_safety_13d',
+                                     'mpc_13d', 'mpc_terminal_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)
     sp_compare.add_argument('--seed', type=int, default=42)
     sp_compare.add_argument('--sampling_method', type=str, default='uniform',

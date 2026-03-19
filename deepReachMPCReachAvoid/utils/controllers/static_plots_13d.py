@@ -7,8 +7,8 @@ Three public functions, each producing one PNG:
       2×2 grid: 3D trajectory, XY projection, XZ projection, distance-to-dock.
 
   • ``plot_states_13d``       → ``simulation_states.png``
-      4×2 grid: position, velocity, quaternion, angular velocity,
-      distance, value function, phase, summary text.
+      5×2 grid: position, velocity, quaternion, angular velocity,
+      distance, value function, phase, summary text, BRAT time.
 
   • ``plot_controls_13d``     → ``simulation_controls.png``
       2×2 grid: forces, torques, cumulative effort, force/torque magnitude.
@@ -48,47 +48,68 @@ def _q_goal_np(dynamics):
 
 
 def _draw_target_2d(ax, dynamics, plane='xy'):
-    """Draw 2-D projection of the target body + dock circle.
+    """Draw 2-D projection of the target body + docking post + goal band.
 
     *plane* is one of ``'xy'``, ``'xz'``.
     """
     import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
 
     d = dynamics
-    hw, hh, hd = d.w_t / 2, d.h_t, d.d_t / 2
+    hw = d.w_t / 2
+    hd = d.d_t / 2
+    post_hw_x = d.post_hw_x
+    post_hw_z = d.post_hw_z
+    post_len = d.post_length
 
     if plane == 'xy':
-        # Rectangle [−hw, hw] × [0, hh]
-        rect = plt.Rectangle((-hw, 0), d.w_t, hh,
+        # Target body [−hw, hw] × [0, h_t]
+        rect = plt.Rectangle((-hw, 0), d.w_t, d.h_t,
                               linewidth=1.5, edgecolor='gray',
                               facecolor='silver', alpha=0.35, zorder=5)
         ax.add_patch(rect)
-        # Dock circle at origin
-        circ = plt.Circle((0, 0), d.dock_rad, linewidth=1.2,
-                           edgecolor='limegreen', facecolor='limegreen',
-                           alpha=0.20, zorder=6)
-        ax.add_patch(circ)
+        # Docking post [−post_hw_x, post_hw_x] × [−post_len, 0]
+        post = plt.Rectangle((-post_hw_x, -post_len),
+                              2 * post_hw_x, post_len,
+                              linewidth=1.2, edgecolor='green',
+                              facecolor='limegreen', alpha=0.30, zorder=6)
+        ax.add_patch(post)
+        # Goal band
+        if hasattr(d, 'goal_y_min'):
+            goal_band = plt.Rectangle((-d.eps_p, d.goal_y_min),
+                                       2 * d.eps_p,
+                                       d.goal_y_max - d.goal_y_min,
+                                       linewidth=1.2, edgecolor='gold',
+                                       facecolor='gold', alpha=0.20,
+                                       linestyle='--', zorder=7)
+            ax.add_patch(goal_band)
     elif plane == 'xz':
-        # Rectangle [−hw, hw] × [−hd, hd]
+        # Target body [−hw, hw] × [−hd, hd]
         rect = plt.Rectangle((-hw, -hd), d.w_t, d.d_t,
                               linewidth=1.5, edgecolor='gray',
                               facecolor='silver', alpha=0.35, zorder=5)
         ax.add_patch(rect)
-        circ = plt.Circle((0, 0), d.dock_rad, linewidth=1.2,
-                           edgecolor='limegreen', facecolor='limegreen',
-                           alpha=0.20, zorder=6)
-        ax.add_patch(circ)
+        # Post cross-section [−post_hw_x, post_hw_x] × [−post_hw_z, post_hw_z]
+        post = plt.Rectangle((-post_hw_x, -post_hw_z),
+                              2 * post_hw_x, 2 * post_hw_z,
+                              linewidth=1.2, edgecolor='green',
+                              facecolor='limegreen', alpha=0.30, zorder=6)
+        ax.add_patch(post)
+        # Goal circle (eps_p radius in x-z)
+        if hasattr(d, 'eps_p'):
+            circ = plt.Circle((0, 0), d.eps_p, linewidth=1.2,
+                               edgecolor='gold', facecolor='gold',
+                               alpha=0.20, linestyle='--', zorder=7)
+            ax.add_patch(circ)
 
 
 def _draw_target_3d(ax, dynamics):
-    """Draw 3-D target body + dock wireframe circles."""
+    """Draw 3-D target body + docking post + goal band box."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     d = dynamics
     hw, hd = d.w_t / 2, d.d_t / 2
 
-    # Box centred at (0, h_t/2, 0)
+    # --- Target body box centred at (0, h_t/2, 0) ---
     from utils.brt_visualization_13d import _oriented_box_mesh
     _, faces = _oriented_box_mesh(
         [0, d.h_t / 2, 0], (hw, d.h_t / 2, hd))
@@ -97,22 +118,27 @@ def _draw_target_3d(ax, dynamics):
     mesh.set_edgecolor('gray')
     ax.add_collection3d(mesh)
 
-    # Dock hemisphere wireframe circles
-    theta = np.linspace(0, 2 * np.pi, 40)
-    for elev_frac in np.linspace(0.1, 1.0, 5):
-        r = d.dock_rad * np.sin(np.arccos(1 - elev_frac))
-        h = d.dock_rad * (1 - elev_frac)
-        ax.plot(r * np.cos(theta), np.full_like(theta, h),
-                r * np.sin(theta), color='limegreen', alpha=0.5, lw=1.0)
+    # --- Docking post box centred at (0, -post_length/2, 0) ---
+    post_hw_x = d.post_hw_x
+    post_hw_z = d.post_hw_z
+    post_len = d.post_length
+    _, pfaces = _oriented_box_mesh(
+        [0, -post_len / 2, 0], (post_hw_x, post_len / 2, post_hw_z))
+    pmesh = Poly3DCollection(pfaces, alpha=0.30, linewidths=0.5)
+    pmesh.set_facecolor('limegreen')
+    pmesh.set_edgecolor('green')
+    ax.add_collection3d(pmesh)
 
-    # Reach tolerance sphere
-    u = np.linspace(0, 2 * np.pi, 15)
-    v = np.linspace(0, np.pi, 15)
-    rr = d.eps_p
-    xs = rr * np.outer(np.cos(u), np.sin(v))
-    ys = rr * np.outer(np.sin(u), np.sin(v))
-    zs = rr * np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_surface(xs, ys, zs, color='lime', alpha=0.15)
+    # --- Goal band box ---
+    if hasattr(d, 'goal_y_min'):
+        goal_cy = (d.goal_y_min + d.goal_y_max) / 2
+        goal_hy = (d.goal_y_max - d.goal_y_min) / 2
+        _, gfaces = _oriented_box_mesh(
+            [0, goal_cy, 0], (d.eps_p, goal_hy, d.eps_p))
+        gmesh = Poly3DCollection(gfaces, alpha=0.15, linewidths=0.8)
+        gmesh.set_facecolor('gold')
+        gmesh.set_edgecolor('goldenrod')
+        ax.add_collection3d(gmesh)
 
 
 # --------------------------------------------------------------------------- #
@@ -136,7 +162,9 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 
     traj = result['trajectory']
     times = result['times']
-    dists = np.linalg.norm(traj[:, :3], axis=1)
+    # Distance to goal center (matches reach_fn / goal band definition)
+    goal_center = np.array([0.0, dynamics.goal_y_center, 0.0])
+    dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
     d = dynamics
 
     pad = 3.0
@@ -207,9 +235,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
     # ---- (1,1) Distance to dock -------------------------------------- #
     ax_dist = fig.add_subplot(224)
     ax_dist.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax_dist.axhline(d.dock_rad, color='limegreen', ls='--', lw=1.2,
-                     label=f'dock_rad = {d.dock_rad}m')
-    ax_dist.axhline(d.eps_p, color='lime', ls=':', lw=1.2,
+    ax_dist.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
                      label=f'eps_p = {d.eps_p}m')
     if result.get('docked', False):
         dock_idx = np.argmax(dists <= d.eps_p)
@@ -238,13 +264,14 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 # --------------------------------------------------------------------------- #
 
 def plot_states_13d(result, dynamics, save_path=None):
-    """Create a 4×2 state time-series figure.
+    """Create a 5×2 state time-series figure.
 
     Panels:
       (0,0) Position (x,y,z)        (0,1) Velocity (vx,vy,vz)
       (1,0) Quaternion (q0-q3)      (1,1) Angular velocity (ωx,ωy,ωz)
       (2,0) Distance to target      (2,1) Value function
       (3,0) Phase                   (3,1) Summary text
+      (4,0) BRAT time (t*)          (4,1) (empty)
 
     Returns ``matplotlib.figure.Figure``.
     """
@@ -258,61 +285,123 @@ def plot_states_13d(result, dynamics, save_path=None):
     d = dynamics
     q_goal = _q_goal_np(dynamics)
 
-    fig, axes = plt.subplots(4, 2, figsize=(16, 18))
+    fig, axes = plt.subplots(5, 2, figsize=(16, 22))
 
     # ---- (0,0) Position ---------------------------------------------- #
     ax = axes[0, 0]
-    for i, (lbl, c) in enumerate(zip(['x', 'y', 'z'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    pos_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    for i, (lbl, c) in enumerate(zip(['x', 'y', 'z'], pos_colors)):
         ax.plot(times, traj[:, i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: x and z centered at 0 ± eps_p, y is [goal_y_min, goal_y_max]
+    ax.fill_between(times, -d.eps_p, d.eps_p,
+                    color='tab:blue', alpha=0.10, label=f'x,z goal ±{d.eps_p}m')
+    ax.fill_between(times, -d.eps_p, d.eps_p,
+                    color='tab:green', alpha=0.07)
+    ax.fill_between(times, d.goal_y_min, d.goal_y_max,
+                    color='tab:orange', alpha=0.12,
+                    label=f'y goal [{d.goal_y_min:.2f}, {d.goal_y_max:.2f}]')
+    # Green highlight where all position states are simultaneously in-tolerance
+    pos_in_tol = (
+        (np.abs(traj[:, 0]) <= d.eps_p) &
+        (np.abs(traj[:, 2]) <= d.eps_p) &
+        (traj[:, 1] >= d.goal_y_min) & (traj[:, 1] <= d.goal_y_max)
+    )
     ax.set_title('Position (m)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=pos_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (0,1) Velocity ---------------------------------------------- #
     ax = axes[0, 1]
-    for i, (lbl, c) in enumerate(zip(['vx', 'vy', 'vz'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    vel_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    for i, (lbl, c) in enumerate(zip(['vx', 'vy', 'vz'], vel_colors)):
         ax.plot(times, traj[:, 3 + i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: vx,vz at 0 ± eps_v_lateral; vy uses positive axial band
+    ax.fill_between(times, -d.eps_v_lateral, d.eps_v_lateral,
+                    color='tab:blue', alpha=0.10,
+                    label=f'vx,vz goal ±{d.eps_v_lateral}')
+    ax.fill_between(times, -d.eps_v_lateral, d.eps_v_lateral,
+                    color='tab:green', alpha=0.07)
+    ax.fill_between(times, d.eps_v_axial_lo, d.eps_v_axial_hi,
+                    color='tab:orange', alpha=0.12,
+                    label=f'vy goal [{d.eps_v_axial_lo}, {d.eps_v_axial_hi}]')
+    # Green highlight where all velocity states are simultaneously in-tolerance
+    vel_in_tol = (
+        (np.abs(traj[:, 3]) <= d.eps_v_lateral) &
+        (np.abs(traj[:, 5]) <= d.eps_v_lateral) &
+        (traj[:, 4] >= d.eps_v_axial_lo) & (traj[:, 4] <= d.eps_v_axial_hi)
+    )
     ax.set_title('Velocity (m/s)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=vel_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (1,0) Quaternion -------------------------------------------- #
     ax = axes[1, 0]
-    q_labels = ['q₀', 'q₁', 'q₂', 'q₃']
+    q_labels = ['q\u2080', 'q\u2081', 'q\u2082', 'q\u2083']
     q_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
     for i in range(4):
         ax.plot(times, traj[:, 6 + i], color=q_colors[i], lw=1.5,
                 label=q_labels[i])
-        ax.axhline(q_goal[i], color=q_colors[i], ls=':', lw=0.8, alpha=0.5)
-    ax.set_title('Quaternion')
+        ax.fill_between(times, q_goal[i] - d.eps_q, q_goal[i] + d.eps_q,
+                        color=q_colors[i], alpha=0.08)
+    # Green highlight where all quaternion components are simultaneously in-tolerance
+    quat_in_tol = np.ones(len(times), dtype=bool)
+    for i in range(4):
+        quat_in_tol &= (np.abs(traj[:, 6 + i] - q_goal[i]) <= d.eps_q)
+    ax.set_title(f'Quaternion (bands = q_goal ±{d.eps_q:.3f} rad)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=quat_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
     ax.legend(fontsize=8, ncol=2)
 
     # ---- (1,1) Angular velocity -------------------------------------- #
     ax = axes[1, 1]
-    for i, (lbl, c) in enumerate(zip(['ωx', 'ωy', 'ωz'],
-                                      ['tab:blue', 'tab:orange', 'tab:green'])):
+    omega_colors = ['tab:blue', 'tab:orange', 'tab:green']
+    omega_labels = ['\u03c9x', '\u03c9y', '\u03c9z']
+    for i, (lbl, c) in enumerate(zip(omega_labels, omega_colors)):
         ax.plot(times, traj[:, 10 + i], color=c, lw=1.5, label=lbl)
-    ax.axhline(0, color='k', ls=':', lw=1, alpha=0.4, label='Goal')
+    # Goal bands: wx (roll) at 0 ± eps_omega_roll; wy,wz at 0 ± eps_omega_pitchyaw
+    ax.fill_between(times, -d.eps_omega_roll, d.eps_omega_roll,
+                    color='tab:blue', alpha=0.10,
+                    label=f'\u03c9x goal ±{d.eps_omega_roll:.4f}')
+    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
+                    color='tab:orange', alpha=0.10,
+                    label=f'\u03c9y,\u03c9z goal ±{d.eps_omega_pitchyaw:.4f}')
+    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
+                    color='tab:green', alpha=0.07)
+    # Green highlight where all angular velocity states are simultaneously in-tolerance
+    omg_in_tol = (
+        (np.abs(traj[:, 10]) <= d.eps_omega_roll) &
+        (np.abs(traj[:, 11]) <= d.eps_omega_pitchyaw) &
+        (np.abs(traj[:, 12]) <= d.eps_omega_pitchyaw)
+    )
     ax.set_title('Angular velocity (rad/s)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(times, ymin, ymax, where=omg_in_tol,
+                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+    ax.set_ylim(ymin, ymax)
+    ax.legend(fontsize=7)
 
     # ---- (2,0) Distance ---------------------------------------------- #
     ax = axes[2, 0]
-    dists = np.linalg.norm(traj[:, :3], axis=1)
+    goal_center = np.array([0.0, d.goal_y_center, 0.0])
+    dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
     ax.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax.axhline(d.dock_rad, color='limegreen', ls='--', lw=1.2,
-               label=f'dock_rad = {d.dock_rad}m')
-    ax.axhline(d.eps_p, color='lime', ls=':', lw=1.2,
+    ax.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
                label=f'eps_p = {d.eps_p}m')
     ax.set_title('Distance to Target (m)')
     ax.set_xlabel('Time (s)')
@@ -371,6 +460,64 @@ def plot_states_13d(result, dynamics, save_path=None):
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     ax.set_title('Summary')
 
+    # ---- (4,0) BRAT time t* ----------------------------------------- #
+    ax = axes[4, 0]
+    t_rem = result.get('t_remaining')
+    phases_arr = np.asarray(result['phases']) if 'phases' in result else None
+
+    if t_rem is not None and phases_arr is not None:
+        t_rem = np.asarray(t_rem, dtype=np.float64)
+        n = min(len(times), len(t_rem), len(phases_arr))
+        t_plot = times[:n]
+        t_rem_plot = t_rem[:n]
+        ph_plot = phases_arr[:n]
+
+        # Background shading for Phase 1 (grey) vs Phase 2 (white)
+        phase1_mask = ph_plot == 1
+        if np.any(phase1_mask):
+            ax.fill_between(t_plot, 0, t_rem_plot.max() * 1.1,
+                            where=phase1_mask, color='gray', alpha=0.15,
+                            label='Phase 1', step='post')
+
+        # Plot t* line only during Phase 2 (mask Phase 1 as NaN)
+        t_star_line = t_rem_plot.copy()
+        t_star_line[phase1_mask] = np.nan
+        ax.plot(t_plot, t_star_line, 'b-', lw=1.5, label='t* (strict)')
+
+        # Overlay status markers from brt_time_adjustments (non-strict events)
+        adjustments = result.get('brt_time_adjustments', [])
+        argmin_times_list = []
+        argmin_tstar_list = []
+        hold_times_list = []
+        hold_tstar_list = []
+        for adj in adjustments:
+            st = adj.get('status', '')
+            if st == 'argmin':
+                argmin_times_list.append(adj['sim_time'])
+                argmin_tstar_list.append(adj['t_star'])
+            elif st == 'hold':
+                hold_times_list.append(adj['sim_time'])
+                hold_tstar_list.append(adj['t_star'])
+        if argmin_times_list:
+            ax.scatter(argmin_times_list, argmin_tstar_list,
+                       c='red', s=20, zorder=5, label='argmin')
+        if hold_times_list:
+            ax.scatter(hold_times_list, hold_tstar_list,
+                       c='goldenrod', s=20, zorder=5, label='hold')
+
+        ax.set_ylabel('t* (s)')
+        ax.legend(fontsize=7)
+    else:
+        ax.text(0.5, 0.5, 'No t_remaining data',
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=12, color='gray')
+    ax.set_title('BRAT Time Horizon t*')
+    ax.set_xlabel('Time (s)')
+    ax.grid(True, alpha=0.3)
+
+    # ---- (4,1) empty ------------------------------------------------- #
+    axes[4, 1].axis('off')
+
     plt.tight_layout()
 
     if save_path:
@@ -399,7 +546,6 @@ def plot_controls_13d(result, dynamics, save_path=None):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    traj = result['trajectory']
     controls = result['controls']
     times = result['times']
     d = dynamics
