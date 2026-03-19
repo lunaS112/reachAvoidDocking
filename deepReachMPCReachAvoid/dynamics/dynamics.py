@@ -592,8 +592,8 @@ class Docking6D(Dynamics):
         self.post_length = 0.2  # how far post extends in -y (m) = 0.2*h_c
 
         # Goal region below inflated post tip (recomputed for 2D buffer)
-        goal_clearance = -0.007
-        goal_band_height = 0.5
+        goal_clearance = 0.143
+        goal_band_height = 0.2
         self.goal_y_max = -(self.post_length + self.chaser_buffer + goal_clearance)  # -1.0
         self.goal_y_min = self.goal_y_max - goal_band_height                         # -1.4
         self.goal_y_center = (self.goal_y_min + self.goal_y_max) / 2.0               # -1.2

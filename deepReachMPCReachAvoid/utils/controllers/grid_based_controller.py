@@ -153,23 +153,20 @@ class GridBasedController:
                            in self.combo.grid_4D.coordinate_vectors]
         self._coords_2d = [np.array(v) for v
                            in self.combo.grid_2D.coordinate_vectors]
-        self._values_4d_terminal = np.array(self.combo.values_4D[-1])
-        self._values_2d_terminal = np.array(self.combo.values_2D[-1])
 
-        # Pre-compute terminal-time gradient fields as numpy arrays.
-        # grads_4D_T has shape (*grid_shape_4D, 4), grads_2D_T has shape
-        # (*grid_shape_2D, 2).  These are already computed by
-        # ComboController.__init__ — we just convert once to avoid
-        # repeated JAX→numpy conversions and eliminate the per-step
-        # full-grid grad_values() call.
-        self._grad_4d_fields = [
-            np.asarray(self.combo.grads_4D_T[..., i])
-            for i in range(4)
-        ]
-        self._grad_2d_fields = [
-            np.asarray(self.combo.grads_2D_T[..., i])
-            for i in range(2)
-        ]
+        # Convert full value arrays from JAX DeviceArrays to numpy once.
+        # This eliminates GPU→CPU transfers during simulation (the main
+        # bottleneck when values live on GPU).
+        print("  Converting value arrays to numpy ...")
+        self._np_values_4d = np.asarray(self.combo.values_4D)  # (T, N1, N2, N3, N4)
+        self._np_values_2d = np.asarray(self.combo.values_2D)  # (T, M1, M2)
+        self._values_4d_terminal = self._np_values_4d[-1]
+        self._values_2d_terminal = self._np_values_2d[-1]
+
+        # Grid spacings for numpy gradient computation
+        self._dx_4d = [float(c[1] - c[0]) for c in self._coords_4d]
+        self._dx_2d = [float(c[1] - c[0]) for c in self._coords_2d]
+
         self._u_bar_4d = float(self.combo.u_bar_4D)
         self._u_bar_2d = float(self.combo.u_bar_2D)
 
@@ -200,6 +197,109 @@ class GridBasedController:
         return np.maximum(v_4d, v_2d)
 
     # ------------------------------------------------------------------
+    # Min-time BRT index search (numpy-only, no JAX transfers)
+    # ------------------------------------------------------------------
+    def _min_time_idx_4d(self, s_4d):
+        """Find smallest time index where interpolated V_4D <= 0."""
+        cell_idx = []
+        frac = []
+        for dim in range(4):
+            grid = self._coords_4d[dim]
+            x = float(s_4d[dim])
+            if x <= grid[0]:
+                cell_idx.append(0); frac.append(0.0)
+            elif x >= grid[-1]:
+                cell_idx.append(len(grid) - 2); frac.append(1.0)
+            else:
+                i = int(np.searchsorted(grid, x)) - 1
+                i = max(0, min(i, len(grid) - 2))
+                cell_idx.append(i)
+                frac.append(float((x - grid[i]) / (grid[i + 1] - grid[i])))
+
+        result = np.zeros(self._np_values_4d.shape[0])
+        for d0 in range(2):
+            w0 = frac[0] if d0 else (1.0 - frac[0])
+            for d1 in range(2):
+                w01 = w0 * (frac[1] if d1 else (1.0 - frac[1]))
+                for d2 in range(2):
+                    w012 = w01 * (frac[2] if d2 else (1.0 - frac[2]))
+                    for d3 in range(2):
+                        w = w012 * (frac[3] if d3 else (1.0 - frac[3]))
+                        corner = self._np_values_4d[
+                            :, cell_idx[0]+d0, cell_idx[1]+d1,
+                            cell_idx[2]+d2, cell_idx[3]+d3]
+                        result += w * corner
+
+        neg_mask = result <= 0
+        if np.any(neg_mask):
+            return int(np.argmax(neg_mask))
+        return int(np.argmin(result))
+
+    def _min_time_idx_2d(self, s_2d):
+        """Find smallest time index where interpolated V_2D <= 0."""
+        cell_idx = []
+        frac = []
+        for dim in range(2):
+            grid = self._coords_2d[dim]
+            x = float(s_2d[dim])
+            if x <= grid[0]:
+                cell_idx.append(0); frac.append(0.0)
+            elif x >= grid[-1]:
+                cell_idx.append(len(grid) - 2); frac.append(1.0)
+            else:
+                i = int(np.searchsorted(grid, x)) - 1
+                i = max(0, min(i, len(grid) - 2))
+                cell_idx.append(i)
+                frac.append(float((x - grid[i]) / (grid[i + 1] - grid[i])))
+
+        result = np.zeros(self._np_values_2d.shape[0])
+        for d0 in range(2):
+            w0 = frac[0] if d0 else (1.0 - frac[0])
+            for d1 in range(2):
+                w = w0 * (frac[1] if d1 else (1.0 - frac[1]))
+                corner = self._np_values_2d[
+                    :, cell_idx[0]+d0, cell_idx[1]+d1]
+                result += w * corner
+
+        neg_mask = result <= 0
+        if np.any(neg_mask):
+            return int(np.argmax(neg_mask))
+        return int(np.argmin(result))
+
+    # ------------------------------------------------------------------
+    # Gradient at a point via numpy central differences
+    # ------------------------------------------------------------------
+    def _grad_at_point_4d(self, s_4d, tidx, grad_field_cache):
+        """Compute 4D gradient at a point, caching the gradient field by tidx."""
+        cached_tidx, cached_fields = grad_field_cache
+        if cached_tidx != tidx:
+            vals = self._np_values_4d[tidx]
+            fields = np.gradient(vals, *self._dx_4d)
+            grad_field_cache[0] = tidx
+            grad_field_cache[1] = fields
+        else:
+            fields = cached_fields
+        pt = np.atleast_2d(s_4d)
+        return [interpn(self._coords_4d, f, pt, method='linear',
+                        bounds_error=False, fill_value=0.0).item()
+                for f in fields]
+
+    def _grad_at_point_2d(self, s_2d, tidx, grad_field_cache):
+        """Compute 2D gradient at a point, caching the gradient field by tidx."""
+        cached_tidx, cached_fields = grad_field_cache
+        if cached_tidx != tidx:
+            vals = self._np_values_2d[tidx]
+            fields = np.gradient(vals, *self._dx_2d)
+            grad_field_cache[0] = tidx
+            grad_field_cache[1] = fields
+        else:
+            fields = cached_fields
+        pt = np.atleast_2d(s_2d)
+        return [interpn(self._coords_2d, f, pt, method='linear',
+                        bounds_error=False, fill_value=0.0).item()
+                for f in fields]
+
+    # ------------------------------------------------------------------
     # Simulation interface
     # ------------------------------------------------------------------
     def simulate_docking(self, initial_state, max_sim_time):
@@ -222,19 +322,24 @@ class GridBasedController:
         docked = False
         collision = False
 
-        for step in range(num_steps):
-            # Bang-bang control from pre-computed terminal gradient fields.
-            # This replaces combo.u_fn() which does an expensive min-time
-            # search + full-grid gradient recomputation every step.
-            s4 = np.atleast_2d(state[:4])
-            g4 = [interpn(self._coords_4d, gf, s4, method='linear',
-                          bounds_error=False, fill_value=0.0).item()
-                   for gf in self._grad_4d_fields]
-            s2 = np.atleast_2d(state[4:6])
-            g2 = [interpn(self._coords_2d, gf, s2, method='linear',
-                          bounds_error=False, fill_value=0.0).item()
-                   for gf in self._grad_2d_fields]
+        # Gradient field caches: [tidx, list_of_grad_arrays]
+        # Recomputed only when the min-time index changes.
+        cache_4d = [None, None]
+        cache_2d = [None, None]
 
+        for step in range(num_steps):
+            s_4d = state[:4]
+            s_2d = state[4:6]
+
+            # Min-time search: tightest BRT boundary for each subsystem
+            tidx_4d = self._min_time_idx_4d(s_4d)
+            tidx_2d = self._min_time_idx_2d(s_2d)
+
+            # Gradient at the min-time BRT boundary (cached by tidx)
+            g4 = self._grad_at_point_4d(s_4d, tidx_4d, cache_4d)
+            g2 = self._grad_at_point_2d(s_2d, tidx_2d, cache_2d)
+
+            # Bang-bang optimal control from gradient sign
             ux = -self._u_bar_4d if g4[2] > 0 else self._u_bar_4d
             uy = -self._u_bar_4d if g4[3] > 0 else self._u_bar_4d
             ut = -self._u_bar_2d if g2[1] > 0 else self._u_bar_2d
@@ -243,11 +348,11 @@ class GridBasedController:
 
             # Combined decomposed value at terminal time
             v_4d = interpn(self._coords_4d, self._values_4d_terminal,
-                           s4, method='linear', bounds_error=False,
-                           fill_value=np.inf).item()
+                           np.atleast_2d(s_4d), method='linear',
+                           bounds_error=False, fill_value=np.inf).item()
             v_2d = interpn(self._coords_2d, self._values_2d_terminal,
-                           s2, method='linear', bounds_error=False,
-                           fill_value=np.inf).item()
+                           np.atleast_2d(s_2d), method='linear',
+                           bounds_error=False, fill_value=np.inf).item()
             value_history.append(max(v_4d, v_2d))
 
             # Integrate CW dynamics
