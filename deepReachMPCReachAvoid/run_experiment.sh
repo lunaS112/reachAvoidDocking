@@ -1,3 +1,8 @@
+#!/bin/bash
+# Activate venv (provides 'python' command)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.venv/bin/activate"
+
 ############################# To verify any experiment ##################################
 # To run verification
 python run_experiment.py --mode test --experiment_name EXPNAME --checkpoint_toload -1 --data_step run_basic_recovery
@@ -42,6 +47,13 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics
 # Testing Pause MPC hyperparameters
 python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 10 --pretrain --pretrain_iters 1000 --num_epochs 13000 --pause_epoch 1000 --counter_end 10000 --num_nl 256 --set_mode reach_avoid --lr 1e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 10 --num_MPC_data_samples 500 --numpoints 5000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.05 --deepReach_model exact --time_till_refinement 0.5 --cost_type mixed --mpc_percentage 0.8 --use_wandb --wandb_project MPC_test --wandb_name Docking6D_RA --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
 
+# Avoid formulation 6D
+python3 run_experiment.py --mode train --experiment_name Docking6D_RA_avoid --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000\
+ --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode avoid --lr 2e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 100 --num_MPC_data_samples 10000 --numpoints 50000 --mpc_ground_truth_frequency 0\
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --use_wandb --wandb_project Docking6D_final --wandb_name Docking6D_avoid --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+
 # With recomended hyperparameters 
 python3 run_experiment.py --mode train --experiment_name Docking6D_RA --dynamics_class Docking6D --tMax 15 --pretrain --num_target_samples 5000\
  --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
@@ -66,6 +78,29 @@ python3 run_experiment.py --mode train --experiment_name Docking6D_Inner_3sec --
  --state_range '[[-4,4],[-4,4],[-1.0,1.0],[-1.0,1.0],[-3.14159,3.14159],[-0.75,0.75]]' \
  --eps_p 0.1 --eps_v 0.05 --eps_theta 0.05 --eps_omega 0.0035 \
  --use_wandb --wandb_project Docking6D_3sec --wandb_name Docking6D_Inner_3sec --wandb_group Docking6D --wandb_entity santiagothorup-stanford-university
+
+############################################# Docking13D Reach_avoid problem ##########################################
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 2500\
+ --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000  --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 750 --num_MPC_batches 100 --num_MPC_data_samples 5000 --numpoints 50000 --mpc_ground_truth_frequency 15\
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --use_wandb --wandb_project Docking13D_test_Fixed_GoalSet --wandb_name Docking13D_10s --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+
+# Avoid formulation 13D
+python3 run_experiment.py --mode train --experiment_name Docking13D_Avoid --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 32500\
+ --pretrain_iters 2000 --num_epochs 200000 --pause_epoch 3000  --counter_end 120000 --num_nl 512 --set_mode avoid --lr 1e-5 \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 150 --num_MPC_data_samples 7500 --numpoints 65000 --mpc_ground_truth_frequency 0\
+ --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
+ --use_wandb --wandb_project Docking13D_final --wandb_name Docking13D_avoid --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+
+# 15s quick test (reduced MPC rollouts for faster iteration)
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA_test_15s_fastish --dynamics_class Docking13D --tMax 15 --pretrain --pretrain_iters 1000 --num_epochs 130000 --pause_epochs 1000 --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 1500 --num_MPC_batches 50 --num_MPC_data_samples 7500 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D --wandb_name Docking13D_test_15s_fastish --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+
+# 5s with lots of sampling
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA_5s_5xSampling --dynamics_class Docking13D --tMax 5 --pretrain --num_target_samples 7500 --pretrain_iters 1000 --num_epochs 150000 --pause_epoch 2000 --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5  --num_iterative_refinement 10 --MPC_batch_size 750 --num_MPC_batches 150 --num_MPC_data_samples 15000 --numpoints 50000 --mpc_ground_truth_frequency 15 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D --wandb_name Docking13D_RA_5s_5xSampling --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+
+# v2: 1.2× post, rotation-aligned, ±10m state range, 50-50 targeted/uniform split (~24-28h on RTX 4090)
+python3 run_experiment.py --mode train --experiment_name Docking13D_RA_v2_PostAligned --dynamics_class Docking13D --tMax 10 --pretrain --pretrain_iters 2000 --num_epochs 200000 --pause_epoch 3000 --counter_end 120000 --num_nl 512 --set_mode reach_avoid --lr 1e-5 --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 150 --num_MPC_data_samples 7500 --numpoints 65000 --num_target_samples 32500 --mpc_ground_truth_frequency 15 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D_test_Fixed_GoalSet --wandb_name Docking13D_v2_PostAligned_10s --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
 
 ############################################## Quadrotor ##########################################
 # To train (exp time: 3h on RTX 4090)

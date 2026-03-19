@@ -9,6 +9,8 @@ from hj_reachability import dynamics
 from hj_reachability import sets
 from scipy.interpolate import interpn
 
+import hashlib
+
 class Docking_translational(dynamics.ControlAndDisturbanceAffineDynamics):
     def __init__(self, mc, orbit_alt, u_bar = 20.0, d_bar = 0.01):
         # Mass and orbital parameters
@@ -107,44 +109,71 @@ class Docking_rotational(dynamics.ControlAndDisturbanceAffineDynamics):
                           [1.0/self.jc]])
 
 class ComboController:
-    def __init__(self):
+    def __init__(self, mc=200.0, orbit_alt=400, dock_rad=1.75,
+                 w_t=6, h_t=3, w_c=1.0, h_c=1.0,
+                 eps_p=0.05, eps_v=0.05, eps_theta=0.01, eps_omega=0.005,
+                 u_bar_4D=20.0, u_bar_2D=1.5,
+                 d_bar_4D=0.01, d_bar_2D=0.01,
+                 final_time=-30.0, dt=0.1,
+                 grid_resolution_4D=(51, 51, 31, 31),
+                 grid_resolution_2D=(361, 141),
+                 cache_dir=None, filter_mode=2):
+        """Grid-based 4D+2D decomposed HJ reach-avoid controller.
+
+        Args:
+            mc: Chaser mass (kg).
+            orbit_alt: Orbital altitude (km).
+            dock_rad: Docking indentation radius (m).
+            w_t, h_t: Target spacecraft width/height (m).
+            w_c, h_c: Chaser spacecraft width/height (m).
+            eps_p, eps_v: Translational position/velocity tolerances (m, m/s).
+            eps_theta, eps_omega: Rotational position/velocity tolerances (rad, rad/s).
+            u_bar_4D, u_bar_2D: Translational/rotational control bounds (N, N·m).
+            d_bar_4D, d_bar_2D: Translational/rotational disturbance bounds.
+            final_time: Backward time horizon (negative seconds, e.g. -30).
+            dt: Time step for HJ solver (s).
+            grid_resolution_4D: 4-tuple grid resolution for translational subsystem.
+            grid_resolution_2D: 2-tuple grid resolution for rotational subsystem.
+            cache_dir: Directory for caching solved value functions. None = no caching.
+            filter_mode: 1=least-restrictive, 2=smooth-blend QP, 3=nominal, None=optimal-safety.
+        """
         self.reset()
         # Define required parameters
-        self.final_time = -30.0  
+        self.final_time = final_time  
         
         # 1: for least restrictive safety filter
         # 2: for smooth blending filter
         # 3: for nominal controller 
         # None: for optimal safety controller only
-        self.FILTER = 2
+        self.FILTER = filter_mode
         
         # Define constants
-        self.mc = 200.0  # Mass of chaser spacecraft (kg)
-        self.orbit_alt = 400  # Orbital altitude (km)
+        self.mc = mc  # Mass of chaser spacecraft (kg)
+        self.orbit_alt = orbit_alt  # Orbital altitude (km)
         
         # Define target spacecraft (Planar)
-        self.w_t = 6  # width of target spacecraft (m) (along x-axis)
-        self.h_t = 3  # height of target spacecraft (m) (along y-axis)
-        self.dock_rad = 1.75 # Radius of target spacecraft docking indentation (m)
+        self.w_t = w_t  # width of target spacecraft (m) (along x-axis)
+        self.h_t = h_t  # height of target spacecraft (m) (along y-axis)
+        self.dock_rad = dock_rad # Radius of target spacecraft docking indentation (m)
         
         # Define the body of the chaser spacecraft 
-        self.w_c = 1.0  # width of chaser spacecraft (m) (along x-axis)
-        self.h_c = 1.0  # height of chaser spacecraft (m) (along y-axis)
+        self.w_c = w_c  # width of chaser spacecraft (m) (along x-axis)
+        self.h_c = h_c  # height of chaser spacecraft (m) (along y-axis)
                 
         # Define docking parameters
-        self.eps_p = 0.05 # Position tolerance for docking (m)
-        self.eps_v = 0.05 # Velocity tolerance for docking (m/s)
-        self.eps_theta = 0.01 # Angular position tolerance for docking (rad)
-        self.eps_omega = 0.005 # Angular velocity tolerance for docking (rad/s)
+        self.eps_p = eps_p # Position tolerance for docking (m)
+        self.eps_v = eps_v # Velocity tolerance for docking (m/s)
+        self.eps_theta = eps_theta # Angular position tolerance for docking (rad)
+        self.eps_omega = eps_omega # Angular velocity tolerance for docking (rad/s)
 
         # Define 4D system
         self.state_domain_4D = hj.sets.Box(lo=jnp.array([-15.0 , -15.0, -2.5, -2.5]), hi=jnp.array([15.0, 15.0, 2.5, 2.5]))
-        self.grid_resolution_4D = (51, 51, 31, 31)
+        self.grid_resolution_4D = grid_resolution_4D
         self.grid_4D = hj.Grid.from_lattice_parameters_and_boundary_conditions(self.state_domain_4D, self.grid_resolution_4D)
 
         # Define 2D system
         self.state_domain_2D = hj.sets.Box(lo = jnp.array([-np.pi, -5.0]), hi = jnp.array([np.pi, 5.0]))
-        self.grid_resolution_2D = (361, 141)
+        self.grid_resolution_2D = grid_resolution_2D
         self.periodic_dims = [0]
         self.grid_2D = hj.Grid.from_lattice_parameters_and_boundary_conditions(
             self.state_domain_2D, 
@@ -161,8 +190,8 @@ class ComboController:
         self.terminal_values_2D = jnp.maximum(self.target_values_2D, -jnp.inf)
         
         # Define the 4D and 2D dynamics
-        self.docking_problem_4D = Docking_translational(self.mc, self.orbit_alt)
-        self.docking_problem_2D = Docking_rotational(self.mc)
+        self.docking_problem_4D = Docking_translational(self.mc, self.orbit_alt, u_bar=u_bar_4D, d_bar=d_bar_4D)
+        self.docking_problem_2D = Docking_rotational(self.mc, u_bar=u_bar_2D, d_bar=d_bar_2D)
         
         # Define the solver settings
         self.solver_settings_4D = hj.SolverSettings.with_accuracy("very_high",
@@ -172,16 +201,22 @@ class ComboController:
                                                           hamiltonian_postprocessor=lambda x: jnp.minimum(x, 0),
                                                           value_postprocessor=lambda t, x: jnp.maximum(x, -jnp.inf))
         
-        # Solve for value functions 
-        self.dt = 0.1
+        # Solve for value functions (with optional caching)
+        self.dt = dt
         self.nt = int(abs(self.final_time / self.dt)) + 1
         self.times = jnp.linspace(0, self.final_time, self.nt, endpoint=True)
-        self.values_4D = hj.solve(self.solver_settings_4D, self.docking_problem_4D, self.grid_4D, self.times, self.terminal_values_4D)
-        self.values_2D= hj.solve(self.solver_settings_2D, self.docking_problem_2D, self.grid_2D, self.times, self.terminal_values_2D)
-        
-        # Define initial values
-        self.u_bar_4D = 20.0
-        self.u_bar_2D = 1.5
+
+        # Define control bounds (used by optimal / QP controllers and cache fingerprint)
+        self.u_bar_4D = u_bar_4D
+        self.u_bar_2D = u_bar_2D
+
+        loaded = self._try_load_cache(cache_dir)
+        if not loaded:
+            print("Solving 4D HJ PDE ...")
+            self.values_4D = hj.solve(self.solver_settings_4D, self.docking_problem_4D, self.grid_4D, self.times, self.terminal_values_4D)
+            print("Solving 2D HJ PDE ...")
+            self.values_2D = hj.solve(self.solver_settings_2D, self.docking_problem_2D, self.grid_2D, self.times, self.terminal_values_2D)
+            self._save_cache(cache_dir)
 
         # Obtain values from 4D value function
         self.values_4D_T = self.values_4D[-1]
@@ -190,6 +225,52 @@ class ComboController:
         # Obtain values from 2D value function
         self.values_2D_T = self.values_2D[-1]
         self.grads_2D_T = self.grid_2D.grad_values(self.values_2D_T, self.solver_settings_2D.upwind_scheme)
+
+    # ------------------------------------------------------------------ #
+    #  Caching helpers                                                     #
+    # ------------------------------------------------------------------ #
+    def _cache_fingerprint(self):
+        """Return a deterministic hash of every parameter that affects the
+        solved value functions, so cache files are invalidated when params change."""
+        key_parts = [
+            self.mc, self.orbit_alt, self.dock_rad,
+            self.w_t, self.h_t, self.w_c, self.h_c,
+            self.eps_p, self.eps_v, self.eps_theta, self.eps_omega,
+            self.u_bar_4D, self.u_bar_2D,
+            float(self.docking_problem_4D.d_bar),
+            float(self.docking_problem_2D.d_bar),
+            self.final_time, self.dt,
+            self.grid_resolution_4D, self.grid_resolution_2D,
+        ]
+        raw = str(key_parts).encode()
+        return hashlib.sha256(raw).hexdigest()[:16]
+
+    def _try_load_cache(self, cache_dir):
+        """Attempt to load cached value arrays.  Returns True on success."""
+        if cache_dir is None:
+            return False
+        fp = self._cache_fingerprint()
+        path_4d = os.path.join(cache_dir, f'values_4D_{fp}.npy')
+        path_2d = os.path.join(cache_dir, f'values_2D_{fp}.npy')
+        if os.path.isfile(path_4d) and os.path.isfile(path_2d):
+            print(f"Loading cached grid values  (fingerprint={fp}) ...")
+            self.values_4D = jnp.array(np.load(path_4d))
+            self.values_2D = jnp.array(np.load(path_2d))
+            print("  Cache loaded successfully.")
+            return True
+        return False
+
+    def _save_cache(self, cache_dir):
+        """Save solved value arrays to cache directory."""
+        if cache_dir is None:
+            return
+        os.makedirs(cache_dir, exist_ok=True)
+        fp = self._cache_fingerprint()
+        path_4d = os.path.join(cache_dir, f'values_4D_{fp}.npy')
+        path_2d = os.path.join(cache_dir, f'values_2D_{fp}.npy')
+        np.save(path_4d, np.array(self.values_4D))
+        np.save(path_2d, np.array(self.values_2D))
+        print(f"Grid values cached to {cache_dir}  (fingerprint={fp})")
 
     def reset(self):
         self.s_history = []

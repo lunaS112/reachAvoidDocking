@@ -276,8 +276,8 @@ class TrajectoryAnim13D:
         current_time = frame_idx * self.dt
         ax.set_title(f'13D Satellite Docking Trajectory (t={current_time:.2f}s)', fontsize=12)
         
-        # Slowly rotate view for better 3D perception
-        ax.view_init(elev=25, azim=45 + frame_idx * 0.5)
+        # Fixed view angle at 45 degrees azimuth (between x and y axes)
+        ax.view_init(elev=25, azim=45)
         
         return [self.chaser_collection, self.trace_line, self.pos_marker]
 

@@ -9,26 +9,46 @@ from tqdm import tqdm
 from pathlib import Path as pathlib
 
 
-def draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7):
-    theta = np.linspace(0, np.pi, 100)
-    arc_x = dock_rad * np.cos(theta)
-    arc_y = dock_rad * np.sin(theta)
+def draw_target_body(ax, dynamics_, color='red', linewidth=2, alpha=0.7):
+    """Draw the target body + docking post outline for the 13D geometry.
+    
+    Body: rectangle x ∈ [-w_t/2, w_t/2], y ∈ [0, h_t]
+    Post: rectangle x ∈ [-post_hw_x, post_hw_x], y ∈ [-post_length, 0]
+    """
+    w_t = dynamics_.w_t
+    h_t = dynamics_.h_t
+    post_hw_x = dynamics_.post_hw_x
+    post_length = dynamics_.post_length
 
     verts = []
     codes = []
 
-    verts.append((-w_t/2, 0));             codes.append(Path.MOVETO)
-    verts.append((-w_t/2, h_t));           codes.append(Path.LINETO)
-    verts.append((w_t/2, h_t));            codes.append(Path.LINETO)
-    verts.append((w_t/2, 0));              codes.append(Path.LINETO)
-    verts.append((dock_rad, 0));           codes.append(Path.LINETO)
-    for x, y in zip(arc_x, arc_y):
-        verts.append((x, y));              codes.append(Path.LINETO)
-    verts.append((-w_t/2, 0));             codes.append(Path.LINETO)
+    # Start at body bottom-left, go clockwise around body+post
+    verts.append((-w_t/2, 0));                codes.append(Path.MOVETO)
+    verts.append((-w_t/2, h_t));              codes.append(Path.LINETO)
+    verts.append((w_t/2, h_t));               codes.append(Path.LINETO)
+    verts.append((w_t/2, 0));                 codes.append(Path.LINETO)
+    # Step down to post right side
+    verts.append((post_hw_x, 0));             codes.append(Path.LINETO)
+    verts.append((post_hw_x, -post_length));  codes.append(Path.LINETO)
+    verts.append((-post_hw_x, -post_length)); codes.append(Path.LINETO)
+    verts.append((-post_hw_x, 0));            codes.append(Path.LINETO)
+    # Close back to start
+    verts.append((-w_t/2, 0));                codes.append(Path.LINETO)
 
     path = Path(verts, codes)
     patch = patches.PathPatch(path, fill=False, color=color, linewidth=linewidth, alpha=alpha)
     ax.add_patch(patch)
+
+    # Also draw the goal band
+    if hasattr(dynamics_, 'goal_y_min'):
+        goal_rect = patches.Rectangle(
+            (-dynamics_.eps_p, dynamics_.goal_y_min), 2*dynamics_.eps_p,
+            dynamics_.goal_y_max - dynamics_.goal_y_min,
+            linewidth=1.5, edgecolor='green', facecolor='green', alpha=0.15,
+            linestyle='--', label='Goal band'
+        )
+        ax.add_patch(goal_rect)
 
 
 def plotBRTImages(costs, dynamics_, initial_condition_tensor, x_resolution, y_resolution,
@@ -128,10 +148,7 @@ def plotGoalAvoid(costs, dynamics_, initial_condition_tensor, x_resolution, y_re
     ax.contour(X, Y, boundry_value, levels=[0.0], colors='orange', linewidths=1.5, linestyles=':')
 
     if hasattr(dynamics_, 'avoid_fn') and hasattr(dynamics_, 'w_t'):
-        w_t = dynamics_.w_t
-        h_t = dynamics_.h_t
-        dock_rad = dynamics_.dock_rad
-        draw_target_body(ax, w_t, h_t, dock_rad, color='red', linewidth=2, alpha=0.7)
+        draw_target_body(ax, dynamics_, color='red', linewidth=2, alpha=0.7)
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
@@ -185,7 +202,7 @@ def plotMPCTrajectories(mpc, initial_conditions, T, save_def: pathlib, max_trajs
         eps_p = mpc.dynamics_.eps_p
         ax1.add_patch(patches.Circle((0, 0), eps_p, fill=False, color='green', linewidth=1, linestyle='--'))
     if hasattr(mpc.dynamics_, 'w_t'):
-        draw_target_body(ax1, mpc.dynamics_.w_t, mpc.dynamics_.h_t, mpc.dynamics_.dock_rad, color='red', linewidth=2, alpha=0.7)
+        draw_target_body(ax1, mpc.dynamics_, color='red', linewidth=2, alpha=0.7)
     ax1.set_xlabel('x (m)'); ax1.set_ylabel('y (m)'); ax1.set_title('XY Position'); ax1.grid(True, alpha=0.3); ax1.axis('equal')
 
     # 2) XY velocity
@@ -540,8 +557,8 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
     reach_avoid_handles = [mpatches.Patch(color='green', label='Reach Set'), mpatches.Patch(color='red', label='Avoid Set')]
 
     if hasattr(mpc.dynamics_, 'w_t'):
-        draw_target_body(ax, mpc.dynamics_.w_t, mpc.dynamics_.h_t, mpc.dynamics_.dock_rad, color='red', linewidth=2, alpha=0.7)
-        reach_avoid_handles.append(mpatches.Patch(facecolor='none', edgecolor='black', label='Body of target'))
+        draw_target_body(ax, mpc.dynamics_, color='red', linewidth=2, alpha=0.7)
+        reach_avoid_handles.append(mpatches.Patch(facecolor='none', edgecolor='red', label='Target body + post'))
 
     ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
     ax.set_xlabel('x (m)'); ax.set_ylabel('y (m)'); ax.set_title('MPC Trajectories on Position BRT Heatmap'); ax.grid(True, alpha=0.3)

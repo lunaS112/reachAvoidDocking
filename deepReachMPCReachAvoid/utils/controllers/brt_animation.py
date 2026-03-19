@@ -53,6 +53,8 @@ def create_deepreach_animation(controller, sim_result, save_path,
     t_remaining_history = sim_result['t_remaining']
     times = sim_result['times']
     values = sim_result['values']
+    sf_log = sim_result.get('safety_filter_log', [])
+    sf_mode = sim_result.get('safety_filter_mode', 0)
     
     px = trajectory[:, 0]
     py = trajectory[:, 1]
@@ -199,6 +201,9 @@ def create_deepreach_animation(controller, sim_result, save_path,
                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     value_text = ax.text(0.02, 0.82, '', transform=ax.transAxes, fontsize=11,
                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text = ax.text(0.02, 0.74, '', transform=ax.transAxes, fontsize=11,
+                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text.set_visible(sf_mode > 0)
     
     # Legend
     ax.legend(loc='upper right', fontsize=10)
@@ -273,6 +278,29 @@ def create_deepreach_animation(controller, sim_result, save_path,
         else:
             value_text.set_bbox(dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
         
+        # Safety filter status
+        sf_active = False
+        if sf_mode > 0 and k < len(sf_log):
+            entry = sf_log[k]
+            if sf_mode == 1:
+                sf_active = entry.get('filter_active', False)
+            else:
+                sf_active = entry.get('alpha_effective', 0) > 1e-6
+        if sf_mode > 0:
+            safety_filter_text.set_visible(True)
+            if sf_active:
+                safety_filter_text.set_text('Safety filter: ACTIVE')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
+                chaser.set_facecolor('#ff6b6b')
+                chaser.set_edgecolor('red')
+            else:
+                safety_filter_text.set_text('Safety filter: inactive')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
+                chaser.set_facecolor('blue')
+                chaser.set_edgecolor('black')
+        else:
+            safety_filter_text.set_visible(False)
+        
         # Update value function heatmap
         if show_value_function:
             # Clear previous contours
@@ -328,7 +356,7 @@ def create_deepreach_animation(controller, sim_result, save_path,
             except:
                 pass
         
-        return chaser, marker, trace, time_text, phase_text, value_text
+        return chaser, marker, trace, time_text, phase_text, value_text, safety_filter_text
     
     # Create animation
     print(f"Creating animation with {len(times)} frames (skip={skip_frames})...")
@@ -391,6 +419,8 @@ def create_cascaded_deepreach_animation(controller, sim_result, save_path,
     t_remaining_history = sim_result['t_remaining']
     times  = sim_result['times']
     values = sim_result['values']
+    sf_log = sim_result.get('safety_filter_log', [])
+    sf_mode = sim_result.get('safety_filter_mode', 0)
 
     px    = trajectory[:, 0]
     py    = trajectory[:, 1]
@@ -520,11 +550,17 @@ def create_cascaded_deepreach_animation(controller, sim_result, save_path,
         0.02, 0.78, '', transform=ax.transAxes, fontsize=11,
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text = ax.text(
+        0.02, 0.70, '', transform=ax.transAxes, fontsize=11,
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text.set_visible(sf_mode > 0)
 
     ax.legend(loc='upper right', fontsize=10)
 
     # ---- Value-function cache ----
     value_cache = {}
+    chaser_base_color = '#d62728'
 
     def compute_value_grid(model_tag, ctrl_sub, t_query,
                            cur_vx, cur_vy, cur_theta, cur_omega):
@@ -606,6 +642,29 @@ def create_cascaded_deepreach_animation(controller, sim_result, save_path,
         else:
             value_text.set_bbox(
                 dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+        # Safety filter status
+        sf_active = False
+        if sf_mode > 0 and k < len(sf_log):
+            entry = sf_log[k]
+            if sf_mode == 1:
+                sf_active = entry.get('filter_active', False)
+            else:
+                sf_active = entry.get('alpha_effective', 0) > 1e-6
+        if sf_mode > 0:
+            safety_filter_text.set_visible(True)
+            if sf_active:
+                safety_filter_text.set_text('Safety filter: ACTIVE')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
+                chaser.set_facecolor('#ff6b6b')
+                chaser.set_edgecolor('red')
+            else:
+                safety_filter_text.set_text('Safety filter: inactive')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
+                chaser.set_facecolor(chaser_base_color)
+                chaser.set_edgecolor('black')
+        else:
+            safety_filter_text.set_visible(False)
 
         # Heatmap
         if show_value_function:
@@ -721,6 +780,8 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
     t_remaining_history = sim_result['t_remaining']
     times  = sim_result['times']
     values = sim_result['values']
+    sf_log = sim_result.get('safety_filter_log', [])
+    sf_mode = sim_result.get('safety_filter_mode', 0)
 
     px    = trajectory[:, 0]
     py    = trajectory[:, 1]
@@ -847,11 +908,17 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
         0.02, 0.82, '', transform=ax.transAxes, fontsize=11,
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text = ax.text(
+        0.02, 0.74, '', transform=ax.transAxes, fontsize=11,
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text.set_visible(sf_mode > 0)
 
     ax.legend(loc='upper right', fontsize=10)
 
     # ---- Value-function cache ----
     value_cache = {}
+    chaser_base_color = 'blue'
 
     def compute_value_grid(t_query, cur_vx, cur_vy, cur_theta, cur_omega):
         cache_key = (round(t_query, 2), round(cur_vx, 1), round(cur_vy, 1))
@@ -925,6 +992,29 @@ def create_mpc_terminal_animation(controller, sim_result, save_path,
         else:
             value_text.set_bbox(
                 dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+        # Safety filter status
+        sf_active = False
+        if sf_mode > 0 and k < len(sf_log):
+            entry = sf_log[k]
+            if sf_mode == 1:
+                sf_active = entry.get('filter_active', False)
+            else:
+                sf_active = entry.get('alpha_effective', 0) > 1e-6
+        if sf_mode > 0:
+            safety_filter_text.set_visible(True)
+            if sf_active:
+                safety_filter_text.set_text('Safety filter: ACTIVE')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
+                chaser.set_facecolor('#ff6b6b')
+                chaser.set_edgecolor('red')
+            else:
+                safety_filter_text.set_text('Safety filter: inactive')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
+                chaser.set_facecolor(chaser_base_color)
+                chaser.set_edgecolor('black')
+        else:
+            safety_filter_text.set_visible(False)
 
         # Heatmap
         if show_value_function:
@@ -1033,6 +1123,8 @@ def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
     t_remaining_history = sim_result['t_remaining']
     times  = sim_result['times']
     values = sim_result['values']
+    sf_log = sim_result.get('safety_filter_log', [])
+    sf_mode = sim_result.get('safety_filter_mode', 0)
 
     px    = trajectory[:, 0]
     py    = trajectory[:, 1]
@@ -1162,11 +1254,17 @@ def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
         0.02, 0.78, '', transform=ax.transAxes, fontsize=11,
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text = ax.text(
+        0.02, 0.70, '', transform=ax.transAxes, fontsize=11,
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    safety_filter_text.set_visible(sf_mode > 0)
 
     ax.legend(loc='upper right', fontsize=10)
 
     # ---- Value-function cache ----
     value_cache = {}
+    chaser_base_color = '#d62728'
 
     def compute_value_grid(model_tag, get_val_fn, t_query,
                            cur_vx, cur_vy, cur_theta, cur_omega):
@@ -1248,6 +1346,29 @@ def create_cascaded_mpc_terminal_animation(controller, sim_result, save_path,
         else:
             value_text.set_bbox(
                 dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+        # Safety filter status
+        sf_active = False
+        if sf_mode > 0 and k < len(sf_log):
+            entry = sf_log[k]
+            if sf_mode == 1:
+                sf_active = entry.get('filter_active', False)
+            else:
+                sf_active = entry.get('alpha_effective', 0) > 1e-6
+        if sf_mode > 0:
+            safety_filter_text.set_visible(True)
+            if sf_active:
+                safety_filter_text.set_text('Safety filter: ACTIVE')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ffcccc', alpha=0.9))
+                chaser.set_facecolor('#ff6b6b')
+                chaser.set_edgecolor('red')
+            else:
+                safety_filter_text.set_text('Safety filter: inactive')
+                safety_filter_text.set_bbox(dict(boxstyle='round', facecolor='#ccffcc', alpha=0.8))
+                chaser.set_facecolor(chaser_base_color)
+                chaser.set_edgecolor('black')
+        else:
+            safety_filter_text.set_visible(False)
 
         # Heatmap
         if show_value_function:

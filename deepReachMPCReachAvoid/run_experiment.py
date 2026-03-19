@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-GUI backend to prevent Tkinter threading issues
 import json
 import wandb
 import configargparse

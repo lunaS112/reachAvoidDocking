@@ -1,36 +1,36 @@
 #!/bin/bash
+# Activate venv (provides 'python' command)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.venv/bin/activate"
+
 # RUN IN TERMINAL FIRST
-CKPT="runs/Docking6D_RA_15_114000/training/checkpoints/model_epoch_114000.pth"
-CKPT="runs/Docking6D_RA_15_145000/training/checkpoints/model_epoch_145000.pth"
+
 CKPT="runs/Docking6D_RA_15sec-fine/training/checkpoints/model_final.pth"
-CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"
+CKPT_INNER="runs/Docking6D_3sec/training/checkpoints/model_final.pth"d
+CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 ########################### Single controller runs ###########################
 
-# BRT single run (default initial condition)
 python run_controller.py single --controller brt \
-   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-   --initial_px -8.1572345 --initial_theta -0.50771584 --initial_py -4.0154211\
-   --initial_vx -0.20646505 --initial_vy 0.07763347 --initial_omega 0.27782925\
-  --output_dir ./outputs/single_brt
-
-# MPC single run
-python run_controller.py single --controller mpc \
-   --checkpoint_path $CKPT --mpc_dt 0.1 --max_sim_time 60.0 \
-   --num_samples 100 --num_refinement 10 \
-   --output_dir ./outputs/single_mpc
-
-# MPC+Terminal single run
-python run_controller.py single --controller mpc_terminal \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --num_samples 100 --num_refinement 10 --mpc_dt 0.5\
-  --output_dir ./outputs/single_mpc_terminal
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_margin 0.05 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_px -10.442982320340697 --initial_py -2.0512017498686443 --initial_theta 1.205599463157637 \
+  --initial_vx 0.6868342952257529 --initial_vy 0.04974792745952561 --initial_omega -0.18448436899393705 \
+ --output_dir ./outputs/brt_safety_filter_1_timeout_margin_0.05_test
 
 python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 \
-  --initial_px -5.981874814109322 --initial_py 10.293041673097736 --initial_theta 1.026933217676297 --initial_omega 0.18254358031368267 \
-  --initial_vx -0.14381762025741018 --initial_vy 0.9296800942967711 \
-  --output_dir ./outputs/single_brt_failed
+  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 70.0 --safety_filter_margin 0.02 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_px 4.849024119721175 --initial_py 8.700267469331695 --initial_theta 3.0716048110691005 --initial_omega 0.2481656543798394 \
+  --initial_vx -0.7225675839837122 --initial_vy 0.37521647241745115 \
+  --output_dir ./outputs/brt_filter_1_test
+
+  "initial_state": [
+          4.849024119721175,
+          8.700267469331695,
+          -0.7225675839837122,
+          0.37521647241745115,
+          3.0716048110691005,
+          0.2481656543798394
+        ]
 
 ########################### Cascaded controller runs #########################
 
@@ -65,32 +65,22 @@ python run_controller.py single --controller mpc_terminal \
   --output_dir ./outputs/single_mpc_terminal_effort_moderate
 
 # Cascaded MPC+Terminal with effort penalty
-python run_controller.py single --controller cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER \
+python run_controller.py single --controller mpc_terminal \
+  --checkpoint_path $CKPT \
   --tMax 15.0 --inner_tMax 3.0 --effective_horizon 3.0 --max_sim_time 60.0 \
-  --num_samples 500 --num_refinement 10 \
-  --effort_weight 0.01 \
+  --num_samples 100 --num_refinement 10 \
+  --effort_weight 0.005 \
   --output_dir ./outputs/single_cascaded_mpc_terminal_effort
 
 ########################### Comparison runs ##################################
 
 # Quick comparison
-python run_controller.py compare --controllers brt mpc mpc_terminal cascaded_brt cascaded_mpc_terminal\
-  --checkpoint_path $CKPT --n_rollouts 3 --tMax 15.0 --max_sim_time 60.0 \
-  --output_dir ./outputs/comparison_quick --animate 
-
-# Full comparison
-python run_controller.py compare --controllers brt mpc mpc_terminal cascaded_brt cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER --n_rollouts 50 \
-  --tMax 15.0 --inner_tMax 3.0 --max_sim_time 60.0 \
-  --output_dir ./outputs/comparison_full
-
-# BRT vs MPC_terminal only
-python run_controller.py compare --controllers brt mpc_terminal cascaded_mpc_terminal \
-  --checkpoint_path $CKPT --inner_checkpoint_path $CKPT_INNER --n_rollouts 3 --tMax 15.0 --max_sim_time 60.0 \
-  --effort_weight 0.01 --output_dir ./outputs/comparison_brt_vs_mpc_terminal
-
-# BRT vs MPC+Terminal only
-python run_controller.py compare --controllers brt mpc_terminal \
-  --checkpoint_path $CKPT --n_rollouts 20 --tMax 14.0 --max_sim_time 30.0 \
-  --output_dir ./outputs/comparison_brt_vs_terminal
+python run_controller.py compare --controllers brt \
+  --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
+  --sampling_method uniform --output_dir ./outputs/BRT_10000_safety_filter_1 
+   
+# Volume comparison 
+python volume_comparison.py \
+    --checkpoint_path $CKPT \
+    --time_horizons 5 10 15 --n_monte_carlo 500000

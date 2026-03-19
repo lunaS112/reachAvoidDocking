@@ -29,6 +29,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from utils import modules
 from utils import diff_operators
 from dynamics import dynamics as dynamics_module
+from utils.controllers.safety_filter import SafetyFilter
+from utils.controllers import clip_state_for_execution
 
 
 class BRTController:
@@ -46,7 +48,8 @@ class BRTController:
     """
     
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
-                 search_window=0.5, search_resolution=0.1, max_search_expansions=1):
+                 search_window=0.5, search_resolution=0.1, max_search_expansions=1,
+                 safety_filter=None):
         """
         Initialize the BRT controller.
         
@@ -74,6 +77,9 @@ class BRTController:
         
         # Load dynamics and model
         self._load_dynamics_and_model()
+        
+        # Safety filter (no-op when mode=0 or None)
+        self.safety_filter = safety_filter or SafetyFilter(mode=0)
         
         # Control state
         self.reset()
@@ -134,6 +140,7 @@ class BRTController:
         self.in_brt_phase = False
         self.t_remaining = self.tMax
         self.phase_transition_time = None
+        self.safety_filter.reset()
         
         # History tracking
         self.state_history = []
@@ -304,7 +311,37 @@ class BRTController:
         values = self.dynamics.io_to_value(model_input, output)
         
         return values.cpu().numpy()
-    
+
+    def get_values_batch_states(self, states, time):
+        """
+        Query V(x, t) for multiple states at a single fixed time in one forward pass.
+
+        Args:
+            states: (N, state_dim) numpy array or torch tensor of state vectors
+            time: scalar time value to query
+
+        Returns:
+            numpy array of shape (N,): V(x_i, t) for each state
+        """
+        if isinstance(states, np.ndarray):
+            states = torch.tensor(states, dtype=torch.float32)
+        states = states.to(self.device)
+        if states.dim() == 1:
+            states = states.unsqueeze(0)
+
+        n = states.shape[0]
+        time_col = torch.full((n, 1), time, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states], dim=-1)          # (N, 1+state_dim)
+
+        model_input = self.dynamics.coord_to_input(coords)
+
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)            # (N,)
+
+        values = self.dynamics.io_to_value(model_input, output)
+        return values.cpu().numpy()
+
     def _search_brt_time(self, state, current_time):
         """
         Search for the minimum time t where V(x, t) <= 0 (tightest BRT containing state).
@@ -406,6 +443,9 @@ class BRTController:
             value = self.get_value(state, self.tMax)
             phase = 1
             
+        # Post-process through safety filter (no-op when mode=0)
+        control = self.safety_filter.apply(state, control)
+
         # Record history
         self.state_history.append(state.copy() if isinstance(state, np.ndarray) else state)
         self.control_history.append(control)
@@ -453,6 +493,7 @@ class BRTController:
         
         docked = False
         collided = False
+        n_clipped = 0
         
         # Simulation loop
         for step in range(num_steps):
@@ -476,8 +517,10 @@ class BRTController:
             state_dot = dynamics_fn(state, control)
             state = state + self.dt * state_dot
             
-            # Wrap theta to [-pi, pi]
-            state[4] = np.arctan2(np.sin(state[4]), np.cos(state[4]))
+            # Wrap theta and clamp velocities/omega to training domain
+            state, clipped = clip_state_for_execution(state, self.dynamics)
+            if clipped:
+                n_clipped += 1
         
         wall_time = _time.perf_counter() - t_wall_start
         
@@ -506,6 +549,11 @@ class BRTController:
             'controller_type': 'brt',
             'control_effort': control_effort,
             'wall_time': wall_time,
+            # --- safety filter ---
+            'safety_filter_mode': self.safety_filter.mode,
+            'safety_filter_log': self.safety_filter.get_log(),
+            # --- execution clamping ---
+            'n_clipped_steps': n_clipped,
         }
         
         return result
