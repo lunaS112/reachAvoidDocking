@@ -303,8 +303,7 @@ def plot_states_13d(result, dynamics, save_path=None):
                     label=f'y goal [{d.goal_y_min:.2f}, {d.goal_y_max:.2f}]')
     # Green highlight where all position states are simultaneously in-tolerance
     pos_in_tol = (
-        (np.abs(traj[:, 0]) <= d.eps_p) &
-        (np.abs(traj[:, 2]) <= d.eps_p) &
+        (np.sqrt(traj[:, 0]**2 + traj[:, 2]**2) <= d.eps_p) &
         (traj[:, 1] >= d.goal_y_min) & (traj[:, 1] <= d.goal_y_max)
     )
     ax.set_title('Position (m)')
@@ -332,8 +331,7 @@ def plot_states_13d(result, dynamics, save_path=None):
                     label=f'vy goal [{d.eps_v_axial_lo}, {d.eps_v_axial_hi}]')
     # Green highlight where all velocity states are simultaneously in-tolerance
     vel_in_tol = (
-        (np.abs(traj[:, 3]) <= d.eps_v_lateral) &
-        (np.abs(traj[:, 5]) <= d.eps_v_lateral) &
+        (np.sqrt(traj[:, 3]**2 + traj[:, 5]**2) <= d.eps_v_lateral) &
         (traj[:, 4] >= d.eps_v_axial_lo) & (traj[:, 4] <= d.eps_v_axial_hi)
     )
     ax.set_title('Velocity (m/s)')

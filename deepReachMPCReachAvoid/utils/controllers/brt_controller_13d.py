@@ -384,10 +384,8 @@ class BRTController13D(Docking13DControllerMixin):
         vel = state[3:6]
         q = state[6:10]
 
-        # Position: |x|, |z| < mult * eps_p, y in expanded goal band
-        if abs(pos[0]) > mult * d.eps_p:
-            return False
-        if abs(pos[2]) > mult * d.eps_p:
+        # Position: L2(x,z) < mult * eps_p, y in expanded goal band
+        if np.sqrt(pos[0]**2 + pos[2]**2) > mult * d.eps_p:
             return False
         y_margin = mult * (d.goal_y_max - d.goal_y_min) / 2.0
         if not (d.goal_y_min - y_margin <= pos[1] <= d.goal_y_max + y_margin):
