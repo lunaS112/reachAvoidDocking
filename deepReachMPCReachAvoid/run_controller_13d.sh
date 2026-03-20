@@ -109,3 +109,7 @@ else
     --output_dir "$OUTDIR" \
     $EXTRA_ARGS
 fi
+
+# This doesnt work yet, need to figure out why
+cd /home/lcastle01/lcastle01/git/reachAvoidDocking/deepReachMPCReachAvoid && source ../.venv/bin/activate && python3 run_controller_13d.py single   --controller brt_pd_hybrid   --checkpoint_path runs/Docking13D_RA_v8_TightOmega/training/checkpoints/model_horizon_10.00.pth   --tMax 10.0   --dt 0.01   --safety_checkpoint_path runs/Docking13D_Avoid/D
+ocking13D_Avoid/training/checkpoints/model_final.pth   --max_sim_time 180.0   --initial_state '[0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0.5, 0.5]'   --output_dir ./outputs/v8_single_test_hybrid_hard   --viz_html   --viz_gifs
