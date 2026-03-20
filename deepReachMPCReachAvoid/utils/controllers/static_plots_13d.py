@@ -1,16 +1,16 @@
 """
 Static visualisation plots for Docking13D simulation results.
 
-Three public functions, each producing one PNG:
+Three public functions, each producing one SVG:
 
-  • ``plot_trajectory_13d``   → ``trajectory.png``
+  • ``plot_trajectory_13d``   → ``trajectory.svg``
       2×2 grid: 3D trajectory, XY projection, XZ projection, distance-to-dock.
 
-  • ``plot_states_13d``       → ``simulation_states.png``
+  • ``plot_states_13d``       → ``simulation_states.svg``
       5×2 grid: position, velocity, quaternion, angular velocity,
       distance, value function, phase, summary text, BRAT time.
 
-  • ``plot_controls_13d``     → ``simulation_controls.png``
+  • ``plot_controls_13d``     → ``simulation_controls.svg``
       2×2 grid: forces, torques, cumulative effort, force/torque magnitude.
 
 Usage::
@@ -18,9 +18,9 @@ Usage::
     from utils.controllers.static_plots_13d import (
         plot_trajectory_13d, plot_states_13d, plot_controls_13d,
     )
-    plot_trajectory_13d(result, dynamics, 'outputs/trajectory.png')
-    plot_states_13d(result, dynamics, 'outputs/simulation_states.png')
-    plot_controls_13d(result, dynamics, 'outputs/simulation_controls.png')
+    plot_trajectory_13d(result, dynamics, 'outputs/trajectory.svg')
+    plot_states_13d(result, dynamics, 'outputs/simulation_states.svg')
+    plot_controls_13d(result, dynamics, 'outputs/simulation_controls.svg')
 """
 
 from __future__ import annotations
@@ -180,7 +180,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
     # ---- (0,0) 3D trajectory ----------------------------------------- #
     ax3d = fig.add_subplot(221, projection='3d')
     _draw_target_3d(ax3d, dynamics)
-    ax3d.plot(traj[:, 0], traj[:, 1], traj[:, 2], 'r-', lw=2,
+    ax3d.plot(traj[:, 0], traj[:, 1], traj[:, 2], 'r-', lw=0.1,
               label='Trajectory')
     ax3d.plot([traj[0, 0]], [traj[0, 1]], [traj[0, 2]], 'go',
               markersize=8, label='Start', zorder=35)
@@ -199,7 +199,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
     # ---- (0,1) XY projection ---------------------------------------- #
     ax_xy = fig.add_subplot(222)
     _draw_target_2d(ax_xy, dynamics, plane='xy')
-    ax_xy.plot(traj[:, 0], traj[:, 1], 'r-', lw=2, label='Trajectory',
+    ax_xy.plot(traj[:, 0], traj[:, 1], 'r-', lw=0.1, label='Trajectory',
                zorder=25)
     ax_xy.plot(traj[0, 0], traj[0, 1], 'go', markersize=8, label='Start',
                zorder=35)
@@ -217,7 +217,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
     # ---- (1,0) XZ projection ---------------------------------------- #
     ax_xz = fig.add_subplot(223)
     _draw_target_2d(ax_xz, dynamics, plane='xz')
-    ax_xz.plot(traj[:, 0], traj[:, 2], 'r-', lw=2, label='Trajectory',
+    ax_xz.plot(traj[:, 0], traj[:, 2], 'r-', lw=0.1, label='Trajectory',
                zorder=25)
     ax_xz.plot(traj[0, 0], traj[0, 2], 'go', markersize=8, label='Start',
                zorder=35)
@@ -234,13 +234,13 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 
     # ---- (1,1) Distance to dock -------------------------------------- #
     ax_dist = fig.add_subplot(224)
-    ax_dist.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax_dist.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
+    ax_dist.plot(times, dists, 'b-', lw=0.1, label='Distance')
+    ax_dist.axhline(d.eps_p, color='lime', ls='--', lw=0.3,
                      label=f'eps_p = {d.eps_p}m')
     if result.get('docked', False):
         dock_idx = np.argmax(dists <= d.eps_p)
         if dock_idx > 0:
-            ax_dist.axvline(times[dock_idx], color='green', ls='--', lw=1,
+            ax_dist.axvline(times[dock_idx], color='green', ls='--', lw=0.3,
                             alpha=0.6, label='Docked')
     ax_dist.set_xlabel('Time (s)')
     ax_dist.set_ylabel('Distance (m)')
@@ -252,7 +252,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 
     if save_path:
         _safe_mkdir(save_path)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, format='svg', bbox_inches='tight')
         print(f"[Static] Trajectory figure saved to {save_path}")
 
     plt.close(fig)
@@ -264,7 +264,7 @@ def plot_trajectory_13d(result, dynamics, save_path=None):
 # --------------------------------------------------------------------------- #
 
 def plot_states_13d(result, dynamics, save_path=None):
-    """Create a 5×2 state time-series figure.
+    """Create a 6×2 state time-series figure.
 
     Panels:
       (0,0) Position (x,y,z)        (0,1) Velocity (vx,vy,vz)
@@ -272,6 +272,7 @@ def plot_states_13d(result, dynamics, save_path=None):
       (2,0) Distance to target      (2,1) Value function
       (3,0) Phase                   (3,1) Summary text
       (4,0) BRAT time (t*)          (4,1) (empty)
+      (5,0) Reach-fn components     (5,1) (empty)
 
     Returns ``matplotlib.figure.Figure``.
     """
@@ -285,13 +286,13 @@ def plot_states_13d(result, dynamics, save_path=None):
     d = dynamics
     q_goal = _q_goal_np(dynamics)
 
-    fig, axes = plt.subplots(5, 2, figsize=(16, 22))
+    fig, axes = plt.subplots(6, 2, figsize=(16, 26))
 
     # ---- (0,0) Position ---------------------------------------------- #
     ax = axes[0, 0]
     pos_colors = ['tab:blue', 'tab:orange', 'tab:green']
     for i, (lbl, c) in enumerate(zip(['x', 'y', 'z'], pos_colors)):
-        ax.plot(times, traj[:, i], color=c, lw=1.5, label=lbl)
+        ax.plot(times, traj[:, i], color=c, lw=0.08, label=lbl)
     # Goal bands: x and z centered at 0 ± eps_p, y is [goal_y_min, goal_y_max]
     ax.fill_between(times, -d.eps_p, d.eps_p,
                     color='tab:blue', alpha=0.10, label=f'x,z goal ±{d.eps_p}m')
@@ -319,7 +320,7 @@ def plot_states_13d(result, dynamics, save_path=None):
     ax = axes[0, 1]
     vel_colors = ['tab:blue', 'tab:orange', 'tab:green']
     for i, (lbl, c) in enumerate(zip(['vx', 'vy', 'vz'], vel_colors)):
-        ax.plot(times, traj[:, 3 + i], color=c, lw=1.5, label=lbl)
+        ax.plot(times, traj[:, 3 + i], color=c, lw=0.08, label=lbl)
     # Goal bands: vx,vz at 0 ± eps_v_lateral; vy uses positive axial band
     ax.fill_between(times, -d.eps_v_lateral, d.eps_v_lateral,
                     color='tab:blue', alpha=0.10,
@@ -344,64 +345,106 @@ def plot_states_13d(result, dynamics, save_path=None):
     ax.set_ylim(ymin, ymax)
     ax.legend(fontsize=7)
 
-    # ---- (1,0) Quaternion -------------------------------------------- #
+    # ---- (1,0) Quaternion error angle -------------------------------- #
     ax = axes[1, 0]
-    q_labels = ['q\u2080', 'q\u2081', 'q\u2082', 'q\u2083']
-    q_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
+    # Align quaternion sign: q and -q are the same rotation.
+    q_traj = traj[:, 6:10].copy()
+    dot_with_goal = q_traj @ q_goal
+    q_traj[dot_with_goal < 0] *= -1
+    # Compute quaternion error angle (matches reach_fn exactly)
+    gw, gx, gy, gz = q_goal
+    qw, qx, qy, qz = q_traj[:, 0], q_traj[:, 1], q_traj[:, 2], q_traj[:, 3]
+    rel_w = gw * qw + gx * qx + gy * qy + gz * qz
+    rel_x = gw * qx - gx * qw - gy * qz + gz * qy
+    rel_y = gw * qy + gx * qz - gy * qw - gz * qx
+    rel_z = gw * qz - gx * qy + gy * qx - gz * qw
+    rel_vec_norm = np.sqrt(rel_x**2 + rel_y**2 + rel_z**2 + 1e-12)
+    quat_angle_err = 2.0 * np.arctan2(rel_vec_norm, np.abs(rel_w))
+    quat_angle_deg = np.degrees(quat_angle_err)
+    eps_q_deg = np.degrees(d.eps_q)
+    # Primary plot: angle error in degrees
+    ax.plot(times, quat_angle_deg, color='tab:blue', lw=0.1,
+            label='Angle error')
+    ax.fill_between(times, 0, eps_q_deg,
+                    color='tab:blue', alpha=0.10, label=f'Tol \u2264 {eps_q_deg:.1f}\u00b0')
+    ax.axhline(eps_q_deg, color='tab:blue', ls='--', lw=0.3, alpha=0.7)
+    # Thin component lines for context (secondary)
+    q_comp_colors = ['gray', 'tab:orange', 'tab:green', 'tab:red']
+    q_comp_labels = ['q\u2080', 'q\u2081', 'q\u2082', 'q\u2083']
+    ax2 = ax.twinx()
     for i in range(4):
-        ax.plot(times, traj[:, 6 + i], color=q_colors[i], lw=1.5,
-                label=q_labels[i])
-        ax.fill_between(times, q_goal[i] - d.eps_q, q_goal[i] + d.eps_q,
-                        color=q_colors[i], alpha=0.08)
-    # Green highlight where all quaternion components are simultaneously in-tolerance
-    quat_in_tol = np.ones(len(times), dtype=bool)
-    for i in range(4):
-        quat_in_tol &= (np.abs(traj[:, 6 + i] - q_goal[i]) <= d.eps_q)
-    ax.set_title(f'Quaternion (bands = q_goal ±{d.eps_q:.3f} rad)')
+        ax2.plot(times, q_traj[:, i], color=q_comp_colors[i], lw=0.04,
+                 alpha=0.5, label=q_comp_labels[i])
+    ax2.set_ylabel('Component value', fontsize=8, color='gray')
+    ax2.tick_params(axis='y', labelcolor='gray', labelsize=7)
+    ax2.legend(fontsize=6, loc='upper right', ncol=2,
+               framealpha=0.7)
+    # Green highlight: angle error < eps_q (matches reach_fn)
+    quat_in_tol = quat_angle_err <= d.eps_q
+    ax.set_title(f'Quaternion Error Angle (tol = {eps_q_deg:.1f}\u00b0)')
     ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Error angle (\u00b0)', fontsize=9)
     ax.grid(True, alpha=0.3)
     ymin, ymax = ax.get_ylim()
     ax.fill_between(times, ymin, ymax, where=quat_in_tol,
-                    color='lime', alpha=0.15, zorder=0, label='All in tol')
-    ax.set_ylim(ymin, ymax)
-    ax.legend(fontsize=8, ncol=2)
+                    color='lime', alpha=0.15, zorder=0, label='In tol')
+    ax.set_ylim(0, max(ymax, eps_q_deg * 1.5))
+    ax.legend(fontsize=7, loc='upper left')
 
     # ---- (1,1) Angular velocity -------------------------------------- #
     ax = axes[1, 1]
+    # Individual components (thin, for context)
     omega_colors = ['tab:blue', 'tab:orange', 'tab:green']
-    omega_labels = ['\u03c9x', '\u03c9y', '\u03c9z']
+    omega_labels = ['\u03c9x (roll)', '\u03c9y (pitch)', '\u03c9z (yaw)']
     for i, (lbl, c) in enumerate(zip(omega_labels, omega_colors)):
-        ax.plot(times, traj[:, 10 + i], color=c, lw=1.5, label=lbl)
-    # Goal bands: wx (roll) at 0 ± eps_omega_roll; wy,wz at 0 ± eps_omega_pitchyaw
-    ax.fill_between(times, -d.eps_omega_roll, d.eps_omega_roll,
-                    color='tab:blue', alpha=0.10,
-                    label=f'\u03c9x goal ±{d.eps_omega_roll:.4f}')
-    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
-                    color='tab:orange', alpha=0.10,
-                    label=f'\u03c9y,\u03c9z goal ±{d.eps_omega_pitchyaw:.4f}')
-    ax.fill_between(times, -d.eps_omega_pitchyaw, d.eps_omega_pitchyaw,
-                    color='tab:green', alpha=0.07)
-    # Green highlight where all angular velocity states are simultaneously in-tolerance
+        ax.plot(times, traj[:, 10 + i], color=c, lw=0.05, alpha=0.6,
+                label=lbl)
+    # Primary metrics that reach_fn checks
+    omg_py_l2 = np.sqrt(traj[:, 11]**2 + traj[:, 12]**2)
+    omg_roll_abs = np.abs(traj[:, 10])
+    ax.plot(times, omg_py_l2, color='tab:purple', lw=0.1,
+            label=f'\u2016\u03c9y,\u03c9z\u2016\u2082 (tol {d.eps_omega_pitchyaw:.4f})')
+    ax.plot(times, omg_roll_abs, color='tab:blue', lw=0.1, ls='--',
+            label=f'|\u03c9x| (tol {d.eps_omega_roll:.4f})')
+    # Tolerance bands (shaded)
+    ax.fill_between(times, 0, d.eps_omega_pitchyaw,
+                    color='tab:purple', alpha=0.12)
+    ax.axhline(d.eps_omega_pitchyaw, color='tab:purple', ls='--',
+               lw=0.3, alpha=0.7)
+    ax.fill_between(times, 0, d.eps_omega_roll,
+                    color='tab:blue', alpha=0.08)
+    ax.axhline(d.eps_omega_roll, color='tab:blue', ls=':', lw=0.3,
+               alpha=0.5)
+    # Green highlight: matches reach_fn
     omg_in_tol = (
-        (np.abs(traj[:, 10]) <= d.eps_omega_roll) &
-        (np.abs(traj[:, 11]) <= d.eps_omega_pitchyaw) &
-        (np.abs(traj[:, 12]) <= d.eps_omega_pitchyaw)
+        (omg_roll_abs <= d.eps_omega_roll) &
+        (omg_py_l2 <= d.eps_omega_pitchyaw)
     )
-    ax.set_title('Angular velocity (rad/s)')
+    ax.set_title('Angular Velocity (rad/s)')
     ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Rate (rad/s)', fontsize=9)
     ax.grid(True, alpha=0.3)
     ymin, ymax = ax.get_ylim()
     ax.fill_between(times, ymin, ymax, where=omg_in_tol,
-                    color='lime', alpha=0.15, zorder=0, label='All in tol')
+                    color='lime', alpha=0.15, zorder=0, label='In tol')
+    # Purple highlight where PD torque is active
+    pd_active = result.get('pd_torque_active')
+    if pd_active is not None:
+        pd_mask = np.asarray(pd_active, dtype=bool)
+        n_pd = min(len(times), len(pd_mask))
+        ax.fill_between(times[:n_pd], ymin, ymax,
+                        where=pd_mask[:n_pd],
+                        color='purple', alpha=0.12, zorder=0,
+                        label='PD torque')
     ax.set_ylim(ymin, ymax)
-    ax.legend(fontsize=7)
+    ax.legend(fontsize=6, ncol=2)
 
     # ---- (2,0) Distance ---------------------------------------------- #
     ax = axes[2, 0]
     goal_center = np.array([0.0, d.goal_y_center, 0.0])
     dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
-    ax.plot(times, dists, 'b-', lw=2, label='Distance')
-    ax.axhline(d.eps_p, color='lime', ls='--', lw=1.2,
+    ax.plot(times, dists, 'b-', lw=0.1, label='Distance')
+    ax.axhline(d.eps_p, color='lime', ls='--', lw=0.3,
                label=f'eps_p = {d.eps_p}m')
     ax.set_title('Distance to Target (m)')
     ax.set_xlabel('Time (s)')
@@ -410,8 +453,8 @@ def plot_states_13d(result, dynamics, save_path=None):
 
     # ---- (2,1) Value function ---------------------------------------- #
     ax = axes[2, 1]
-    ax.plot(times, values, 'b-', lw=1.5, label='V(x,t)')
-    ax.axhline(0, color='k', ls='--', lw=1.2, alpha=0.5, label='BRT boundary')
+    ax.plot(times, values, 'b-', lw=0.08, label='V(x,t)')
+    ax.axhline(0, color='k', ls='--', lw=0.3, alpha=0.5, label='BRT boundary')
     # Background shading: green where V<0 (inside BRT)
     v_arr = np.asarray(values)
     if len(v_arr) == len(times):
@@ -428,7 +471,7 @@ def plot_states_13d(result, dynamics, save_path=None):
     if 'phases' in result:
         phases = np.asarray(result['phases'])
         ax.step(times[:len(phases)], phases, where='post', color='purple',
-                lw=2.0, label='Phase')
+                lw=0.1, label='Phase')
         ax.set_yticks([1, 2])
         ax.set_yticklabels(['Phase 1\n(Reach)', 'Phase 2\n(Avoid)'])
     else:
@@ -482,7 +525,7 @@ def plot_states_13d(result, dynamics, save_path=None):
         # Plot t* line only during Phase 2 (mask Phase 1 as NaN)
         t_star_line = t_rem_plot.copy()
         t_star_line[phase1_mask] = np.nan
-        ax.plot(t_plot, t_star_line, 'b-', lw=1.5, label='t* (strict)')
+        ax.plot(t_plot, t_star_line, 'b-', lw=0.08, label='t* (strict)')
 
         # Overlay status markers from brt_time_adjustments (non-strict events)
         adjustments = result.get('brt_time_adjustments', [])
@@ -518,11 +561,43 @@ def plot_states_13d(result, dynamics, save_path=None):
     # ---- (4,1) empty ------------------------------------------------- #
     axes[4, 1].axis('off')
 
+    # ---- (5,0) Reach-fn component breakdown -------------------------- #
+    ax = axes[5, 0]
+    if 'reach_fn_components' in result:
+        rc = result['reach_fn_components']
+        comp_keys = ['position', 'vlat', 'vax', 'attitude', 'omega_py', 'omega_roll']
+        comp_labels = ['Position', 'V_lat', 'V_ax', 'Attitude',
+                       'Omega p/y', 'Omega roll']
+        comp_colors = ['tab:blue', 'tab:orange', 'tab:green',
+                       'tab:red', 'tab:purple', 'tab:brown']
+        n_comp = min(len(times), len(rc[comp_keys[0]]))
+        t_comp = times[:n_comp]
+        for key, lbl, clr in zip(comp_keys, comp_labels, comp_colors):
+            ax.plot(t_comp, np.asarray(rc[key])[:n_comp],
+                    color=clr, lw=0.06, label=lbl)
+        # Overall max = reach_fn value
+        stacked = np.stack([np.asarray(rc[k])[:n_comp] for k in comp_keys],
+                           axis=-1)
+        overall_max = np.max(stacked, axis=-1)
+        ax.plot(t_comp, overall_max, color='black', lw=0.12, label='Max (V)')
+        ax.axhline(0, color='k', ls='--', lw=0.3, alpha=0.6)
+        ax.legend(fontsize=7, ncol=2)
+    else:
+        ax.text(0.5, 0.5, 'No reach_fn_components data',
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=12, color='gray')
+    ax.set_title('Reach-fn Components (< 0 = in tolerance)')
+    ax.set_xlabel('Time (s)')
+    ax.grid(True, alpha=0.3)
+
+    # ---- (5,1) empty ------------------------------------------------- #
+    axes[5, 1].axis('off')
+
     plt.tight_layout()
 
     if save_path:
         _safe_mkdir(save_path)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, format='svg', bbox_inches='tight')
         print(f"[Static] States figure saved to {save_path}")
 
     plt.close(fig)
@@ -562,12 +637,12 @@ def plot_controls_13d(result, dynamics, save_path=None):
     ax = axes[0, 0]
     for i, (lbl, c) in enumerate(zip(['Fx', 'Fy', 'Fz'],
                                       ['tab:blue', 'tab:orange', 'tab:green'])):
-        ax.plot(t_ctrl, controls[:n_ctrl, i], color=c, lw=1.2, label=lbl)
+        ax.plot(t_ctrl, controls[:n_ctrl, i], color=c, lw=0.06, label=lbl)
     if F_max is not None:
-        ax.axhline(F_max, color='red', ls='--', lw=0.8, alpha=0.5,
+        ax.axhline(F_max, color='red', ls='--', lw=0.3, alpha=0.5,
                    label=f'±F_max={F_max}')
-        ax.axhline(-F_max, color='red', ls='--', lw=0.8, alpha=0.5)
-    ax.axhline(0, color='k', ls=':', lw=0.5, alpha=0.3)
+        ax.axhline(-F_max, color='red', ls='--', lw=0.3, alpha=0.5)
+    ax.axhline(0, color='k', ls=':', lw=0.2, alpha=0.3)
     ax.set_title('Body-Frame Forces (N)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
@@ -577,12 +652,12 @@ def plot_controls_13d(result, dynamics, save_path=None):
     ax = axes[0, 1]
     for i, (lbl, c) in enumerate(zip(['τx', 'τy', 'τz'],
                                       ['tab:blue', 'tab:orange', 'tab:green'])):
-        ax.plot(t_ctrl, controls[:n_ctrl, 3 + i], color=c, lw=1.2, label=lbl)
+        ax.plot(t_ctrl, controls[:n_ctrl, 3 + i], color=c, lw=0.06, label=lbl)
     if tau_max is not None:
-        ax.axhline(tau_max, color='red', ls='--', lw=0.8, alpha=0.5,
+        ax.axhline(tau_max, color='red', ls='--', lw=0.3, alpha=0.5,
                    label=f'±τ_max={tau_max}')
-        ax.axhline(-tau_max, color='red', ls='--', lw=0.8, alpha=0.5)
-    ax.axhline(0, color='k', ls=':', lw=0.5, alpha=0.3)
+        ax.axhline(-tau_max, color='red', ls='--', lw=0.3, alpha=0.5)
+    ax.axhline(0, color='k', ls=':', lw=0.2, alpha=0.3)
     ax.set_title('Body-Frame Torques (N·m)')
     ax.set_xlabel('Time (s)')
     ax.grid(True, alpha=0.3)
@@ -592,7 +667,7 @@ def plot_controls_13d(result, dynamics, save_path=None):
     ax = axes[1, 0]
     effort_per_step = np.linalg.norm(controls[:n_ctrl], axis=1)
     cumulative = np.cumsum(effort_per_step)
-    ax.plot(t_ctrl, cumulative, 'b-', lw=2, label='Cumulative ||u||')
+    ax.plot(t_ctrl, cumulative, 'b-', lw=0.1, label='Cumulative ||u||')
     ax.set_title('Cumulative Control Effort')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Σ||u||')
@@ -603,10 +678,10 @@ def plot_controls_13d(result, dynamics, save_path=None):
     ax = axes[1, 1]
     f_mag = np.linalg.norm(controls[:n_ctrl, :3], axis=1)
     t_mag = np.linalg.norm(controls[:n_ctrl, 3:], axis=1)
-    ax.plot(t_ctrl, f_mag, 'b-', lw=1.5, label='||F|| (N)')
-    ax.plot(t_ctrl, t_mag, 'r-', lw=1.5, label='||τ|| (N·m)')
+    ax.plot(t_ctrl, f_mag, 'b-', lw=0.08, label='||F|| (N)')
+    ax.plot(t_ctrl, t_mag, 'r-', lw=0.08, label='||τ|| (N·m)')
     if F_max is not None:
-        ax.axhline(F_max * np.sqrt(3), color='blue', ls=':', lw=0.8,
+        ax.axhline(F_max * np.sqrt(3), color='blue', ls=':', lw=0.3,
                    alpha=0.4, label=f'F_max·√3={F_max * np.sqrt(3):.1f}')
     ax.set_title('Force / Torque Magnitudes')
     ax.set_xlabel('Time (s)')
@@ -617,7 +692,7 @@ def plot_controls_13d(result, dynamics, save_path=None):
 
     if save_path:
         _safe_mkdir(save_path)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, format='svg', bbox_inches='tight')
         print(f"[Static] Controls figure saved to {save_path}")
 
     plt.close(fig)

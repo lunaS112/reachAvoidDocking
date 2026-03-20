@@ -191,20 +191,14 @@ class SliceGIF13D:
         idx_a, idx_b, idx_fixed = _IDX_MAP[plane]
         xlabel, ylabel, fixed_name = _AXIS_LABELS[plane]
 
-        # Compute consistent grid bounds across all frames
-        pos_traj = traj[:, :3]  # (N, 3)
-        margin = 2.0
-        clamp = 12.0
-        a_min = np.clip(pos_traj[:, idx_a].min() - margin, -clamp, clamp)
-        a_max = np.clip(pos_traj[:, idx_a].max() + margin, -clamp, clamp)
-        b_min = np.clip(pos_traj[:, idx_b].min() - margin, -clamp, clamp)
-        b_max = np.clip(pos_traj[:, idx_b].max() + margin, -clamp, clamp)
-        # Ensure we include some context around target (origin)
-        a_min = min(a_min, -5.0)
-        a_max = max(a_max, 5.0)
-        b_min = min(b_min, -5.0)
-        b_max = max(b_max, 5.0)
-        grid_bounds_2d = [(a_min, a_max), (b_min, b_max)]
+        # Grid bounds from state space range (IC-independent)
+        sr = self.dynamics.state_range_
+        if hasattr(sr, 'cpu'):
+            sr = sr.detach().cpu().numpy()
+        grid_bounds_2d = [
+            (float(sr[idx_a, 0]), float(sr[idx_a, 1])),
+            (float(sr[idx_b, 0]), float(sr[idx_b, 1])),
+        ]
 
         # Pre-evaluate all frames
         print(f"  [{plane.upper()}] Evaluating {len(key_idx)} frames "
