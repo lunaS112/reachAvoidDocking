@@ -24,8 +24,8 @@ POST_LENGTH = 0.2    # post extent in -y
 W_C, H_C = 1.0, 1.0  # chaser dimensions
 CHASER_BUFFER = np.sqrt(W_C**2 + H_C**2) / 2  # ≈ 0.707
 
-GOAL_CLEARANCE = -0.007
-GOAL_BAND_HEIGHT = 0.5
+GOAL_CLEARANCE = 0.143
+GOAL_BAND_HEIGHT = 0.2
 GOAL_Y_MAX = -(POST_LENGTH + CHASER_BUFFER + GOAL_CLEARANCE)   # ≈ -1.0
 GOAL_Y_MIN = GOAL_Y_MAX - GOAL_BAND_HEIGHT                     # ≈ -1.4
 GOAL_Y_CENTER = (GOAL_Y_MIN + GOAL_Y_MAX) / 2.0                # ≈ -1.2

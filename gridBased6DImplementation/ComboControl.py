@@ -247,7 +247,7 @@ class ComboController:
             tuple(float(x) for x in self.state_domain_4D.hi),
             tuple(float(x) for x in self.state_domain_2D.lo),
             tuple(float(x) for x in self.state_domain_2D.hi),
-            -0.007, 0.5,  # goal_clearance, goal_band_height (for cache invalidation)
+            0.143, 0.2,  # goal_clearance, goal_band_height (for cache invalidation)
         ]
         raw = str(key_parts).encode()
         return hashlib.sha256(raw).hexdigest()[:16]
@@ -296,8 +296,8 @@ class ComboController:
         vy = state[..., 3]
 
         cb = np.sqrt(self.w_c**2 + self.h_c**2) / 2
-        goal_clearance = -0.007
-        goal_band_height = 0.5
+        goal_clearance = 0.143
+        goal_band_height = 0.2
         goal_y_max = -(self.post_length + cb + goal_clearance)
         goal_y_min = goal_y_max - goal_band_height
 
