@@ -5,7 +5,7 @@ source "${SCRIPT_DIR}/../.venv/bin/activate"
 
 # RUN IN TERMINAL FIRST
 
-CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_10sec_GradRefine/training/checkpoints/model_final.pth"
 CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 #################### Gradient MPC Baseline (analytical cost only) ############
@@ -104,14 +104,14 @@ python run_controller.py single --controller mpc_terminal \
 ########################### Comparison runs ##################################
 
 # Quick 4-way comparison: BRAT vs MPC baseline vs MPC+Terminal vs Grid-Based
-python run_controller.py compare --controllers brat grid_based mpc mpc_terminal\
+CUDA_VISIBLE_DEVICES=1 python run_controller.py compare --controllers brat grid_based mpc mpc_terminal\
   --checkpoint_path $CKPT --tMax 10.0 --max_sim_time 60.0 \
   --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
   --mpc_gradient_iters 30 --mpc_num_restarts 4 --gradient_lr 1.0 --goal_weight 0.01 \
   --mpc_terminal_gradient_iters 10 --mpc_terminal_num_restarts 1 \
   --planning_horizon 2.0 --mpc_dt 0.5 --effective_horizon 1.0 \
-  --n_rollouts 100 --seed 17 --sampling_method uniform \
-  --output_dir ./outputs/4_way_comparison_100_uniform_IC_SF-1_HighSamp
+  --n_rollouts 500 --seed 19 --sampling_method uniform \
+  --output_dir ./outputs/4_way_comparison_500_uniform_IC_SF-1_GradientRefine
 
 # Large-scale BRAT-only baseline (uniform IC)
 python run_controller.py compare --controllers brat \
@@ -128,9 +128,9 @@ python volume_comparison.py \
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
   --n_rollouts 10000 --tMax 10.0 --max_sim_time 90.0 --gradient_fallback --grad_threshold 0.01\
-  --sampling_method uniform --output_dir ./outputs/BRAT_10000_uniform_IC_SF-1_FixedScaling
+  --sampling_method uniform --output_dir ./outputs/BRAT_10000_uniform_IC_SF-1_GradientRefine
 # 6D Geometry: BRAT IC
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 0 --safety_checkpoint_path $CKPT_AVOID \
   --n_rollouts 10000 --tMax 10 --max_sim_time 60.0 --gradient_fallback --grad_threshold 0.01 \
-  --sampling_method brat --output_dir ./outputs/BRAT_10000_brat_IC_SF-0_FixedScaling
+  --sampling_method brat --output_dir ./outputs/BRAT_10000_brat_IC_SF-0_GradientRefine
