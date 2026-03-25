@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.controllers import (
     BRTController13D, MPCController13D, MPCTerminalController13D,
-    SafetyFilter,
+    SafetyFilter, RLController13D,
 )
 from utils.brt_visualization_13d import BRTVisualizer13D
 from utils.controllers.controller_animation_13d import ControllerAnimation13D
@@ -54,6 +54,7 @@ CONTROLLER_LABELS = {
     'brt_safety_13d':   'BRT+Safety 13D',
     'mpc_13d':          'MPC 13D',
     'mpc_terminal_13d': 'MPC+Terminal 13D',
+    'rl_13d':           'RL 13D (DDQN)',
 }
 
 
@@ -78,8 +79,32 @@ def _banner(text, width=60, char='='):
 #  Builder
 # ------------------------------------------------------------------ #
 
+def _build_optional_safety_filter(args):
+    """Build a SafetyFilter if mode > 0 and checkpoint is provided."""
+    sf_mode = getattr(args, 'safety_filter_mode', 0)
+    sf_path = getattr(args, 'safety_checkpoint_path', None)
+    if sf_mode > 0 and sf_path is not None:
+        return SafetyFilter(
+            mode=sf_mode,
+            checkpoint_path=sf_path,
+            tMax=args.safety_tMax,
+            margin=args.safety_filter_margin,
+            gamma=args.safety_filter_gamma,
+            device=args.device,
+        )
+    if sf_mode > 0:
+        print(f"[WARNING] safety_filter_mode={sf_mode} but no "
+              f"--safety_checkpoint_path provided; disabling safety filter.")
+    return None
+
+
 def build_controller(name, args):
     """Instantiate a 13D controller by name string."""
+    # Validate checkpoint_path for controllers that require it
+    if name in ('brt_13d', 'brt_safety_13d', 'mpc_13d', 'mpc_terminal_13d'):
+        if args.checkpoint_path is None:
+            raise ValueError(f"--checkpoint_path is required for {name}")
+
     if name == 'brt_13d':
         return BRTController13D(
             checkpoint_path=args.checkpoint_path,
@@ -88,14 +113,7 @@ def build_controller(name, args):
             device=args.device,
         )
     elif name == 'brt_safety_13d':
-        sf = SafetyFilter(
-            mode=args.safety_filter_mode,
-            checkpoint_path=args.safety_checkpoint_path,
-            tMax=args.safety_tMax,
-            margin=args.safety_filter_margin,
-            gamma=args.safety_filter_gamma,
-            device=args.device,
-        )
+        sf = _build_optional_safety_filter(args)
         return BRTController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
@@ -126,6 +144,16 @@ def build_controller(name, args):
             exploration_factor=args.exploration_factor,
             exploration_patience=args.exploration_patience,
             escape_thresh=args.escape_thresh,
+        )
+    elif name == 'rl_13d':
+        sf = _build_optional_safety_filter(args)
+        return RLController13D(
+            rl_checkpoint_path=args.rl_checkpoint_path,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
+            architecture=args.rl_architecture,
+            activation=args.rl_activation,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -704,8 +732,8 @@ def main():
 
     # --- Shared arguments -------------------------------------------- #
     parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument('--checkpoint_path', type=str, required=True,
-                        help='Path to model_final.pth')
+    parent.add_argument('--checkpoint_path', type=str, default=None,
+                        help='Path to model_final.pth (required for brt/mpc controllers)')
     parent.add_argument('--tMax', type=float, default=14.0)
     parent.add_argument('--dt', type=float, default=0.1)
     parent.add_argument('--device', type=str, default='cuda')
@@ -735,6 +763,15 @@ def main():
     parent.add_argument('--exploration_patience', type=int, default=2)
     parent.add_argument('--escape_thresh', type=float, default=0.5)
 
+    # RL arguments
+    parent.add_argument('--rl_checkpoint_path', type=str, default=None,
+                        help='Path to trained RL Q-network .pth checkpoint.')
+    parent.add_argument('--rl_architecture', type=int, nargs='+',
+                        default=[256, 256],
+                        help='Hidden layer dims for RL Q-network (must match training).')
+    parent.add_argument('--rl_activation', type=str, default='Tanh',
+                        help='Activation function for RL Q-network (must match training).')
+
     # Viz arguments
     parent.add_argument('--viz_html', action='store_true',
                         help='Generate interactive HTML visualisation.')
@@ -754,7 +791,8 @@ def main():
     sp_single = subparsers.add_parser('single', parents=[parent])
     sp_single.add_argument('--controller', type=str, required=True,
                            choices=['brt_13d', 'brt_safety_13d',
-                                    'mpc_13d', 'mpc_terminal_13d'])
+                                    'mpc_13d', 'mpc_terminal_13d',
+                                    'rl_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
     sp_single.add_argument('--sampling_method', type=str, default='uniform',
@@ -768,7 +806,8 @@ def main():
     sp_compare = subparsers.add_parser('compare', parents=[parent])
     sp_compare.add_argument('--controllers', nargs='+', required=True,
                             choices=['brt_13d', 'brt_safety_13d',
-                                     'mpc_13d', 'mpc_terminal_13d'])
+                                     'mpc_13d', 'mpc_terminal_13d',
+                                     'rl_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)
     sp_compare.add_argument('--seed', type=int, default=42)
     sp_compare.add_argument('--sampling_method', type=str, default='uniform',

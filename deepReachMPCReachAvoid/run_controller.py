@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Controller classes (via convenience re-exports)
 from utils.controllers import (
     BRATController, MPCController, MPCTerminalController,
-    SafetyFilter, GridBasedController,
+    SafetyFilter, GridBasedController, RLController,
 )
 
 # Generic (multi-controller) visualisation
@@ -70,7 +70,7 @@ def _build_safety_filter(args):
 def build_controller(name, args):
     """Instantiate a controller by name string."""
     # Safety filter (no-op when mode=0)
-    sf = _build_safety_filter(args) if name in ('brat', 'mpc', 'mpc_terminal') else None
+    sf = _build_safety_filter(args) if name in ('brat', 'mpc', 'mpc_terminal', 'rl') else None
 
     if name == 'brat':
         return BRATController(
@@ -125,6 +125,15 @@ def build_controller(name, args):
             max_sim_time=args.max_sim_time,
             cache_dir=getattr(args, 'grid_cache_dir', None),
             filter_mode=None if fm == 0 else fm,
+        )
+    elif name == 'rl':
+        return RLController(
+            rl_checkpoint_path=args.rl_checkpoint_path,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
+            architecture=args.rl_architecture,
+            activation=args.rl_activation,
         )
     else:
         raise ValueError(f"Unknown controller: {name}")
@@ -1242,6 +1251,15 @@ def _add_shared_args(parser):
                         help='Grid controller filter: 0=optimal bang-bang '
                              '(default), 1=least-restrictive, '
                              '2=smooth-blend QP, 3=nominal LQR')
+    # RL controller
+    parser.add_argument('--rl_checkpoint_path', type=str, default=None,
+                        help='Path to trained RL Q-network .pth file')
+    parser.add_argument('--rl_architecture', type=int, nargs='+',
+                        default=[256, 256],
+                        help='Hidden layer sizes for RL Q-network '
+                             '(must match training)')
+    parser.add_argument('--rl_activation', type=str, default='Tanh',
+                        help='Activation for RL Q-network (must match training)')
 
 
 def main():
@@ -1262,7 +1280,7 @@ def main():
     _add_shared_args(sp_single)
     sp_single.add_argument(
         '--controller', type=str, default='brat',
-        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based'],
+        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
         help='Controller type to run')
     # Initial state — either as a single 6-element list or individual components
     sp_single.add_argument('--initial_state', type=float, nargs=6,
@@ -1291,7 +1309,7 @@ def main():
     sp_compare.add_argument(
         '--controllers', type=str, nargs='+',
         default=['brat', 'mpc', 'mpc_terminal'],
-        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based'],
+        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
         help='Controllers to compare')
     sp_compare.add_argument('--n_rollouts', type=int, default=50,
                             help='Number of rollouts per controller')
