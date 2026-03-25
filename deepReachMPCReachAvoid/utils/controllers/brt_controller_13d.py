@@ -373,6 +373,43 @@ class BRTController13D(Docking13DControllerMixin):
             s = torch.tensor(state, dtype=torch.float32, device=self.device)
             return float(self.dynamics.avoid_fn(s)) < self.avoid_proximity_margin
 
+    def _boundary_outward_weight(self, state, margin_frac=0.7):
+        """Return a fallback weight in [0, 1] when position is near the domain
+        boundary AND the corresponding velocity is driving it further out.
+
+        For each position dimension (x, y, z = indices 0, 1, 2) with paired
+        velocity (vx, vy, vz = indices 3, 4, 5):
+          - Compute how far the position is into the outer margin zone
+            (the outer ``1 - margin_frac`` fraction of the half-range).
+          - Check if velocity is outward (same sign as displacement from center).
+          - Weight = max over dims of (penetration_depth / margin_width) * outward.
+
+        Returns 0.0 when comfortably inside the domain or velocity is inward.
+        """
+        sr = self.dynamics.state_range_.cpu().numpy()  # (13, 2)
+        max_w = 0.0
+        for p_idx, v_idx in [(0, 3), (1, 4), (2, 5)]:
+            lo, hi = float(sr[p_idx, 0]), float(sr[p_idx, 1])
+            half = (hi - lo) / 2.0
+            center = (lo + hi) / 2.0
+            margin_width = half * (1.0 - margin_frac)  # width of outer zone
+
+            pos = float(state[p_idx])
+            vel = float(state[v_idx])
+            displacement = pos - center  # signed distance from center
+
+            # How far into the margin zone (0 = at margin edge, 1 = at boundary)
+            penetration = (abs(displacement) - half * margin_frac) / (margin_width + 1e-12)
+            penetration = np.clip(penetration, 0.0, 1.5)  # allow >1 if already OOD
+
+            # Outward = velocity has same sign as displacement from center
+            outward = (displacement * vel) > 0
+
+            if outward and penetration > 0:
+                max_w = max(max_w, penetration)
+
+        return float(np.clip(max_w, 0.0, 1.0))
+
     # ------------------------------------------------------------------
     # Proximity PD torque
     # ------------------------------------------------------------------
@@ -606,11 +643,25 @@ class BRTController13D(Docking13DControllerMixin):
             if self.gradient_fallback:
                 ctrl_dims = np.concatenate([dvds[3:6], dvds[10:13]])
                 grad_mag = np.linalg.norm(ctrl_dims)
-                if (grad_mag < self.grad_threshold
-                        and not self._avoid_proximity_check(state)):
-                    fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                boundary_w = self._boundary_outward_weight(state)
+
+                grad_stagnant = grad_mag < self.grad_threshold
+                near_boundary_outward = boundary_w > 0
+
+                avoid_near = self._avoid_proximity_check(state)
+                # Boundary-outward fallback overrides avoid proximity check —
+                # when the state is fleeing the domain, steering it back is
+                # more important than suppressing fallback near obstacles.
+                suppress = avoid_near and not near_boundary_outward
+                if ((grad_stagnant or near_boundary_outward)
+                        and not suppress):
+                    if grad_stagnant:
+                        fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                    if near_boundary_outward:
+                        fallback_weight = max(fallback_weight, boundary_w)
                     virtual_dvds = self._compute_l2_virtual_gradient(state)
-                    blended = dvds + fallback_weight * virtual_dvds
+                    # Interpolate: as weight -> 1, fully replace BRT grad
+                    blended = (1.0 - fallback_weight) * dvds + fallback_weight * virtual_dvds
                     control = self._compute_brt_control_13d(blended, state)
 
             self.fallback_weight_history.append(fallback_weight)
