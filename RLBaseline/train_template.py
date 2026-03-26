@@ -16,7 +16,7 @@ import os
 import argparse
 import time
 from warnings import simplefilter
-import gym
+import gymnasium as gym
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt

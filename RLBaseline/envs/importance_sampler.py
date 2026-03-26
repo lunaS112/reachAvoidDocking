@@ -56,7 +56,16 @@ class ImportanceSampler:
             (state_dim,) numpy float64 array in real (unnormalized) coordinates.
         """
         state_t = self.dynamics.sample_target_state(1).squeeze(0)
-        return state_t.cpu().numpy().astype(np.float64)
+        state = state_t.cpu().numpy().astype(np.float64)
+
+        # Fix 13D: goal_state has vy=0 but reach_fn requires vy in
+        # [eps_v_axial_lo, eps_v_axial_hi]. Shift vy of targeted samples
+        # to the midpoint of the valid approach velocity band.
+        if self.dynamics.state_dim == 13:
+            vy_mid = 0.5 * (self.dynamics.eps_v_axial_lo + self.dynamics.eps_v_axial_hi)
+            state[4] = vy_mid
+
+        return state
 
     @property
     def stats(self):

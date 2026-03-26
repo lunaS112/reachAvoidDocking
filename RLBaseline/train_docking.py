@@ -5,8 +5,8 @@ Uses DDQNSingle with DRABE (Discounted Reach-Avoid Bellman Equation)
 from the copied safety_rl codebase.
 
 Examples:
-    6D:  python train_docking.py --dynamics 6d -w -wi 5000 -g 0.9999 -n test6d
-    13D: python train_docking.py --dynamics 13d -w -wi 5000 -g 0.9999 -n test13d
+    6D:  python train_docking.py --dynamics 6d -wi 10000 -w -g 0.9999 -n 6d -sf
+    13D: python train_docking.py --dynamics 13d -wi 10000 -w -g 0.9999 -n 13d -sf
     quick test: python train_docking.py --dynamics 6d -mu 2000 -mc 1000 -cp 500 -n smoke
 """
 
@@ -111,6 +111,11 @@ parser.add_argument(
     '--target_ratio', type=float, default=None,
     help='Fraction of targeted ICs (default: 0.1 for 6D, 0.05 for 13D)')
 
+# IC range
+parser.add_argument(
+    '--tight_ic', action='store_true',
+    help='Use tighter IC sampling range (closer to goal)')
+
 args = parser.parse_args()
 print(args)
 
@@ -155,6 +160,18 @@ actionNum = env.action_space.n
 actionList = np.arange(actionNum)
 print(f"State dim: {stateDim}, Action num: {actionNum}")
 env.set_seed(args.randomSeed)
+
+# == TIGHT IC SAMPLING ==
+if args.tight_ic:
+    if args.dynamics == '6d':
+        tight_range = np.array([
+            [-5.0, 5.0], [-5.0, 5.0],
+            [-0.5, 0.5], [-0.5, 0.5],
+            [-np.pi, np.pi], [-0.5, 0.5]])
+    else:
+        tight_range = {'pos': (-5.0, 5.0), 'vel': (-0.1, 0.1), 'omega': (-0.2, 0.2)}
+    env.set_sampling_range(tight_range)
+    print(f"Tight IC sampling enabled")
 
 # == IMPORTANCE SAMPLING ==
 if args.importance_sampling:

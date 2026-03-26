@@ -5,7 +5,7 @@ Authors: Kai-Chieh Hsu ( kaichieh@princeton.edu )
 
 import torch
 import pickle
-import gym
+import gymnasium as gym
 import os
 import sys
 

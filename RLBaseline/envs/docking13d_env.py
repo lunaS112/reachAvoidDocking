@@ -75,8 +75,11 @@ class Docking13DEnv(gym.Env):
         self.dt = dt
         self.importance_sampler = importance_sampler
 
-        # Dynamics (read-only)
+        # Dynamics (read-only, kept on CPU — step() works in numpy)
         self.dynamics = Docking13D(set_mode='reach_avoid')
+        # Ensure inertia tensor and q_goal are on CPU to match step() tensors
+        self.dynamics.I = self.dynamics.I.cpu()
+        self.dynamics.q_goal = self.dynamics.q_goal.cpu()
 
         # State bounds from dynamics
         sr = self.dynamics.state_range_.cpu().numpy()  # (13, 2)
@@ -84,9 +87,14 @@ class Docking13DEnv(gym.Env):
         self.low = sr[:, 0].copy()
         self.high = sr[:, 1].copy()
 
-        # Gym spaces
+        # Observation normalization: obs = (state - center) / half_range → [-1, 1]
+        self._obs_center = (self.high + self.low) / 2.0
+        self._obs_half_range = (self.high - self.low) / 2.0
+        self._obs_half_range = np.maximum(self._obs_half_range, 1e-8)
+
+        # Gym spaces (normalized to [-1, 1])
         self.observation_space = gym.spaces.Box(
-            np.float32(self.low), np.float32(self.high))
+            -np.ones(13, dtype=np.float32), np.ones(13, dtype=np.float32))
 
         # Discrete action space: 6 axes × {-max, 0, +max} = 729
         F_bar = float(self.dynamics.F_bar)
@@ -109,6 +117,10 @@ class Docking13DEnv(gym.Env):
 
         print(f"Docking13DEnv: mode={mode}, doneType={doneType}, "
               f"dt={dt}, actions={self.action_space.n}")
+
+    def set_sampling_range(self, sampling_bounds):
+        """Override IC sampling bounds. sampling_bounds: dict with 'pos', 'vel', 'omega'."""
+        self._sampling_bounds = sampling_bounds
 
     # ------------------------------------------------------------------
     # Seeding
@@ -136,12 +148,12 @@ class Docking13DEnv(gym.Env):
         """
         if start is not None:
             self.state = np.array(start, dtype=np.float64)
-            return np.copy(self.state)
+            return self._normalize_obs(np.copy(self.state))
 
         use_targeted = (self.importance_sampler is not None
                         and self.importance_sampler.is_targeted())
 
-        sb = SAMPLING_BOUNDS_13D
+        sb = getattr(self, '_sampling_bounds', SAMPLING_BOUNDS_13D)
         for _ in range(10000):
             if use_targeted:
                 s = self.importance_sampler.sample_targeted()
@@ -170,7 +182,7 @@ class Docking13DEnv(gym.Env):
                     break
 
         self.state = s
-        return np.copy(self.state)
+        return self._normalize_obs(np.copy(self.state))
 
     # ------------------------------------------------------------------
     # Step
@@ -223,7 +235,7 @@ class Docking13DEnv(gym.Env):
             raise ValueError(f"Invalid doneType: {self.doneType}")
 
         info = {"g_x": g_x, "l_x": l_x}
-        return np.copy(self.state), cost, done, info
+        return self._normalize_obs(np.copy(self.state)), cost, done, info
 
     # ------------------------------------------------------------------
     # Margin functions
@@ -255,7 +267,7 @@ class Docking13DEnv(gym.Env):
             l_x = self.target_margin(s)
             g_x = self.safety_margin(s)
             heuristic_v[i, :] = max(l_x, g_x)
-            states[i, :] = s
+            states[i, :] = self._normalize_obs(s)
 
         return states, heuristic_v
 
@@ -275,7 +287,8 @@ class Docking13DEnv(gym.Env):
             info:   dict with valueList, gxList, lxList
         """
         if state is None:
-            state = self.reset()
+            self.reset()  # sets self.state; return value is normalized
+            state = np.copy(self.state)  # raw state for dynamics
         else:
             state = np.array(state, dtype=np.float64)
 
@@ -314,10 +327,12 @@ class Docking13DEnv(gym.Env):
                     result = 1
                     break
 
+            # Query policy (Q-network expects normalized observations)
             q_func.eval()
-            s_t = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+            s_norm = torch.FloatTensor(
+                self._normalize_obs(state)).to(self.device).unsqueeze(0)
             with torch.no_grad():
-                action_idx = q_func(s_t).min(dim=1)[1].item()
+                action_idx = q_func(s_norm).min(dim=1)[1].item()
             control = self.discrete_controls[action_idx]
 
             s_t = torch.FloatTensor(state).unsqueeze(0)
@@ -336,7 +351,10 @@ class Docking13DEnv(gym.Env):
         assert (num_rnd_traj is not None or states is not None)
 
         if states is None:
-            states = [self.reset() for _ in range(num_rnd_traj)]
+            states = []
+            for _ in range(num_rnd_traj):
+                self.reset()  # sets self.state
+                states.append(np.copy(self.state))  # raw states for dynamics
 
         trajectories = []
         results = np.empty(len(states), dtype=int)
@@ -372,9 +390,10 @@ class Docking13DEnv(gym.Env):
             for j, y in enumerate(ys):
                 state = np.array(
                     [x, y, 0.0] + fixed_vel + fixed_q + fixed_omega)
-                s_t = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+                s_norm = torch.FloatTensor(
+                    self._normalize_obs(state)).to(self.device).unsqueeze(0)
                 with torch.no_grad():
-                    V[i, j] = q_func(s_t).min(dim=1)[0].item()
+                    V[i, j] = q_func(s_norm).min(dim=1)[0].item()
 
         if boolPlot:
             V = (V <= 0).astype(float)
@@ -413,10 +432,23 @@ class Docking13DEnv(gym.Env):
             for j, y in enumerate(ys):
                 state = np.array(
                     [x, y, 0.0, 0.0, 0.0, 0.0] + list(q_goal) + [0.0, 0.0, 0.0])
-                s_t = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+                s_norm = torch.FloatTensor(
+                    self._normalize_obs(state)).to(self.device).unsqueeze(0)
                 with torch.no_grad():
-                    V[i, j] = q_func(s_t).min(dim=1)[0].item()
+                    V[i, j] = q_func(s_norm).min(dim=1)[0].item()
         return V
+
+    # ------------------------------------------------------------------
+    # Observation normalization
+    # ------------------------------------------------------------------
+
+    def _normalize_obs(self, state):
+        """Map raw state to [-1, 1] using dynamics state_range bounds."""
+        return (state - self._obs_center) / self._obs_half_range
+
+    def _denormalize_obs(self, obs):
+        """Map normalized observation back to raw state."""
+        return obs * self._obs_half_range + self._obs_center
 
     # ------------------------------------------------------------------
     # Helpers

@@ -10,6 +10,7 @@ available at:
 
 https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
 """
+import numpy as np
 import torch
 import torch.optim as optim
 import abc
@@ -229,17 +230,17 @@ class DDQN(abc.ABC):
     non_final_mask = torch.tensor(
         tuple(map(lambda s: s is not None, batch.s_)), dtype=torch.bool
     ).to(self.device)
-    non_final_state_nxt = torch.FloatTensor([
-        s for s in batch.s_ if s is not None
-    ]).to(self.device)
-    state = torch.FloatTensor(batch.s).to(self.device)
-    action = torch.LongTensor(batch.a).to(self.device).view(-1, 1)
-    reward = torch.FloatTensor(batch.r).to(self.device)
+    non_final_state_nxt = torch.FloatTensor(
+        np.array([s for s in batch.s_ if s is not None])
+    ).to(self.device)
+    state = torch.FloatTensor(np.array(batch.s)).to(self.device)
+    action = torch.LongTensor(np.array(batch.a)).to(self.device).view(-1, 1)
+    reward = torch.FloatTensor(np.array(batch.r)).to(self.device)
 
-    g_x = torch.FloatTensor([info["g_x"] for info in batch.info])
+    g_x = torch.FloatTensor(np.array([info["g_x"] for info in batch.info]))
     g_x = g_x.to(self.device).view(-1)
 
-    l_x = torch.FloatTensor([info["l_x"] for info in batch.info])
+    l_x = torch.FloatTensor(np.array([info["l_x"] for info in batch.info]))
     l_x = l_x.to(self.device).view(-1)
 
     return (

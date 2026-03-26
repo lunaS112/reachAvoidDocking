@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.controllers import (
     BRATController, MPCController, MPCTerminalController,
     SafetyFilter, GridBasedController, RLController,
+    VanillaBRATController,
 )
 
 # Generic (multi-controller) visualisation
@@ -70,7 +71,7 @@ def _build_safety_filter(args):
 def build_controller(name, args):
     """Instantiate a controller by name string."""
     # Safety filter (no-op when mode=0)
-    sf = _build_safety_filter(args) if name in ('brat', 'mpc', 'mpc_terminal', 'rl') else None
+    sf = _build_safety_filter(args) if name in ('brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'rl') else None
 
     if name == 'brat':
         return BRATController(
@@ -125,6 +126,20 @@ def build_controller(name, args):
             max_sim_time=args.max_sim_time,
             cache_dir=getattr(args, 'grid_cache_dir', None),
             filter_mode=None if fm == 0 else fm,
+        )
+    elif name == 'vanilla_brat':
+        return VanillaBRATController(
+            checkpoint_path=args.vanilla_checkpoint_path,
+            tMax=args.tMax,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
+            safety_margin_phase1=args.safety_margin_phase1,
+            safety_margin_phase2=args.safety_margin_phase2,
+            debug_phase2=args.debug_phase2,
+            gradient_fallback=args.gradient_fallback,
+            grad_threshold=args.grad_threshold,
+            avoid_proximity_margin=args.avoid_proximity_margin,
         )
     elif name == 'rl':
         return RLController(
@@ -673,7 +688,11 @@ def run_single(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
     ctrl_type = args.controller
-    if ctrl_type != 'grid_based' and not os.path.exists(args.checkpoint_path):
+    if ctrl_type == 'vanilla_brat':
+        if not args.vanilla_checkpoint_path or not os.path.exists(args.vanilla_checkpoint_path):
+            print(f"ERROR: vanilla checkpoint not found: {args.vanilla_checkpoint_path}")
+            return
+    elif ctrl_type != 'grid_based' and not os.path.exists(args.checkpoint_path):
         print(f"ERROR: checkpoint not found: {args.checkpoint_path}")
         return
     display = CONTROLLER_LABELS.get(ctrl_type, ctrl_type)
@@ -700,7 +719,7 @@ def run_single(args):
           f"theta={initial_state[4]:.2f}, omega={initial_state[5]:.2f}")
 
     # BRAT-specific pre-check
-    if ctrl_type == 'brat':
+    if ctrl_type in ('brat', 'vanilla_brat'):
         v0 = controller.get_value(initial_state, args.tMax)
         print(f"Initial V(x, tMax={args.tMax}s) = {v0:.4f}")
         print(f"State is {'INSIDE' if v0 <= 0 else 'OUTSIDE'} the BRAT")
@@ -726,7 +745,7 @@ def run_single(args):
     print(f"Control effort: {result.get('control_effort', 0):.2f}")
     print(f"Wall time: {result.get('wall_time', 0):.2f}s")
 
-    if ctrl_type == 'brat':
+    if ctrl_type in ('brat', 'vanilla_brat'):
         if result.get('phase_transition_time') is not None:
             print(f"Entered BRAT (Phase 2) at t={result['phase_transition_time']:.2f}s")
         else:
@@ -756,7 +775,7 @@ def run_single(args):
         if phase2_debug and not result['success']:
             print("Last Phase 2 debug entries before failure:")
             for entry in phase2_debug[-5:]:
-                if ctrl_type == 'brat':
+                if ctrl_type in ('brat', 'vanilla_brat'):
                     print(
                         f"  t={entry['sim_time']:6.2f}s  "
                         f"t*={entry['selected_t_star']:5.2f}s ({entry['selected_status']})  "
@@ -823,7 +842,7 @@ def run_single(args):
 
     # Animation
     if not args.no_animation:
-        if ctrl_type == 'brat' and not args.no_value_function:
+        if ctrl_type in ('brat', 'vanilla_brat') and not args.no_value_function:
             # BRAT-specific animation with value-function heatmap
             anim_path = os.path.join(args.output_dir, 'docking_animation.mp4')
             print(f"Generating BRAT animation (with value function): {anim_path}")
@@ -1260,6 +1279,11 @@ def _add_shared_args(parser):
                              '(must match training)')
     parser.add_argument('--rl_activation', type=str, default='Tanh',
                         help='Activation for RL Q-network (must match training)')
+    # Vanilla BRAT ablation baseline
+    parser.add_argument('--vanilla_checkpoint_path', type=str, default=None,
+                        help='Path to vanilla DeepReach checkpoint for '
+                             'vanilla_brat controller (no MPC supervision, '
+                             'no refinement, no exact boundary)')
 
 
 def main():
@@ -1280,7 +1304,7 @@ def main():
     _add_shared_args(sp_single)
     sp_single.add_argument(
         '--controller', type=str, default='brat',
-        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
+        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
         help='Controller type to run')
     # Initial state — either as a single 6-element list or individual components
     sp_single.add_argument('--initial_state', type=float, nargs=6,
@@ -1309,7 +1333,7 @@ def main():
     sp_compare.add_argument(
         '--controllers', type=str, nargs='+',
         default=['brat', 'mpc', 'mpc_terminal'],
-        choices=['brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
+        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
         help='Controllers to compare')
     sp_compare.add_argument('--n_rollouts', type=int, default=50,
                             help='Number of rollouts per controller')

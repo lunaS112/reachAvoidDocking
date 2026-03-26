@@ -48,6 +48,9 @@ from utils.controllers.static_plots_13d import (
 # 13D trajectory-only animation (MPC without BRT)
 from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation13D
 
+# Vanilla BRAT ablation baseline
+from utils.controllers.vanilla_brat_controller import VanillaBRATController
+
 # RL controllers
 from utils.controllers.rl_controller import RLController
 from utils.controllers.rl_controller_13d import RLController13D
