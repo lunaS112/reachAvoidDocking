@@ -1082,12 +1082,12 @@ class Docking13D(Dynamics):
 
         # Per-axis angular rate tolerances (reach_fn decomposes pitch/yaw vs roll)
         # Body-frame: wx = roll, wy/wz = pitch/yaw (after 90° yaw goal quat)
-        self.eps_omega_pitchyaw = 0.00698   # 0.4  °/s in rad/s (= eps_omega_roll)
+        self.eps_omega_pitchyaw = 0.00262   # 0.15 °/s in rad/s
         self.eps_omega_roll = 0.00698       # 0.4  °/s in rad/s
 
         # Legacy single-value aliases (used by state_range, controller checks)
         self.eps_v = 0.10           # envelope for velocity L2 (controller compat)
-        self.eps_omega = 0.00698    # envelope for omega L2 (controller compat)
+        self.eps_omega = 0.00262    # envelope for omega L2 (controller compat)
 
         self.v_max = 2.0        # Max linear velocity (m/s) - matches state_range
         self.omega_max = 1.5    # Max angular velocity (rad/s) - matches state_range
@@ -1623,6 +1623,64 @@ class Docking13D(Dynamics):
             pos_dist, vlat_dist, vax_dist, att_dist, omg_py_dist, omg_r_dist,
         ], dim=-1)
         return torch.max(goal_val, dim=-1).values * self.reach_fn_weight
+
+    def reach_fn_components(self, state):
+        """Return per-component shaped distances (before the max).
+
+        Returns a dict with keys: 'position', 'vlat', 'vax', 'attitude',
+        'omega_py', 'omega_roll', each a scalar (or tensor matching
+        the batch dimensions of *state*).  Values < 0 mean in-tolerance.
+        """
+        x, y, z = state[..., 0], state[..., 1], state[..., 2]
+        vx, vy, vz = state[..., 3], state[..., 4], state[..., 5]
+        q = state[..., 6:10]
+        wx, wy, wz = state[..., 10], state[..., 11], state[..., 12]
+
+        qg = self.q_goal.to(state.device)
+
+        # --- Position ---
+        xz_dist = torch.sqrt(x**2 + z**2 + 1e-8) - self.eps_p
+        y_lo = torch.tensor(self.goal_y_min, device=state.device, dtype=state.dtype)
+        y_hi = torch.tensor(self.goal_y_max, device=state.device, dtype=state.dtype)
+        y_dist = torch.maximum(y_lo - y, y - y_hi)
+        pos_dist = torch.maximum(xz_dist, y_dist)
+
+        # --- Lateral velocity (XZ plane) ---
+        vlat_dist = torch.sqrt(vx**2 + vz**2 + 1e-8) - self.eps_v_lateral
+
+        # --- Axial velocity (Y) ---
+        vax_dist = torch.maximum(
+            torch.tensor(self.eps_v_axial_lo, device=state.device, dtype=state.dtype) - vy,
+            vy - torch.tensor(self.eps_v_axial_hi, device=state.device, dtype=state.dtype),
+        )
+
+        # --- Attitude ---
+        att_dist = self.quat_error_angle(
+            q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12), qg
+        ) - self.eps_q
+
+        # --- Pitch/yaw angular rate ---
+        omg_py_dist = torch.sqrt(wy**2 + wz**2 + 1e-8) - self.eps_omega_pitchyaw
+
+        # --- Roll angular rate ---
+        omg_r_dist = torch.abs(wx) - self.eps_omega_roll
+
+        # Piecewise shaping (same as reach_fn)
+        pos_dist   = torch.where(pos_dist   < 0, pos_dist   * 30,   torch.tanh(pos_dist   * 0.5))
+        vlat_dist  = torch.where(vlat_dist  < 0, vlat_dist  * 150,  torch.tanh(vlat_dist  * 1.0))
+        vax_dist   = torch.where(vax_dist   < 0, vax_dist   * 86,   torch.tanh(vax_dist   * 1.0))
+        att_dist   = torch.where(att_dist   < 0, att_dist   * 20,   torch.tanh(att_dist   * 1.0))
+        omg_py_dist = torch.where(omg_py_dist < 0, omg_py_dist * 430,  torch.tanh(omg_py_dist * 1.0))
+        omg_r_dist  = torch.where(omg_r_dist  < 0, omg_r_dist  * 430,  torch.tanh(omg_r_dist  * 1.0))
+
+        return {
+            'position':   pos_dist   * self.reach_fn_weight,
+            'vlat':       vlat_dist  * self.reach_fn_weight,
+            'vax':        vax_dist   * self.reach_fn_weight,
+            'attitude':   att_dist   * self.reach_fn_weight,
+            'omega_py':   omg_py_dist * self.reach_fn_weight,
+            'omega_roll': omg_r_dist  * self.reach_fn_weight,
+        }
 
     # ---------- Avoid set ----------
     def _compute_cb_y(self, state):

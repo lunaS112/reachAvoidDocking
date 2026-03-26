@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(_THIS_DIR, '..', '..'))
 from utils import modules
 from utils import diff_operators  # noqa: F401 — used transitively by io_to_dv
 from dynamics import dynamics as dynamics_module
-from utils.controllers.docking13d_mixin import Docking13DControllerMixin, _quat_mul_np
+from utils.controllers.docking13d_mixin import Docking13DControllerMixin, _quat_mul_np, _quat_error_angle_np
 from utils.controllers.safety_filter import SafetyFilter
 from utils.controllers.min_time_search import find_min_brat_time_single, STATUS_HOLD
 
@@ -52,7 +52,8 @@ class BRTController13D(Docking13DControllerMixin):
                  safety_margin_phase1=0.1, safety_margin_phase2=0.02,
                  debug_phase2=False,
                  gradient_fallback=True, grad_threshold=0.01,
-                 avoid_proximity_margin=1.0):
+                 avoid_proximity_margin=1.0,
+                 pd_torque_proximity=None):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
@@ -71,6 +72,10 @@ class BRTController13D(Docking13DControllerMixin):
                                    which the gradient is considered stagnant.
             avoid_proximity_margin: Obstacle SDF distance (m) below which
                                    the fallback is hard-suppressed.
+            pd_torque_proximity:   Multiplier for goal tolerances that defines
+                                   the proximity region where PD torque
+                                   replaces bang-bang torque.  None = disabled
+                                   (pure bang-bang).  Float > 0 = enabled.
         """
         self.checkpoint_path = checkpoint_path
         self.tMax = tMax
@@ -87,6 +92,9 @@ class BRTController13D(Docking13DControllerMixin):
         self.grad_threshold = grad_threshold
         self.avoid_proximity_margin = avoid_proximity_margin
 
+        # Proximity PD torque parameters
+        self.pd_torque_proximity = pd_torque_proximity
+
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(checkpoint_path)))
@@ -100,6 +108,15 @@ class BRTController13D(Docking13DControllerMixin):
         self.fallback_kd_rot = 1.0 * self.dynamics.tau_bar
         self.goal_state_np = self.dynamics.goal_state.cpu().numpy()
         self.q_goal_np = self.dynamics.q_goal.detach().cpu().numpy()
+
+        # Proportional torque scaling: when |omega_i| < _omega_scale,
+        # BRAT torque magnitude is proportional to |omega_i| / _omega_scale.
+        # Above _omega_scale, full bang-bang.  Threshold set at 10x the
+        # tightest omega tolerance for a smooth transition zone.
+        if self.pd_torque_proximity is not None:
+            self._omega_scale = 10.0 * self.dynamics.eps_omega_pitchyaw  # ~0.0262 rad/s
+            print(f"  [PD Torque] Enabled  proximity={self.pd_torque_proximity:.1f}x  "
+                  f"omega_scale={self._omega_scale:.4f} rad/s")
 
         self.reset()
 
@@ -172,6 +189,10 @@ class BRTController13D(Docking13DControllerMixin):
         # --- Diagnostic tracking ---
         self.diagnostic_history = []
         self._consecutive_v_increases = 0
+
+        # Proportional torque tracking
+        self.pd_torque_active_history = []
+        self._pd_latched = False  # hysteresis latch
 
         self.safety_filter.reset()
 
@@ -352,6 +373,131 @@ class BRTController13D(Docking13DControllerMixin):
             s = torch.tensor(state, dtype=torch.float32, device=self.device)
             return float(self.dynamics.avoid_fn(s)) < self.avoid_proximity_margin
 
+    def _boundary_outward_weight(self, state, margin_frac=0.7):
+        """Return a fallback weight in [0, 1] when position is near the domain
+        boundary AND the corresponding velocity is driving it further out.
+
+        For each position dimension (x, y, z = indices 0, 1, 2) with paired
+        velocity (vx, vy, vz = indices 3, 4, 5):
+          - Compute how far the position is into the outer margin zone
+            (the outer ``1 - margin_frac`` fraction of the half-range).
+          - Check if velocity is outward (same sign as displacement from center).
+          - Weight = max over dims of (penetration_depth / margin_width) * outward.
+
+        Returns 0.0 when comfortably inside the domain or velocity is inward.
+        """
+        sr = self.dynamics.state_range_.cpu().numpy()  # (13, 2)
+        max_w = 0.0
+        for p_idx, v_idx in [(0, 3), (1, 4), (2, 5)]:
+            lo, hi = float(sr[p_idx, 0]), float(sr[p_idx, 1])
+            half = (hi - lo) / 2.0
+            center = (lo + hi) / 2.0
+            margin_width = half * (1.0 - margin_frac)  # width of outer zone
+
+            pos = float(state[p_idx])
+            vel = float(state[v_idx])
+            displacement = pos - center  # signed distance from center
+
+            # How far into the margin zone (0 = at margin edge, 1 = at boundary)
+            penetration = (abs(displacement) - half * margin_frac) / (margin_width + 1e-12)
+            penetration = np.clip(penetration, 0.0, 1.5)  # allow >1 if already OOD
+
+            # Outward = velocity has same sign as displacement from center
+            outward = (displacement * vel) > 0
+
+            if outward and penetration > 0:
+                max_w = max(max_w, penetration)
+
+        return float(np.clip(max_w, 0.0, 1.0))
+
+    # ------------------------------------------------------------------
+    # Proximity PD torque
+    # ------------------------------------------------------------------
+
+    def _in_proximity_zone(self, state, mult):
+        """Check if state is within mult * tolerances for pos/vel/quat."""
+        d = self.dynamics
+        pos = state[:3]
+        vel = state[3:6]
+        q = state[6:10]
+
+        # Position: L2(x,z) < mult * eps_p, y in expanded goal band
+        if np.sqrt(pos[0]**2 + pos[2]**2) > mult * d.eps_p:
+            return False
+        y_margin = mult * (d.goal_y_max - d.goal_y_min) / 2.0
+        if not (d.goal_y_min - y_margin <= pos[1] <= d.goal_y_max + y_margin):
+            return False
+
+        # Velocity: lateral and axial within mult * tolerance
+        if np.sqrt(vel[0]**2 + vel[2]**2) > mult * d.eps_v_lateral:
+            return False
+        vy_center = (d.eps_v_axial_lo + d.eps_v_axial_hi) / 2.0
+        vy_half = (d.eps_v_axial_hi - d.eps_v_axial_lo) / 2.0
+        if abs(vel[1] - vy_center) > mult * vy_half:
+            return False
+
+        # Quaternion: angle error < mult * eps_q
+        q_norm = np.linalg.norm(q)
+        if q_norm > 1e-12:
+            q = q / q_norm
+        q_err = _quat_error_angle_np(q, self.q_goal_np)
+        if q_err > mult * d.eps_q:
+            return False
+
+        return True
+
+    def _check_pd_proximity(self, state):
+        """Check if PD torque should be active, with hysteresis.
+
+        Activates at ``pd_torque_proximity`` * tolerances.
+        Once latched on, stays active until state leaves a wider zone
+        (``2 * pd_torque_proximity``) to prevent flickering.
+        """
+        mult = self.pd_torque_proximity
+        if mult is None:
+            return False
+
+        if not self._pd_latched:
+            # Not yet latched — check activation threshold
+            if self._in_proximity_zone(state, mult):
+                self._pd_latched = True
+                return True
+            return False
+        else:
+            # Already latched — only deactivate if far outside (2x the zone)
+            if not self._in_proximity_zone(state, 2.0 * mult):
+                self._pd_latched = False
+                return False
+            return True
+
+    def _compute_proportional_torque(self, state, dvds):
+        """Scale BRAT bang-bang torque proportionally near zero omega.
+
+        Preserves the BRAT gradient direction (which accounts for coupled
+        attitude-translation dynamics) but reduces magnitude as omega
+        approaches zero, preventing chatter.
+
+        When |omega_i| > omega_scale: full bang-bang (±tau_bar)
+        When |omega_i| < omega_scale: tau = sign(coeff) * tau_bar * |omega_i| / omega_scale
+
+        Returns numpy (3,) torque vector.
+        """
+        omega = state[10:13]
+
+        # Get BRAT gradient direction (same as _compute_brt_control_13d)
+        I_np = self.dynamics.I.detach().cpu().numpy()
+        p_omega = np.asarray(dvds[10:13], dtype=np.float64)
+        coeff_tau = np.linalg.solve(I_np.T, p_omega)
+
+        # Per-axis proportional scaling
+        tau = np.zeros(3)
+        for i in range(3):
+            bang_dir = -1.0 if coeff_tau[i] > 0 else 1.0
+            scale = min(abs(omega[i]) / self._omega_scale, 1.0)
+            tau[i] = bang_dir * self.dynamics.tau_bar * scale
+
+        return tau
+
     # ------------------------------------------------------------------
     # BRAT min-time search (delegates to shared utility)
     # ------------------------------------------------------------------
@@ -497,11 +643,25 @@ class BRTController13D(Docking13DControllerMixin):
             if self.gradient_fallback:
                 ctrl_dims = np.concatenate([dvds[3:6], dvds[10:13]])
                 grad_mag = np.linalg.norm(ctrl_dims)
-                if (grad_mag < self.grad_threshold
-                        and not self._avoid_proximity_check(state)):
-                    fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                boundary_w = self._boundary_outward_weight(state)
+
+                grad_stagnant = grad_mag < self.grad_threshold
+                near_boundary_outward = boundary_w > 0
+
+                avoid_near = self._avoid_proximity_check(state)
+                # Boundary-outward fallback overrides avoid proximity check —
+                # when the state is fleeing the domain, steering it back is
+                # more important than suppressing fallback near obstacles.
+                suppress = avoid_near and not near_boundary_outward
+                if ((grad_stagnant or near_boundary_outward)
+                        and not suppress):
+                    if grad_stagnant:
+                        fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
+                    if near_boundary_outward:
+                        fallback_weight = max(fallback_weight, boundary_w)
                     virtual_dvds = self._compute_l2_virtual_gradient(state)
-                    blended = dvds + fallback_weight * virtual_dvds
+                    # Interpolate: as weight -> 1, fully replace BRT grad
+                    blended = (1.0 - fallback_weight) * dvds + fallback_weight * virtual_dvds
                     control = self._compute_brt_control_13d(blended, state)
 
             self.fallback_weight_history.append(fallback_weight)
@@ -566,6 +726,13 @@ class BRTController13D(Docking13DControllerMixin):
             'omega_norm': float(np.linalg.norm(state[10:13])),
         })
 
+        # --- Proportional torque substitution (if enabled and in proximity) ---
+        pd_active = False
+        if self.pd_torque_proximity is not None and self._check_pd_proximity(state):
+            pd_active = True
+            control[3:6] = self._compute_proportional_torque(state, dvds)
+        self.pd_torque_active_history.append(pd_active)
+
         # Safety filter post-processing (phase-dependent margin)
         raw_control = control.copy()
         self.safety_filter.set_margin(
@@ -616,6 +783,12 @@ class BRTController13D(Docking13DControllerMixin):
         dock_time = None
         post_dock_duration = 1.0  # seconds to continue after docking
 
+        # Per-component reach_fn tracking
+        reach_fn_comp_history = {
+            'position': [], 'vlat': [], 'vax': [],
+            'attitude': [], 'omega_py': [], 'omega_roll': [],
+        }
+
         for step in range(num_steps):
             sim_time = step * self.dt
 
@@ -626,6 +799,14 @@ class BRTController13D(Docking13DControllerMixin):
             # Normal control — keep BRT active even after docking so
             # the chaser can converge closer to the goal point.
             control = self.u_fn(state, sim_time)
+
+            # Record per-component reach_fn values
+            with torch.no_grad():
+                s_t = torch.tensor(state, dtype=torch.float32,
+                                   device=self.device)
+                comps = self.dynamics.reach_fn_components(s_t)
+                for k in reach_fn_comp_history:
+                    reach_fn_comp_history[k].append(float(comps[k]))
 
             # Termination checks (only before docking)
             if not docked and self._check_docked_13d(state):
@@ -675,6 +856,13 @@ class BRTController13D(Docking13DControllerMixin):
             'fallback_weights': self.fallback_weight_history,
             'n_fallback_steps': sum(
                 1 for w in self.fallback_weight_history if w > 0),
+            # --- per-component reach_fn breakdown ---
+            'reach_fn_components': {
+                k: np.array(v) for k, v in reach_fn_comp_history.items()
+            },
+            # --- PD torque tracking ---
+            'pd_torque_active': np.array(self.pd_torque_active_history, dtype=bool),
+            'n_pd_torque_steps': int(sum(self.pd_torque_active_history)),
         }
 
         # --- Diagnostic summary --- #
@@ -725,6 +913,11 @@ class BRTController13D(Docking13DControllerMixin):
                   f"({summary['v_increase_pct']:.1f}%), "
                   f"max run={summary['max_consecutive_v_increases']}")
             print(f"  Final V       : {summary['final_value']:.4f}")
+            n_pd = result.get('n_pd_torque_steps', 0)
+            total = summary['total_steps']
+            if self.pd_torque_proximity is not None:
+                print(f"  PD torque     : {n_pd}/{total} steps "
+                      f"({100.0 * n_pd / max(total, 1):.1f}%)")
             print("-"*60)
 
             result['diagnostics'] = {
