@@ -79,6 +79,17 @@ parser.add_argument(
 parser.add_argument(
     '-act', '--actType', default='Tanh', type=str,
     help='Activation function: Tanh, ReLU, Sin')
+parser.add_argument(
+    '--tau', default=0.01, type=float,
+    help='Soft target network update rate (default: 0.01)')
+
+# 13D action space control
+parser.add_argument(
+    '--pd_attitude', action='store_true',
+    help='Use PD controller for attitude (reduces 13D actions from 729 to 27)')
+parser.add_argument(
+    '--force_levels', default=3, type=int, choices=[2, 3],
+    help='Discrete levels per force axis: 3={-F,0,+F}, 2={-F,+F}')
 
 # RL type
 parser.add_argument('-m', '--mode', default='RA', type=str, help='RL mode')
@@ -151,7 +162,8 @@ elif args.dynamics == '13d':
     from envs.docking13d_env import Docking13DEnv
     env = Docking13DEnv(
         device=device, mode=args.mode, doneType=args.doneType,
-        sample_inside_obs=sample_inside_obs, dt=args.timestep)
+        sample_inside_obs=sample_inside_obs, dt=args.timestep,
+        pd_attitude=args.pd_attitude, force_levels=args.force_levels)
 else:
     raise ValueError(f"Unknown dynamics: {args.dynamics}")
 
@@ -205,6 +217,7 @@ CONFIG = dqnConfig(
     GAMMA_END=GAMMA_END, EPS_PERIOD=EPS_PERIOD, EPS_DECAY=0.7,
     EPS_RESET_PERIOD=EPS_RESET_PERIOD, LR_C=args.learningRate,
     LR_C_PERIOD=updatePeriod, LR_C_DECAY=0.8, MAX_MODEL=50,
+    TAU=args.tau,
 )
 
 dimList = [stateDim] + CONFIG.ARCHITECTURE + [actionNum]

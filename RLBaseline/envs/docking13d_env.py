@@ -56,7 +56,8 @@ class Docking13DEnv(gym.Env):
     """Gym environment for 13D 3D docking reach-avoid training."""
 
     def __init__(self, device, mode="RA", doneType="TF",
-                 sample_inside_obs=False, dt=0.1, importance_sampler=None):
+                 sample_inside_obs=False, dt=0.1, importance_sampler=None,
+                 pd_attitude=False, force_levels=3):
         """
         Args:
             device: torch device string or object.
@@ -65,6 +66,11 @@ class Docking13DEnv(gym.Env):
             sample_inside_obs: allow reset() to sample inside obstacles.
             dt: integration timestep (seconds).
             importance_sampler: ImportanceSampler instance or None.
+            pd_attitude: if True, use a PD controller for torques instead of
+                learning them.  Reduces the action space from 729 to
+                force_levels^3 (default 27).
+            force_levels: number of discrete levels per force axis (2 or 3).
+                3 → {-F, 0, +F}; 2 → {-F, +F}.
         """
         self.set_seed(0)
 
@@ -74,12 +80,19 @@ class Docking13DEnv(gym.Env):
         self.sample_inside_obs = sample_inside_obs
         self.dt = dt
         self.importance_sampler = importance_sampler
+        self.pd_attitude = pd_attitude
 
         # Dynamics (read-only, kept on CPU — step() works in numpy)
         self.dynamics = Docking13D(set_mode='reach_avoid')
         # Ensure inertia tensor and q_goal are on CPU to match step() tensors
         self.dynamics.I = self.dynamics.I.cpu()
         self.dynamics.q_goal = self.dynamics.q_goal.cpu()
+
+        # PD attitude controller gains (used when pd_attitude=True)
+        self._pd_kp = 1.0   # proportional gain (N·m / rad)
+        self._pd_kd = 0.5   # derivative gain  (N·m / (rad/s))
+        self._q_goal_np = self.dynamics.q_goal.cpu().numpy().copy()
+        self._tau_bar = float(self.dynamics.tau_bar)
 
         # State bounds from dynamics
         sr = self.dynamics.state_range_.cpu().numpy()  # (13, 2)
@@ -96,16 +109,28 @@ class Docking13DEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             -np.ones(13, dtype=np.float32), np.ones(13, dtype=np.float32))
 
-        # Discrete action space: 6 axes × {-max, 0, +max} = 729
+        # Discrete action space
         F_bar = float(self.dynamics.F_bar)
         tau_bar = float(self.dynamics.tau_bar)
-        force_levels = [-F_bar, 0.0, F_bar]
-        torque_levels = [-tau_bar, 0.0, tau_bar]
-        self.discrete_controls = np.array(
-            list(itertools.product(
-                force_levels, force_levels, force_levels,
-                torque_levels, torque_levels, torque_levels)),
-            dtype=np.float64)
+        if force_levels == 3:
+            f_levels = [-F_bar, 0.0, F_bar]
+        elif force_levels == 2:
+            f_levels = [-F_bar, F_bar]
+        else:
+            raise ValueError(f"force_levels must be 2 or 3, got {force_levels}")
+
+        if pd_attitude:
+            # Only discretize forces; torques come from PD controller
+            self.discrete_controls = np.array(
+                list(itertools.product(f_levels, f_levels, f_levels)),
+                dtype=np.float64)
+        else:
+            torque_levels = [-tau_bar, 0.0, tau_bar]
+            self.discrete_controls = np.array(
+                list(itertools.product(
+                    f_levels, f_levels, f_levels,
+                    torque_levels, torque_levels, torque_levels)),
+                dtype=np.float64)
         self.action_space = gym.spaces.Discrete(len(self.discrete_controls))
 
         # Internal state
@@ -116,7 +141,8 @@ class Docking13DEnv(gym.Env):
         self.reward = -1.0
 
         print(f"Docking13DEnv: mode={mode}, doneType={doneType}, "
-              f"dt={dt}, actions={self.action_space.n}")
+              f"dt={dt}, pd_attitude={pd_attitude}, "
+              f"force_levels={force_levels}, actions={self.action_space.n}")
 
     def set_sampling_range(self, sampling_bounds):
         """Override IC sampling bounds. sampling_bounds: dict with 'pos', 'vel', 'omega'."""
@@ -188,6 +214,41 @@ class Docking13DEnv(gym.Env):
     # Step
     # ------------------------------------------------------------------
 
+    def _pd_torque(self, state):
+        """Compute PD attitude controller torques in body frame.
+
+        Drives quaternion toward q_goal and damps angular velocity.
+        Returns (3,) numpy array clipped to [-tau_bar, tau_bar].
+        """
+        q = state[6:10].copy()
+        q /= np.linalg.norm(q) + 1e-12
+        omega = state[10:13]
+
+        # Error quaternion: q_err = q_goal^{-1} * q  (scalar-first)
+        qg = self._q_goal_np
+        # q_goal conjugate
+        qg_conj = np.array([qg[0], -qg[1], -qg[2], -qg[3]])
+        # Hamilton product qg_conj * q
+        a0, a1, a2, a3 = qg_conj
+        b0, b1, b2, b3 = q
+        q_err = np.array([
+            a0*b0 - a1*b1 - a2*b2 - a3*b3,
+            a0*b1 + a1*b0 + a2*b3 - a3*b2,
+            a0*b2 - a1*b3 + a2*b0 + a3*b1,
+            a0*b3 + a1*b2 - a2*b1 + a3*b0,
+        ])
+
+        # Shortest-path: if q_err[0] < 0, flip sign
+        if q_err[0] < 0:
+            q_err = -q_err
+
+        # Error axis-angle (small-angle approx: 2 * q_vec for the axis×angle)
+        err_vec = 2.0 * q_err[1:4]
+
+        # PD law in body frame: tau = -Kp * err - Kd * omega
+        tau = -self._pd_kp * err_vec - self._pd_kd * omega
+        return np.clip(tau, -self._tau_bar, self._tau_bar)
+
     def step(self, action):
         """Advance one timestep.
 
@@ -197,7 +258,15 @@ class Docking13DEnv(gym.Env):
         Returns:
             (state, cost, done, info)
         """
-        control = self.discrete_controls[action]
+        raw = self.discrete_controls[action]
+
+        if self.pd_attitude:
+            # raw is (3,) forces only; torques come from PD controller
+            forces = raw
+            torques = self._pd_torque(self.state)
+            control = np.concatenate([forces, torques])
+        else:
+            control = raw
 
         # Euler integration via dynamics.dsdt (tensor in/out)
         s_t = torch.FloatTensor(self.state).unsqueeze(0)
@@ -333,7 +402,14 @@ class Docking13DEnv(gym.Env):
                 self._normalize_obs(state)).to(self.device).unsqueeze(0)
             with torch.no_grad():
                 action_idx = q_func(s_norm).min(dim=1)[1].item()
-            control = self.discrete_controls[action_idx]
+            raw = self.discrete_controls[action_idx]
+
+            if self.pd_attitude:
+                forces = raw
+                torques = self._pd_torque(state)
+                control = np.concatenate([forces, torques])
+            else:
+                control = raw
 
             s_t = torch.FloatTensor(state).unsqueeze(0)
             c_t = torch.FloatTensor(control).unsqueeze(0)

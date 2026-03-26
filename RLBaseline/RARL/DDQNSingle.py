@@ -196,26 +196,31 @@ class DDQNSingle(DDQN):
 
     return loss.item()
 
-  def initBuffer(self, env):
-    """Adds some transitions to the replay memory (buffer) randomly.
+  def initBuffer(self, env, max_ep_steps=300):
+    """Adds transitions to the replay memory (buffer) by rolling out episodes.
 
     Args:
         env (gym.Env): the environment we interact with.
+        max_ep_steps (int): max steps per episode rollout.
     """
     cnt = 0
+    s = env.reset()
+    step_in_ep = 0
     while len(self.memory) < self.memory.capacity:
       cnt += 1
-      print("\rWarmup Buffer [{:d}]".format(cnt), end="")
-      s = env.reset()
+      if cnt % 1000 == 0:
+        print("\rWarmup Buffer [{:d}]".format(cnt), end="")
       a, a_idx = self.select_action(s, explore=True)
       s_, r, done, info = env.step(a_idx)
       s_ = None if done else s_
       self.store_transition(s, a_idx, r, s_, info)
-      if done:
+      step_in_ep += 1
+      if done or step_in_ep >= max_ep_steps:
         s = env.reset()
+        step_in_ep = 0
       else:
         s = s_
-    print(" --- Warmup Buffer Ends")
+    print("\rWarmup Buffer [{:d}] --- Warmup Buffer Ends".format(cnt))
 
   def initQ(
       self, env, warmupIter, outFolder, num_warmup_samples=200, vmin=-1,
@@ -344,7 +349,7 @@ class DDQNSingle(DDQN):
     # == Warmup Buffer ==
     startInitBuffer = time.time()
     if warmupBuffer:
-      self.initBuffer(env)
+      self.initBuffer(env, max_ep_steps=MAX_EP_STEPS)
     endInitBuffer = time.time()
 
     # == Warmup Q ==

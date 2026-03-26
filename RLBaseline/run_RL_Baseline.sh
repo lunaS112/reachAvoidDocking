@@ -6,8 +6,9 @@
 #      → 1000x stronger reach signal early in training
 #   2. Importance sampling (--importance_sampling): 20% of episodes start
 #      near the goal region
-#   3. 13D: larger network (-arc 512 512 512), bigger buffer (-mc 200000),
-#      longer episodes (-ms 500), more updates (-mu 1200000)
+#   3. 13D: PD attitude controller (--pd_attitude) reduces actions 729 → 27,
+#      tighter IC range (--tight_ic), slower target tracking (--tau 0.005),
+#      higher importance sampling (--target_ratio 0.3)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -20,7 +21,9 @@ python train_docking.py --dynamics 6d -wi 5000 -w -g 0.9 -a \
 
 # === 13D Docking ===
 echo "=== Training 13D Docking ==="
-python train_docking.py --dynamics 13d -wi 5000 -w -g 0.9 -a \
-    --importance_sampling --target_ratio 0.15 \
-    -arc 512 512 512 -mc 200000 -ms 300 -mu 4000000 \
+python train_docking.py --dynamics 13d -wi 10000 -w -g 0.9 -a \
+    --pd_attitude --tight_ic \
+    --importance_sampling --target_ratio 0.3 \
+    --tau 0.005 \
+    -arc 512 512 512 -mc 200000 -ms 500 -mu 4000000 \
     -n 13d_improved -sf
