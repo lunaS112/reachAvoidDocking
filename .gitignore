@@ -210,3 +210,4 @@ __marimo__/
 DeepReach_MPC_ReachAvoid/runs/
 DeepReach_MPC_ReachAvoid/wandb/
 DeepReach_MPC_ReachAvoid/data/
+RLBaseline/experiments/

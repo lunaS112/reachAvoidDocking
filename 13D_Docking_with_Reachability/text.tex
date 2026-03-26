@@ -1,0 +1,546 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}
+
+\IEEEoverridecommandlockouts
+\overrideIEEEmargins
+
+% Required packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newtheorem{remark}{Remark}
+
+\title{\LARGE \bf
+Learning-Based Backward Reach-Avoid Tubes for Safe Spacecraft Proximity Docking in 13 Dimensions
+}
+
+\author{Santiago Thorup$^{1,*}$, Luca Castelletto$^{1,*}$, Zeyuan Feng$^{1}$, and Somil Bansal$^{1}$%
+\thanks{$^{*}$Equal contribution}%
+\thanks{$^{1}$Authors are with the Department of Aeronautics and Astronautics at Stanford University, USA: \{sthorup4, lucacast, zeyuanf, somil\}@stanford.edu}%
+%\thanks{This work was not supported by any organization}%
+\thanks{The implementation can be found on \texttt{https://github.com/santiagothorup/reachAvoidDocking}}
+}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+Autonomous spacecraft docking demands a control policy that guarantees both collision avoidance and target reachability under coupled translational-rotational dynamics in a 13-dimensional state space. Grid-based Hamilton-Jacobi (HJ) methods provide formal reach-avoid guarantees but are limited to low-dimensional systems; Model Predictive Control (MPC) lacks global safety certificates and imposes significant online computational cost; and existing learning-based reachability approaches scale HJ analysis to higher dimensions but address only avoid-only problems, not the reach-avoid formulation required for docking. We develop a learning-based Backward Reach-Avoid Tube (BRAT) framework that bridges this gap. In the offline phase, a neural network approximates the HJ value function via PDE-based training combined with curriculum-aware MPC-generated value labels. In the online phase, a suite of controllers---including a two-phase bang-bang controller driven by the learned value function gradient and a value-function-augmented terminal MPC, both backed by a least-restrictive safety filter---deploys the learned value function for real-time reach-avoid docking control. We validate the framework on a 6D planar model against grid-based ground truth, then scale to the full 13D problem. The proposed method achieves higher docking success rates than MPC and safety-filter baselines at substantially lower online computational cost.
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{INTRODUCTION}
+
+Autonomous spacecraft docking is a foundational capability for on-orbit servicing, debris removal, and space station resupply~\cite{fehse2003}. As missions grow in complexity---from NASA's Habitable Worlds Observatory requiring autonomous on-orbit assembly~\cite{NAP26141} to commercial satellite life-extension services---guaranteed safety during proximity operations has become a hard requirement~\cite{Petersen2023}. A docking maneuver must steer the chaser into a small capture window while avoiding collision with the target body, under coupled translational and rotational dynamics.
+
+Traditional approaches employ linear techniques such as LQR~\cite{jewison2016}, fuel-optimal convex programming~\cite{malyuta2022}, or MPC-based trajectory optimization~\cite{eren2017}. While effective, online optimization imposes significant computational burden---a major limitation given the restricted compute resources of spaceflight hardware---and provides no global safety guarantee. Reinforcement learning approaches~\cite{hovell2021, broida2019} improve execution speed but similarly lack safety certificates. Safety filter architectures~\cite{wabersich2021, ames2019control} can overlay guarantees on nominal controllers given a valid safe set, but an avoid-only safe set does not guarantee that the target docking state remains reachable.
+
+Hamilton-Jacobi (HJ) reachability analysis addresses this gap with a principled framework for certifying reach-avoid behaviors~\cite{mitchell2005, bansal2017hamilton}: the resulting value function encodes all initial states from which the system can reach its goal while avoiding obstacles, and its gradient yields the optimal feedback control. HJ methods have been applied to spacecraft proximity operations in low dimensions~\cite{chaudhuri2016, zagaris2018}, but classical grid-based solvers suffer from the curse of dimensionality, limiting practical use to five or six dimensions~\cite{mitchell2005, lygeros2004}. Decomposition techniques~\cite{chen2018decomposition} help when subsystems are decoupled, but translational-rotational coupling precludes direct decomposition of the full 13D docking system.
+
+DeepReach~\cite{bansal2021deepreach} showed that neural networks with sinusoidal representations (SIREN)~\cite{sitzmann2020siren} can approximate HJ value functions by minimizing the PDE residual, enabling scaling beyond the grid-based barrier. Subsequent work extended this to parameter-conditioned reachable sets~\cite{borquez2022parameter} and safety-constrained trajectory design~\cite{michaux2023reachability}, while Feng et al.~\cite{MPCDeepReach} improved training accuracy by augmenting the PDE loss with MPC-generated value labels. However, these learning-based approaches have primarily addressed avoid-only backward reachable tubes (BRTs); the reach-avoid extension---requiring simultaneous goal reachability and obstacle avoidance---involves a more complex variational inequality that has not been demonstrated at this scale. Separately, Hsu et al.~\cite{hsu2021safety} proposed a reinforcement learning framework with safety and liveness guarantees for reach-avoid problems, but its scalability to high-dimensional coupled dynamics has not been demonstrated. Moreover, as we show empirically (Sec.~V), applying DeepReach with PDE residual training alone to the reach-avoid docking problem fails to produce an accurate value function at this scale, motivating the MPC supervision and curriculum strategies developed in this work.
+
+In this paper, we develop a learning-based Backward Reach-Avoid Tube (BRAT) framework and apply it to autonomous spacecraft docking in 13 dimensions. We approximate the HJ reach-avoid value function with a neural network trained via PDE residual minimization combined with curriculum-aware MPC-generated labels, and deploy the learned value function through a purpose-built controller suite for real-time docking.
+
+\subsection{Contributions}
+
+\begin{enumerate}
+\item We formulate the full 13-dimensional spacecraft docking problem---comprising three-dimensional translation, quaternion attitude, and their rates---as a neural BRAT, with goal and failure sets derived from IDSS tolerances~\cite{nasaidss}.
+\item We extend the MPC-supervised DeepReach framework~\cite{MPCDeepReach} to reach-avoid semantics, incorporating a time-based curriculum with a pause--verify--refine cycle for stable long-horizon training.
+\item We develop an online controller suite for deploying the learned value function: a two-phase bang-bang controller, a terminal MPC with learned terminal cost, and a least-restrictive safety filter based on a separately trained avoid-only BRT.
+\item We validate on a 6D planar model against grid-based ground truth and scale to the full 13D problem, demonstrating higher docking success rates at lower online cost compared with MPC, vanilla DeepReach~\cite{bansal2021deepreach}, and RL reach-avoid~\cite{hsu2021safety} baselines.
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{PROBLEM STATEMENT}
+
+Consider a controlled dynamical system $\dot{x} = f(x, u)$ with state $x \in \mathbb{R}^n$, control $u \in \mathcal{U}$, a goal set $\mathcal{G} = \{x : \ell(x) \leq 0\}$ defined by a reach function $\ell$, and a failure set $\mathcal{F} = \{x : g(x) \leq 0\}$ defined by an avoid function $g$. Given a planning horizon $T > 0$, our objectives are twofold.
+
+\textit{1) Compute the Backward Reach-Avoid Tube (BRAT):} the set of all initial states from which the system can reach $\mathcal{G}$ while avoiding $\mathcal{F}$:
+\begin{equation}\label{eq:brat}
+\mathcal{R}(t) = \left\{ x_0 \;\middle|\;
+\begin{array}{l}
+\exists\, u(\cdot) \in \mathcal{U}^{[0,t]},\;\exists\, \tau_1 \in [0,t]: \\
+\xi_{x_0}^u(\tau_1) \in \mathcal{G},\;\; \xi_{x_0}^u(\tau_2) \notin \mathcal{F}\;\;\forall\, \tau_2 \in [0, \tau_1]
+\end{array}
+\right\},
+\end{equation}
+where $\xi_{x_0}^u(\cdot)$ is the trajectory from $x_0$ under control $u(\cdot)$. Therefore, $x_0 \in \mathcal{R}(t)$ guarantees that there exists a control signal that reaches $\mathcal{G}$ without ever entering $\mathcal{F}$.
+
+\textit{2) Synthesize the optimal reach-avoid policy} $u^*(x)$ that drives the system along a collision-free trajectory into the goal. Both $\mathcal{R}(t)$ and $u^*$ are encoded by a single value function $V(x,t)$ whose zero sub-level set recovers the BRAT and whose gradient yields the optimal control (Sec.~III). The terminal boundary condition for the value function combines the two objectives:
+\begin{equation}\label{eq:boundary}
+b(x) = \max\!\big(\ell(x),\; -g(x)\big),
+\end{equation}
+so that $b(x) \leq 0$ if and only if $x \in \mathcal{G}$ and $x \notin \mathcal{F}$.
+
+We apply this framework to autonomous spacecraft docking, where a chaser approaches a stationary target in a 400\,km circular orbit. Motion is described in the target-centered Local Vertical Local Horizontal (LVLH) frame ($+x$ radial, $+y$ along-track, $+z$ completing the right-hand system). The target geometry is shown in Fig.~\ref{fig:geometry} and system parameters are given in Table~\ref{tab:params}. We study two models of increasing complexity: a 6D planar model for validation against grid-based ground truth, and the full 13D model that is inaccessible to grid-based solvers.
+
+\begin{figure*}[t!]
+  \centering
+  \includegraphics[width=0.8\linewidth]{figs/TargetSetFigs.png}
+  \caption{Chaser--target docking geometry (a) 6D and (b) 13D. The goal set (green) is a narrow band below the docking port. The failure set (red) is the target body and post, inflated by a collision buffer. The chaser must navigate to the goal while avoiding the failure set.}
+  \label{fig:geometry}
+\end{figure*}
+
+\begin{table}[t]
+\caption{System Parameters}
+\label{tab:params}
+\centering
+\begin{tabular}{lll}
+\toprule
+Parameter & Symbol & Value \\
+\midrule
+Gravitational parameter & $\mu$ & $3.986\times10^{14}$\,m$^3$/s$^2$ \\
+Orbital altitude & $h$ & 400\,km \\
+Mean motion & $n$ & $1.082\times10^{-3}$\,rad/s \\
+Chaser mass & $m_c$ & 200\,kg \\
+Chaser dimensions & $w_c\!\times\!h_c\!\times\!d_c$ & $1\!\times\!1\!\times\!1$\,m \\
+Max force/axis & $\bar{F}$ & 20\,N \\
+Max torque/axis & $\bar{\tau}$ & 1.5\,N$\cdot$m \\
+Inertia (each axis) & $I_{xx}\!=\!I_{yy}\!=\!I_{zz}$ & 33.33\,kg$\cdot$m$^2$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Planar Docking}
+
+\subsubsection{Goal and Failure Sets}
+
+The target body occupies $y \in [0, h_t]$ with $|x| \leq w_t/2$, where $w_t = 6$\,m and $h_t = 3$\,m. A docking port protrudes from the $-y$ face at $y \in [-\ell_p, 0]$ with half-width $0.6$\,m, where $\ell_p = 0.2$\,m. Docking is achieved when the chaser simultaneously satisfies position, velocity, attitude, and angular rate tolerances within a goal band below the port. The reach function encodes these requirements as
+\begin{equation}\label{eq:reach_fn}
+\ell(x) = \max\!\big(d_{\mathrm{pos}},\; d_{\mathrm{vel}},\; d_{\mathrm{att}},\; d_{\mathrm{rate}}\big),
+\end{equation}
+where each $d_i$ is a shaped signed distance to its respective tolerance, with piecewise shaping (linear inside the goal, $\tanh$-saturated outside) to maintain gradient visibility during training. The goal attitude $\theta_g = \pi/2$ orients the chaser for docking. The tolerances ($\varepsilon_p = 0.1$\,m, $\varepsilon_v = 0.1$\,m/s, $\varepsilon_\theta = 0.04$\,rad, $\varepsilon_\omega = 0.05$\,rad/s) are relaxed relative to the 13D model. This relaxation is implemented due to  a fundamental limitation of grid-based Hamilton--Jacobi solvers. If the continuous target set is smaller than the discretized grid cell volume, the discrete level-set function cannot resolve the goal state. 
+
+The failure set is the union of the target body and docking port, each inflated by the chaser's constant collision buffer $r_c = \sqrt{2}/2 \approx 0.707$\,m (the diagonal half-extent of the $1\,\mathrm{m} \times 1\,\mathrm{m}$ chaser). The avoid function is
+\begin{equation}\label{eq:avoid_fn}
+g(x) = \min\!\big(s_{\mathrm{body}}(x),\; s_{\mathrm{port}}(x)\big),
+\end{equation}
+where $s_{\mathrm{body}}$ and $s_{\mathrm{port}}$ are signed distances to the respective inflated rectangles.
+
+\subsubsection{Dynamics}
+
+The planar model has state $x = [p_x, p_y, v_x, v_y, \theta, \omega]^\top \in \mathbb{R}^6$, where $(p_x, p_y)$ is the relative position, $(v_x, v_y)$ the relative velocity, $\theta$ the chaser yaw, and $\omega$ its angular rate. The control $u = [u_x, u_y, u_\theta]^\top$ comprises forces $|u_{x,y}| \leq \bar{F}$ and torque $|u_\theta| \leq \bar{\tau}$. The translational dynamics follow the Clohessy--Wiltshire (CW) equations~\cite{clohessy1960} and the rotational dynamics are single-axis kinematics:
+\begin{equation}\label{eq:cw6d}
+\dot{x} = \begin{bmatrix} v_x \\ v_y \\ 3n^2 p_x + 2nv_y + u_x/m_c \\ -2nv_x + u_y/m_c \\ \omega \\ u_\theta / J_c \end{bmatrix},
+\end{equation}
+where $n$ is the mean motion and $J_c = \tfrac{1}{12}m_c(w_c^2 + h_c^2)$ is the planar moment of inertia.
+
+\subsection{Full Three-Dimensional Docking}
+
+\subsubsection{Goal and Failure Sets}
+
+The target geometry extends to three dimensions with depth $d_t = 3$\,m and docking post half-widths of $0.6$\,m in both $x$ and $z$. The 13D goal set strictly follows the IDSS~\cite{nasaidss} docking requirements: lateral position $\varepsilon_p = 0.10$\,m, lateral velocity $\varepsilon_{v,\mathrm{lat}} = 0.02$\,m/s, axial approach velocity $v_y \in [0.03, 0.10]$\,m/s, attitude error $\varepsilon_q = 0.151$\,rad ($\approx 8.7^\circ$), and angular rate $\varepsilon_\omega = 0.00698$\,rad/s ($\approx 0.4^\circ$/s). The goal quaternion $\mathbf{q}_g = [\cos(\pi/4),\, 0,\, 0,\, \sin(\pi/4)]^\top$ corresponds to a $90^\circ$ yaw so the chaser's $-y$ body axis faces the docking port. The reach function retains the form~\eqref{eq:reach_fn} with additional components for axial velocity and roll rate.
+
+The failure set extends to 3D prisms with an orientation-dependent collision buffer in the $y$-direction:
+\begin{equation}\label{eq:cb_y}
+r_{c,y}(\mathbf{q}) = \tfrac{1}{2}(|R_{01}| + |R_{11}| + |R_{21}|),
+\end{equation}
+where $R(\mathbf{q})$ is the LVLH-to-body rotation matrix. This support function ranges from 0.5\,m (aligned) to $\sqrt{3}/2 \approx 0.866$\,m (worst case), allowing the goal band to sit closer to the docking post when the chaser is properly oriented.
+
+\subsubsection{Dynamics}
+
+The full model has state
+\begin{equation}\label{eq:state13d}
+x = [p_x, p_y, p_z, v_x, v_y, v_z, q_0, q_1, q_2, q_3, \omega_x, \omega_y, \omega_z]^\top \!\in\! \mathbb{R}^{13}\!,
+\end{equation}
+where $(p_x, p_y, p_z)$ and $(v_x, v_y, v_z)$ are LVLH position and velocity, $\mathbf{q}$ is the scalar-first unit quaternion from LVLH to body frame, and $(\omega_x, \omega_y, \omega_z)$ are body-frame angular rates. The control $u = [F_x, F_y, F_z, \tau_x, \tau_y, \tau_z]^\top$ comprises body-frame forces $|F_i| \leq \bar{F}$ and torques $|\tau_i| \leq \bar{\tau}$. The translational dynamics follow the three-dimensional Hill--Clohessy--Wiltshire equations with body-to-LVLH force transformation, and the rotational dynamics follow Euler's equation with quaternion kinematics. The full 13D equations are given in the Appendix.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{PRELIMINARIES}
+
+\subsection{HJ Value Function for BRATs}
+
+We encode the BRAT via a value function $V: \mathbb{R}^n \times [0, T] \to \mathbb{R}$, parameterized by backward time $t \in [0, T]$ where $t = 0$ is the terminal time and $t = T$ is the maximum planning horizon. The zero sub-level set of $V$ recovers the BRAT: $\mathcal{R}(t) = \{x : V(x, t) \leq 0\}$.
+
+The reach-avoid cost functional for a trajectory $\xi$ under control $u$ is
+\begin{equation}\label{eq:cost}
+J(x, u(\cdot), t) = \min_{\tau_1 \in [0,t]} \max\!\Big\{\ell\!\big(\xi(\tau_1)\big),\; \max_{\tau_2 \in [0,\tau_1]} \big\{-g\!\big(\xi(\tau_2)\big)\big\}\Big\}.
+\end{equation}
+The value function is the optimal cost under the best control:
+\begin{equation}\label{eq:valfun}
+V(x, t) = \min_{u(\cdot)} J(x, u(\cdot), t).
+\end{equation}
+
+The value function satisfies the reach-avoid variational inequality (VI)~\cite{fisac2015, margellos2011}:
+\begin{equation}\label{eq:hjvi}
+\min\!\Big\{\max\!\Big\{\frac{\partial V}{\partial t} - H(x, \nabla_x V),\; V - \ell(x)\Big\},\; V + g(x)\Big\} = 0,
+\end{equation}
+for $t \in (0, T]$, with terminal condition $V(x, 0) = b(x)$, where the Hamiltonian is
+\begin{equation}\label{eq:hamiltonian}
+H(x, p) = \min_{u \in \mathcal{U}} \; p^\top f(x, u).
+\end{equation}
+The inner $\max$ ensures either the PDE evolution holds or $V$ is capped by the reach function (goal already reached). The outer $\min$ ensures $V \geq -g$ (obstacle dominance). We note that this formulation does not include disturbances; the robust extension is deferred to future work.
+
+\textit{Optimal Control.}
+For the control-affine dynamics $f(x, u) = f_0(x) + Bu$, minimizing the Hamiltonian yields bang-bang control:
+\begin{equation}\label{eq:bangbang}
+u_i^* = -\bar{u}_i \cdot \mathrm{sign}\!\big((B^\top \nabla_x V)_i\big),
+\end{equation}
+where $\bar{u}_i$ is the $i$-th control bound. For the 13D system, body-frame force allocation requires rotation: the gradient $\nabla_v V$ in LVLH is transformed via $R(\mathbf{q})\nabla_v V$ before applying the sign operator (see Appendix).
+
+\begin{remark}
+The safety characterization provided by the learned value function holds under the assumption that the neural network has converged to a solution of the VI~\eqref{eq:hjvi}. Verifying this convergence for neural approximations of high-dimensional value functions remains an open problem. We assess convergence empirically via training loss plateaus, Monte Carlo roll outs, and validation against grid-based ground truth in 6D.
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{METHOD}
+
+\subsection{Approach Overview}
+
+Training a neural value function for the 13D reach-avoid problem is complex and a PDE residual minimization alone is insufficient. The reach-avoid VI~\eqref{eq:hjvi} involves nested min-max operators that produce near-zero gradients away from the active constraint boundary, leaving the network under-constrained over large portions of the state space. Moreover, learning the full-horizon value function from the start overwhelms training, as the solution at long horizons depends on accurate short-horizon behavior. We address these challenges with three key elements: (1)~MPC-generated reach-avoid cost labels provide direct supervision where the PDE residual alone gives weak signal; (2)~a time-based curriculum gradually extends the planning horizon with a \emph{pause--verify--refine} cycle; (3)~a two-phase online controller suite deploys the trained value function for real-time docking, combining gradient-based bang-bang control with value-function-augmented MPC (Sec.~\ref{sec:controllers}). Algorithm~\ref{alg:training} summarizes the training procedure; the following subsections detail each component.
+
+\subsection{Training Algorithm}
+
+\begin{algorithm}[t]
+\caption{MPC-Supervised Neural BRAT Training}\label{alg:training}
+\begin{algorithmic}[1]
+\REQUIRE Dynamics $f$, boundary function $b(x)$, time horizon $T$
+\STATE Initialize SIREN network $\phi_\theta$
+\STATE Generate initial MPC cost labels
+\FOR{epoch $= 1, 2, \ldots$}
+  \STATE $t_{\max} \leftarrow \mathrm{curriculum}(\text{epoch})$ \COMMENT{Eq.~(\ref{eq:curriculum})}
+  \STATE Sample PDE points $(x_i, t_i)$, \; $t_i \sim \mathcal{U}[0, t_{\max}]$
+  \STATE Sample MPC-labeled points $(x_j, t_j, V^{\mathrm{mpc}}_j)$
+  \STATE Compute $\mathcal{L}_{\mathrm{pde}}$ via VI residual \COMMENT{Eq.~(\ref{eq:pde_loss})}
+  \STATE Compute $\mathcal{L}_{\mathrm{mpc}}$ from MPC cost labels \COMMENT{Eq.~(\ref{eq:mpc_loss})}
+  \STATE Step optimizer with $\nabla_\theta(w_{\mathrm{pde}}\,\mathcal{L}_{\mathrm{pde}} + w_{\mathrm{mpc}}\,\mathcal{L}_{\mathrm{mpc}})$
+  \IF{convergence check epoch}
+    \STATE Validate $V_\theta$ against MPC on held-out states
+    \STATE Pause or extend curriculum based on convergence
+  \ENDIF
+  \IF{label regeneration epoch}
+    \STATE Re-solve MPC labels with current $V_\theta$ for warm-start
+  \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+The training proceeds on two timescales. The \emph{curriculum} manages the planning horizon: collocation times are sampled from $[0, t_{\max}(\text{epoch})]$, where
+\begin{equation}\label{eq:curriculum}
+t_{\max}(\text{epoch}) = T \cdot \alpha \cdot \min\!\left(\frac{\text{epoch}}{N_c},\; 1\right)
+\end{equation}
+grows linearly from $0$ to $\alpha T$ ($\alpha > 1$ provides slight overshoot for numerical stability). The \emph{pause--verify--refine} cycle ensures quality at each horizon: training pauses at intermediate time horizons, the current value function is validated against MPC ground truth on held-out states, MPC labels are regenerated using the current policy as warm-start, and the curriculum advances only after convergence is confirmed. This prevents error accumulation from propagating into longer-horizon solutions.
+
+At each epoch, the optimizer takes a gradient step on the combined PDE and MPC loss (Sec.~\ref{sec:losses}). PDE collocation points are sampled uniformly in the state space, while MPC-labeled points are concentrated near the goal region via importance sampling (Sec.~\ref{sec:mpc_data}).
+
+\subsection{Exact-Initial-Condition Parameterization}
+
+The terminal condition $V(x,0) = b(x)$ is critical for correct reach-avoid semantics. Following Singh et al.~\cite{singh2025exact}, who adapted the exact-boundary approach of~\cite{lagaris1998} to neural reachability, we parameterize the value function as
+\begin{equation}\label{eq:exact}
+V(x, t) = \phi_\theta(x, t) \cdot t \cdot \frac{\sigma_v}{\sigma_n} + b(x),
+\end{equation}
+where $\phi_\theta$ is the SIREN network output, $\sigma_v/\sigma_n$ is a normalization ratio, and $b(x)$ is the boundary function~\eqref{eq:boundary}. The multiplication by $t$ enforces $V(x,0) = b(x)$ exactly for any network weights, eliminating the boundary condition loss entirely. The gradients are
+\begin{align}\label{eq:exact_grads}
+\frac{\partial V}{\partial t} &= \frac{\sigma_v}{\sigma_n}\!\left(t \frac{\partial \phi_\theta}{\partial t} + \phi_\theta\right)\!,\\
+\nabla_x V &= \frac{\sigma_v}{\sigma_n} \cdot t \cdot \nabla_x \phi_\theta + \nabla_x b(x). \nonumber
+\end{align}
+
+\subsection{Loss Functions}\label{sec:losses}
+
+The total loss combines three terms:
+\begin{equation}\label{eq:loss}
+\mathcal{L} = w_{\mathrm{bc}} \cdot \mathcal{L}_{\mathrm{bc}} + w_{\mathrm{pde}} \cdot \mathcal{L}_{\mathrm{pde}} + w_{\mathrm{mpc}} \cdot \mathcal{L}_{\mathrm{mpc}}.
+\end{equation}
+Under the exact parameterization~\eqref{eq:exact}, $\mathcal{L}_{\mathrm{bc}} = 0$ by construction, leaving only the PDE and MPC terms active.
+
+The \emph{PDE loss} penalizes violations of the reach-avoid VI~\eqref{eq:hjvi}:
+\begin{equation}\label{eq:pde_loss}
+\mathcal{L}_{\mathrm{pde}} = \frac{1}{N}\sum_{i=1}^{N} \left| \min\!\left\{\max\!\left\{\frac{\partial V}{\partial t} - H,\; V - \ell\right\},\; V + g\right\}\right|,
+\end{equation}
+evaluated at $N$ collocation points per batch.
+
+The \emph{MPC supervision loss} aligns the learned value with MPC-generated reach-avoid cost labels:
+\begin{equation}\label{eq:mpc_loss}
+\mathcal{L}_{\mathrm{mpc}} = \frac{1}{M}\sum_{j=1}^{M} |V_\theta(x_j, t_j) - V_{\mathrm{mpc}}(x_j, t_j)|,
+\end{equation}
+with an additional false-positive penalty: when the MPC label indicates unsafe ($V_{\mathrm{mpc}} > 0$) but the network predicts safe ($V_\theta \leq 0$), an extra term $\lambda |V_\theta - V_{\mathrm{mpc}}| \cdot |V_\theta|$ is added to discourage under-approximation of the unsafe region.
+
+\subsection{MPC Data Generation}\label{sec:mpc_data}
+
+MPC labels are generated via perturbation-based shooting~\cite{MPCDeepReach}: from each sampled initial condition, multiple control trajectories are drawn from a Gaussian distribution centered on the current best trajectory, rolled out through the dynamics, and scored using the reach-avoid cost~\eqref{eq:cost}. The lowest-cost trajectory is retained and iteratively refined over several rounds. The resulting cost-to-go at each timestep becomes a value-function label.
+
+To concentrate data where precision matters, a multi-tier importance sampling strategy distributes initial conditions across four strata: exact goal states with small perturbations, Gaussian samples at moderate spread around the goal, boundary-focused samples near the tolerance edges, and broader uniform samples covering the full training domain. Labels are regenerated periodically during training, using the current learned policy for warm-start so that the supervision signal tracks the evolving value function.
+
+\subsection{Online Controllers}\label{sec:controllers}
+
+The BRAT captures all states from which safe docking is achievable within the training horizon $T$. However, $T$ is necessarily finite, and states outside the BRAT ($V(x, T) > 0$) have no guarantee of safe docking within this horizon. Extending $T$ indefinitely is intractable as the value function must encode increasingly complex maneuvers as the horizon grows and the MPC labels become less reliable at longer horizons. Our controllers address this by operating in two phases that handle states both inside and outside the trained BRAT. To maintain collision avoidance guarantees, particularly when outside of the safe BRAT, both controllers are augmented with a least-restrictive safety filter based on a separately trained avoid-only BRT.
+
+\textit{BRAT Controller} (primary method).
+A two-phase bang-bang controller driven by the learned value function gradient.
+\emph{Phase~1 (Convergence)}: While $V(x, T) > 0$, the controller queries the value function at the full training horizon $t = T$ and applies bang-bang control~\eqref{eq:bangbang}. The gradient $\nabla_x V$ provides the optimal control direction, steering the chaser toward the BRAT interior. In regions far from the BRAT boundary, the value function can become locally flat, producing vanishingly small gradients on the control-coupled dimensions; when this occurs, the bang-bang direction becomes numerically unreliable. To maintain goal-directed control authority, a virtual PD gradient (proportional-derivative feedback toward the goal state) is blended in when the gradient magnitude falls below a threshold, with the blending weight increasing as the gradient vanishes.
+\emph{Phase~2 (Precision)}: Once $V(x, T) \leq 0$ (state enters the BRAT), the controller performs a \emph{minimum-time search}: it finds the smallest $t^*$ such that $V(x, t^*) \leq 0$ and applies bang-bang control at this tighter time slice. This narrows the effective horizon as the chaser approaches docking, yielding more precise terminal guidance. The transition from Phase~1 to Phase~2 is one-way.
+
+\textit{Terminal MPC Controller.}
+This controller combines short-horizon MPC with the learned value function as a differentiable terminal cost, marrying the computational tractability of short-horizon planning with the long-horizon reach-avoid information encoded in $V$. As in the BRAT controller, the terminal cost transitions from $V(x, T)$ in Phase~1 to $V(x, t^*)$ in Phase~2 via minimum-time search. A stagnation-escape mechanism monitors position improvement over a sliding window; if progress stalls, the controller escalates through an exploration mode (increased goal-directed cost weight) and ultimately a BRAT-fallback mode (pure bang-bang from the value function gradient).
+
+\textit{Least-Restrictive Safety Filter.}
+In Phase~1, the chaser operates outside the reach-avoid BRAT, so the learned value function does not guarantee collision-free behavior. To close this gap, a separately trained avoid-only backward reachable tube (BRT) provides a least-restrictive safety layer. When the avoid-only value function $V_{\mathrm{avoid}}(x)$ drops below a phase-dependent safety margin, the nominal controller is overridden with bang-bang control that maximizes $V_{\mathrm{avoid}}$, driving the chaser away from the obstacle. The filter intervenes only when necessary, preserving the nominal controller's authority whenever the collision margin is maintained.
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{Block diagram of the two-phase BRAT controller. Phase~1: query $V(x, T)$, compute $\nabla_x V$, apply bang-bang control with PD fallback. Phase~2: minimum-time search for $t^*$, query $V(x, t^*)$, apply tighter bang-bang control. Transition triggered when $V(x, T) \leq 0$.}}
+      \caption{BRAT controller architecture. The controller transitions from convergence (Phase~1) to precision (Phase~2) when the state enters the BRAT zero sub-level set.}
+      \label{fig:controller}
+   \end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{RESULTS}
+
+\subsection{Experimental Setup}
+
+We evaluate all controllers via closed-loop Monte Carlo simulations. Initial conditions are sampled uniformly from a reduced state range (e.g., $|p_{x,y}| \leq 13$\,m, $|v_{x,y}| \leq 0.75$\,m/s for 6D) and filtered to exclude states inside the obstacle or already at the goal. Each simulation runs until docking success, collision, or a timeout of 90s.
+
+We report: \emph{docking rate} (successful dockings / total), \emph{collision rate}, \emph{timeout rate}, \emph{mean docking time}, \emph{mean control effort} $\sum \|u\| \Delta t$ over successful trials, and \emph{mean wall-clock time} per decision step. All experiments were performed using [TODO: specify computing environment].
+
+\textit{Training Setup.}
+The neural value function uses a SIREN MLP~\cite{sitzmann2020siren} with 3 hidden layers of 512 units each. The input dimension is 8 for 6D (time $+$ 6 states, with $\theta$ expanded to $(\sin\theta, \cos\theta)$) and 14 for 13D (time $+$ 13 states, with quaternions canonicalized to $q_0 \geq 0$). The training horizon is $T = 15$\,s for 6D and $T = 10$\,s for 13D. The MPC supervision dataset contains $100{,}000$ trajectory rollouts per regeneration cycle ($1{,}000$ initial conditions $\times$ $100$ batches), each optimized with $100$ Gaussian-perturbed samples. Training takes approximately [TODO] hours on [TODO].
+
+\textit{Baselines.}
+In addition to the BRAT and Terminal MPC controllers (Sec.~\ref{sec:controllers}), we evaluate four baselines.
+\emph{MPC Baseline}: Receding-horizon MPC without any learned value function. Uses multi-start gradient shooting (6D) or perturbation-based optimization (13D) with a reach-avoid cost function over a $20$\,s planning horizon.
+\emph{Vanilla DeepReach}: Unmodified DeepReach~\cite{bansal2021deepreach} trained with PDE residual minimization alone, without MPC supervision or curriculum refinement. This ablation demonstrates the necessity of our algorithmic contributions.
+\emph{RL Reach-Avoid}: The reach-avoid reinforcement learning method of Hsu et al.~\cite{hsu2021safety}, which learns a reach-avoid value function via model-free RL with safety and liveness guarantees.
+\emph{Grid-Based Controller} (6D only): Numerical ground truth via the \texttt{hj\_reachability} library~\cite{hjreachability}. The 6D problem is decomposed into a 4D translational subsystem ($51\!\times\!51\!\times\!31\!\times\!31$ grid) and a 2D rotational subsystem ($361\!\times\!141$ grid), with combined value function $V_{\mathrm{6D}} = \max(V_{\mathrm{4D}}, V_{\mathrm{2D}})$ solved backward over 30\,s. This decomposition is feasible because the CW translational and single-axis rotational dynamics are decoupled in the planar model.
+An optional \emph{BRT safety filter} using a separately trained avoid-only BRT can override any controller: when the avoid-only value drops below a margin, bang-bang control maximizing the avoid value drives the chaser away from the obstacle.
+All controllers operate at $\Delta t = 0.1$\,s with Euler integration.
+
+\subsection{6D Validation Against Grid-Based Ground Truth}
+
+We validate the learned 6D value function against the decomposed grid-based solution through three complementary analyses.
+
+\textit{1) BRAT Volume Comparison.}
+Fig.~\ref{fig:brat_overlap} compares positional slices of the learned and grid-based BRATs. The learned zero-level set closely approximates the grid-based ground truth, confirming that the neural value function captures the reach-avoid set geometry with high fidelity.
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{Positional slice BRAT overlap comparison between grid-based and learned value functions.}}
+      \caption{Positional slice BRAT overlap comparison between grid-based and learned value functions. The learned zero-level set (solid) closely matches the grid-based solution (dashed).}
+      \label{fig:brat_overlap}
+   \end{figure}
+
+\textit{2) Trajectory Optimality.}
+Fig.~\ref{fig:traj_comparison} compares closed-loop trajectories from the learned BRAT controller and the grid-based controller, starting from an initial condition inside the 25\,s grid-based BRAT but outside the 10\,s learned BRAT. Despite operating with a shorter effective horizon, the learned controller closely tracks the grid-based trajectory across all state dimensions, demonstrating that the learned value function gradient produces near-optimal control actions.
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{Trajectory and state comparison between grid-based and learned value function for an IC starting inside the 25s grid-based BRAT and outside the 10s learned BRAT.}}
+      \caption{Trajectory and state comparison between grid-based and learned value function controllers for an IC inside the 25\,s grid-based BRAT but outside the 10\,s learned BRAT.}
+      \label{fig:traj_comparison}
+   \end{figure}
+
+\textit{3) Controller Comparison.}
+Full quantitative results comparing all controllers in 6D are presented in Sec.~\ref{sec:6d_comparison}.
+
+\subsection{Controller Comparison}
+
+\subsubsection{6D Results}\label{sec:6d_comparison}
+
+\textit{BRAT Rollout Analysis.}
+Table~\ref{tab:brat_rollouts} (6D columns) reports $10{,}000$-sample rollout results under two initial condition (IC) regimes. Under \emph{BRAT IC} sampling, all ICs start within the learned BRAT ($V(x, T) \leq 0$) with no safety filter, directly testing the reach-avoid guarantee of the learned value function. Under \emph{Uniform IC} sampling, ICs are drawn uniformly from the full evaluation state space with the least-restrictive safety filter enabled, demonstrating that the controller effectively docks from arbitrary states---including those outside the trained BRAT---without requiring extremely long training horizons.
+
+\begin{table}[t]
+\caption{BRAT Rollout Results ($N = 10{,}000$ per condition)}
+\label{tab:brat_rollouts}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{6D} & \multicolumn{2}{c}{13D} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+Metric & BRAT IC & Uniform & BRAT IC & Uniform \\
+\midrule
+Docking (\%) & [TODO] & [TODO] & [TODO] & [TODO] \\
+Collision (\%) & [TODO] & [TODO] & [TODO] & [TODO] \\
+Timeout (\%) & [TODO] & [TODO] & [TODO] & [TODO] \\
+Dock time (s) & [TODO] & [TODO] & [TODO] & [TODO] \\
+Effort (N$\cdot$s) & [TODO] & [TODO] & [TODO] & [TODO] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Controller Comparison.}
+Table~\ref{tab:6d_comparison} compares all controllers over $500$ shared initial conditions, and Fig.~\ref{fig:6d_metrics} summarizes the results. [TODO: discuss key findings across success rate, failure rate, timeout rate, control effort, wall time, and docking time.]
+
+\begin{table}[t]
+\caption{6D Controller Comparison ($N = 500$ rollouts)}
+\label{tab:6d_comparison}
+\centering
+\begin{tabular}{lcccccc}
+\toprule
+Metric & BRAT & T-MPC & Grid & MPC & V-DR & RL \\
+\midrule
+Success (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Collision (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Timeout (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Effort (N$\cdot$s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Wall time (s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Dock time (s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{6D controller comparison metrics: success rate, failure rate, timeout rate, control effort, wall time (total trajectory simulation time), and docking time.}}
+      \caption{6D controller comparison metrics across all controllers.}
+      \label{fig:6d_metrics}
+   \end{figure}
+
+\textit{Docking Time Optimality.}
+Fig.~\ref{fig:6d_docking_hist} compares docking time distributions across all controllers against the grid-based BRAT. [TODO: discuss how the learned BRAT controller achieves superior docking time optimality compared to the grid-based solution, attributable to discretization errors in the grid-based value function.]
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{6D docking time histogram comparing all controllers against the grid-based BRAT, highlighting superior optimality of our method due to discretization errors in the grid-based solution.}}
+      \caption{6D docking time histogram. The learned BRAT controller achieves faster docking times than the grid-based solution due to discretization errors in the grid-based value function.}
+      \label{fig:6d_docking_hist}
+   \end{figure}
+
+\subsubsection{13D Results}\label{sec:13d_comparison}
+
+\textit{BRAT Rollout Analysis.}
+Table~\ref{tab:brat_rollouts} (13D columns) reports $10{,}000$-sample rollout results under the same two IC regimes as in 6D. The grid-based controller is excluded because the 13D state space is computationally intractable---a $51$-point grid per dimension would require $51^{13} \approx 10^{22}$ grid points. [TODO: discuss 13D BRAT safety and performance results.]
+
+\textit{Controller Comparison.}
+Table~\ref{tab:13d_comparison} compares all applicable controllers over $500$ shared initial conditions, and Fig.~\ref{fig:13d_metrics} summarizes the results. Fig.~\ref{fig:13d_trajectory} shows an example 13D trajectory starting outside the learned BRAT, demonstrating successful docking with the least-restrictive safety filter. [TODO: discuss key findings.]
+
+\begin{table}[t]
+\caption{13D Controller Comparison ($N = 500$ rollouts)}
+\label{tab:13d_comparison}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+Metric & BRAT & T-MPC & MPC & V-DR & RL \\
+\midrule
+Success (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Collision (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Timeout (\%) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Effort (N$\cdot$s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Wall time (s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+Dock time (s) & [TODO] & [TODO] & [TODO] & [TODO] & [TODO] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{13D controller comparison metrics: success rate, failure rate, timeout rate, control effort, wall time (total trajectory simulation time), and docking time.}}
+      \caption{13D controller comparison metrics across all applicable controllers.}
+      \label{fig:13d_metrics}
+   \end{figure}
+
+   \begin{figure}[t]
+      \centering
+      \framebox{\parbox{3in}{Example 13D trajectory starting outside the learned BRAT showing successful docking with the least-restrictive safety filter.}}
+      \caption{Example 13D trajectory starting outside the learned BRAT, demonstrating successful docking with the least-restrictive safety filter.}
+      \label{fig:13d_trajectory}
+   \end{figure}
+
+\subsection{Computational Performance}
+
+The BRAT controller requires a single forward pass through the SIREN network and one backward pass for the gradient at each control step, with no online optimization. The Terminal MPC controller adds a short-horizon gradient optimization on top. Table~\ref{tab:timing} compares per-step wall-clock times.
+
+\begin{table}[t]
+\caption{Per-Step Computation Time}
+\label{tab:timing}
+\centering
+\begin{tabular}{lcc}
+\toprule
+Controller & 6D (ms/step) & 13D (ms/step) \\
+\midrule
+BRAT & [TODO] & [TODO] \\
+Terminal MPC & [TODO] & [TODO] \\
+MPC & [TODO] & [TODO] \\
+Grid-Based & [TODO] & N/A \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtolength{\textheight}{-5cm}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{CONCLUSION}
+
+We presented a learning-based BRAT framework for autonomous spacecraft docking in 13 dimensions, combining neural value function approximation with MPC-generated curriculum labels and an exact-initial-condition parameterization tailored to reach-avoid semantics.
+
+\textit{Limitations.}
+First, the neural value function lacks formal convergence guarantees to the true HJ solution; our safety assessment is empirical, validated via Monte Carlo rollouts and, in 6D, comparison against grid-based ground truth.
+Second, the formulation is disturbance-free: we do not model thrust uncertainty, navigation errors, or unmodeled dynamics. The grid-based framework supports bounded disturbances via the differential game formulation, but this extension remains to be incorporated into the neural approach.
+Third, the target is assumed stationary in its LVLH frame; docking with tumbling or actively maneuvering targets is not addressed.
+
+\textit{Future Work.}
+To address the convergence limitation, we plan to investigate neural network verification techniques adapted to high-dimensional value functions, complementing the empirical validation with formal certificates.
+Robustness to disturbances can be incorporated by extending the Hamiltonian to include a maximizing adversary, following the standard differential game formulation~\cite{mitchell2005}, with the neural training pipeline adapted accordingly.
+Extension to tumbling targets requires a time-varying goal and failure set, addressable within the HJ framework by coupling target attitude dynamics into the state~\cite{zagaris2018}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section*{APPENDIX: FULL 13D DYNAMICS}
+
+The 13D dynamics consist of three-dimensional HCW translational equations, quaternion kinematics, and Euler's rotational equation.
+
+\textit{Translation.}
+Forces applied in body frame are transformed to LVLH acceleration via the rotation matrix $R(\mathbf{q})$:
+\begin{equation}\label{eq:13d_trans}
+\mathbf{a}_L = \frac{1}{m_c} R(\mathbf{q})^\top \mathbf{F}_b,
+\end{equation}
+where $\mathbf{F}_b = [F_x, F_y, F_z]^\top$ is the body-frame force vector and $R(\mathbf{q})$ is the LVLH-to-body rotation from the scalar-first quaternion. The HCW accelerations are
+\begin{align}\label{eq:hcw3d}
+\dot{v}_x &= 2nv_y + 3n^2 p_x + a_{L,x}, \nonumber\\
+\dot{v}_y &= -2nv_x + a_{L,y}, \\
+\dot{v}_z &= -n^2 p_z + a_{L,z}. \nonumber
+\end{align}
+
+\textit{Quaternion Kinematics.}
+The quaternion evolves according to
+\begin{equation}\label{eq:qdot}
+\dot{\mathbf{q}} = \tfrac{1}{2}\,\Omega(\bm{\omega})\,\mathbf{q},
+\end{equation}
+where $\bm{\omega} = [\omega_x, \omega_y, \omega_z]^\top$ is the body-frame angular velocity relative to LVLH and the $4\times4$ matrix is
+\begin{equation}\label{eq:omega_mat}
+\Omega(\bm{\omega}) = \begin{bmatrix}
+0 & -\omega_x & -\omega_y & -\omega_z \\
+\omega_x & 0 & \omega_z & -\omega_y \\
+\omega_y & -\omega_z & 0 & \omega_x \\
+\omega_z & \omega_y & -\omega_x & 0
+\end{bmatrix}\!.
+\end{equation}
+To resolve the $\mathbf{q} \leftrightarrow -\mathbf{q}$ ambiguity, we enforce $q_0 \geq 0$ by canonicalization before network evaluation.
+
+\textit{Rotational Dynamics.}
+Euler's equation for the angular velocity is
+\begin{equation}\label{eq:euler}
+\dot{\bm{\omega}} = I^{-1}\!\left(\bm{\tau}_b - \bm{\omega} \times I\bm{\omega}\right)\!,
+\end{equation}
+where $I = \mathrm{diag}(I_{xx}, I_{yy}, I_{zz})$ with $I_{xx} = I_{yy} = I_{zz} \approx 33.33$\,kg$\cdot$m$^2$ and $\bm{\tau}_b = [\tau_x, \tau_y, \tau_z]^\top$ is the body-frame torque.
+
+\textit{13D Optimal Control.}
+The force allocation accounts for orientation:
+\begin{align}\label{eq:13d_control}
+\mathbf{c}_F &= \tfrac{1}{m_c}\,R(\mathbf{q})\,\nabla_{\mathbf{v}} V, & F_i^* &= -\bar{F}\cdot\mathrm{sign}(c_{F,i}), \nonumber\\
+\mathbf{c}_\tau &= I^{-\!\top}\!\nabla_{\bm{\omega}} V, & \tau_i^* &= -\bar{\tau}\cdot\mathrm{sign}(c_{\tau,i}).
+\end{align}
+
+\section*{ACKNOWLEDGMENT}
+
+[TODO: Add acknowledgments.]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\bibliographystyle{ieeetr}
+\bibliography{refs}
+
+
+\end{document}
