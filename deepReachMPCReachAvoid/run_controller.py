@@ -56,13 +56,21 @@ from dynamics import dynamics as dynamics_module
 
 
 
-def _build_safety_filter(args):
-    """Create a SafetyFilter from CLI args (shared across controllers)."""
+def _build_safety_filter(args, margin_override=None):
+    """Create a SafetyFilter from CLI args (shared across controllers).
+
+    Args:
+        args: parsed CLI arguments.
+        margin_override: if provided, use this margin instead of
+            ``args.safety_margin_phase1``.  Used for single-phase controllers
+            (mpc, rl) that need a docking-friendly margin.
+    """
+    margin = margin_override if margin_override is not None else args.safety_margin_phase1
     return SafetyFilter(
         mode=args.safety_filter_mode,
         checkpoint_path=args.safety_checkpoint_path,
         tMax=None,
-        margin=args.safety_margin_phase1,
+        margin=margin,
         gamma=args.safety_filter_gamma,
         device=args.device,
     )
@@ -71,7 +79,14 @@ def _build_safety_filter(args):
 def build_controller(name, args):
     """Instantiate a controller by name string."""
     # Safety filter (no-op when mode=0)
-    sf = _build_safety_filter(args) if name in ('brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'rl') else None
+    # Non-BRAT controllers (mpc, rl) use a lower docking-friendly margin
+    # since they lack phase-1/phase-2 transitions.
+    if name in ('mpc', 'rl'):
+        sf = _build_safety_filter(args, margin_override=args.safety_margin_non_brat)
+    elif name in ('brat', 'vanilla_brat', 'mpc_terminal'):
+        sf = _build_safety_filter(args)
+    else:
+        sf = None
 
     if name == 'brat':
         return BRATController(
@@ -1297,6 +1312,12 @@ def _add_shared_args(parser):
     parser.add_argument('--safety_margin_phase2', type=float, default=0.02,
                         help='Safety filter margin when inside BRAT (Phase 2). '
                              'Lower value for minimal intervention. '
+                             '(default: 0.02)')
+    parser.add_argument('--safety_margin_non_brat', type=float, default=0.02,
+                        help='Safety filter margin for single-phase controllers '
+                             '(mpc, rl) that lack phase-1/phase-2 transitions. '
+                             'Lower than phase-1 to allow docking while still '
+                             'providing collision protection. '
                              '(default: 0.02)')
     parser.add_argument('--safety_filter_gamma', type=float, default=0.2,
                         help='Mode 2 CBF decay rate gamma '

@@ -107,13 +107,13 @@ python run_controller.py single --controller mpc_terminal \
 ########################### Comparison runs ##################################
 
 # 6-way comparison:
-python run_controller.py compare --controllers brat grid_based rl vanilla_brat mpc mpc_terminal \
+python run_controller.py compare --controllers grid_based brat mpc_terminal mpc vanilla_brat rl \
   --checkpoint_path $CKPT --vanilla_checkpoint_path $CKPT_VANILLA --rl_checkpoint_path $CKPT_RL \
-   --tMax 10.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
-  --mpc_gradient_iters 30 --mpc_num_restarts 4 --gradient_lr 1.0 --goal_weight 0.01 \
-  --mpc_terminal_gradient_iters 10 --mpc_terminal_num_restarts 1 \
+  --tMax 10.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID \
+  --mpc_gradient_iters 50 --mpc_num_restarts 8 --gradient_lr 1.0 --goal_weight 0.01 \
+  --mpc_terminal_gradient_iters 20 --mpc_terminal_num_restarts 1 \
   --planning_horizon 2.0 --mpc_dt 0.5 --effective_horizon 1.0 \
-  --n_rollouts 500 --seed 19 --sampling_method uniform \
+  --n_rollouts 500 --seed 19 --sampling_method uniform --safety_margin_non_brat 0.01\
   --output_dir ./outputs/6_way_comparison_500_uniform_IC_SF-1
 
 # Large-scale BRAT-only baseline (uniform IC)
