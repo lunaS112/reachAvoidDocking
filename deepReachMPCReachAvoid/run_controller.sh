@@ -5,16 +5,17 @@ source "${SCRIPT_DIR}/../.venv/bin/activate"
 
 # RUN IN TERMINAL FIRST
 
-CKPT="runs/Docking6D_RA_10sec_GradRefine/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
+CKPT_VANILLA="runs/Docking6D_10sec_Vanilla_BaseLine/training/checkpoints/model_final.pth"
 CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
 
 #################### Gradient MPC Baseline (analytical cost only) ############
 
-python run_controller.py single --controller brt \
-  --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 60.0 --safety_filter_margin 0.05 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --initial_px -10.442982320340697 --initial_py -2.0512017498686443 --initial_theta 1.205599463157637 \
-  --initial_vx 0.6868342952257529 --initial_vy 0.04974792745952561 --initial_omega -0.18448436899393705 \
- --output_dir ./outputs/brt_safety_filter_1_timeout_margin_0.05_test
+python run_controller.py single --controller vanilla_brat \
+  --checkpoint_path $CKPT --vanilla_checkpoint_path $CKPT_VANILLA --tMax 10.0 --max_sim_time 60.0 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --initial_state -8.1572345  -4.0154211  -0.15484879  0.0582251  -0.50771584  0.1852195 \
+  --gradient_fallback --grad_threshold 0.01 \
+  --output_dir ./outputs/brat_vanilla_test
 
 python run_controller.py single --controller brt \
   --checkpoint_path $CKPT --tMax 15.0 --max_sim_time 70.0 --safety_filter_margin 0.02 --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
@@ -125,12 +126,12 @@ python volume_comparison.py \
     --time_horizons 5 10 15 --n_monte_carlo 500000
 
 # 6D Geometry: UNIFORM IC
-python run_controller.py compare --controllers brat \
-  --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 10000 --tMax 10.0 --max_sim_time 90.0 --gradient_fallback --grad_threshold 0.01\
-  --sampling_method uniform --output_dir ./outputs/BRAT_10000_uniform_IC_SF-1_GradientRefine
+python run_controller.py compare --controllers vanilla_brat \
+  --checkpoint_path $CKPT --vanilla_checkpoint_path $CKPT_VANILLA --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --n_rollouts 10 --tMax 100.0 --max_sim_time 90.0 --gradient_fallback --grad_threshold 0.01\
+  --sampling_method uniform --output_dir ./outputs/BRAT_10_uniform_IC_SF1_Vanilla
 # 6D Geometry: BRAT IC
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 0 --safety_checkpoint_path $CKPT_AVOID \
-  --n_rollouts 10000 --tMax 10 --max_sim_time 60.0 --gradient_fallback --grad_threshold 0.01 \
-  --sampling_method brat --output_dir ./outputs/BRAT_10000_brat_IC_SF-0_GradientRefine
+  --n_rollouts 50 --tMax 10 --max_sim_time 60.0 --gradient_fallback --grad_threshold 0.01 \
+  --sampling_method brat --output_dir ./outputs/BRAT_50_BRAT_IC_SF0_Vanilla
