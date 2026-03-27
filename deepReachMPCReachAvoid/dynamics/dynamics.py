@@ -1300,6 +1300,36 @@ class Docking13D(Dynamics):
     def state_verification_range(self):
         return self.state_range_.cpu().tolist()
 
+    def differentiable_step(self, state, control, dt):
+        """Autograd-safe Euler step for 13D dynamics.
+
+        Avoids in-place ops in equivalent_wrapped_state by using torch.cat
+        to build the next state, ensuring gradient flow for GradientMPC.
+        """
+        deriv = self.dsdt(state, control, None)
+        ns = state + deriv * dt
+
+        sr = self.state_range_
+
+        # Positions: unclamped (indices 0-2)
+        pos = ns[..., :3]
+
+        # Linear velocities: clamped (indices 3-5)
+        vx = torch.clamp(ns[..., 3:4], sr[3, 0].item(), sr[3, 1].item())
+        vy = torch.clamp(ns[..., 4:5], sr[4, 0].item(), sr[4, 1].item())
+        vz = torch.clamp(ns[..., 5:6], sr[5, 0].item(), sr[5, 1].item())
+
+        # Quaternion: normalize (indices 6-9)
+        q = ns[..., 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+
+        # Angular velocities: clamped (indices 10-12)
+        wx = torch.clamp(ns[..., 10:11], sr[10, 0].item(), sr[10, 1].item())
+        wy = torch.clamp(ns[..., 11:12], sr[11, 0].item(), sr[11, 1].item())
+        wz = torch.clamp(ns[..., 12:13], sr[12, 0].item(), sr[12, 1].item())
+
+        return torch.cat([pos, vx, vy, vz, q, wx, wy, wz], dim=-1)
+
     def equivalent_wrapped_state(self, state):
         # Normalize quaternion and clamp velocities/angular velocities to bounds
         wrapped = torch.clone(state)

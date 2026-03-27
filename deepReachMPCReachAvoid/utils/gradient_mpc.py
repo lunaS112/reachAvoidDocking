@@ -102,6 +102,86 @@ class DifferentiableValueFunction:
         return value
 
 
+class DifferentiableValueFunction13D:
+    """Evaluate V(x, t) with full gradient flow for 13D dynamics.
+
+    Like DifferentiableValueFunction but handles the 13D periodic transform
+    (quaternion sign canonicalization, no dimension expansion) instead of the
+    6D sin/cos theta expansion.
+    """
+
+    def __init__(self, model, dynamics, device):
+        self.net = model.net  # FCBlock (SIREN backbone)
+        self.device = device
+
+        # Freeze SIREN weights
+        for p in self.net.parameters():
+            p.requires_grad_(False)
+
+        # Cache normalization constants
+        self.state_mean = dynamics.state_mean.to(device).float()  # (13,)
+        self.state_var = dynamics.state_var.to(device).float()    # (13,)
+        self.value_var = float(dynamics.value_var)
+        self.value_normto = float(dynamics.value_normto)
+
+        # State bounds for clamping
+        sr = dynamics.state_range_.float().to(device)  # (13, 2)
+        self.state_lo = sr[:, 0]
+        self.state_hi = sr[:, 1]
+
+        self.dynamics = dynamics
+        self.deepReach_model = dynamics.deepReach_model
+
+    def __call__(self, states, t_query):
+        """V(states, t_query) — fully differentiable w.r.t. states.
+
+        Args:
+            states:  (..., 13) raw (unnormalized) state tensor.
+            t_query: scalar float **or** (...,) tensor of per-sample times.
+        Returns:
+            (...,) value tensor.
+        """
+        # 1. Clamp to training domain
+        states_clamped = torch.clamp(states, self.state_lo, self.state_hi)
+
+        # 2. Normalize: (state - mean) / var
+        norm = (states_clamped - self.state_mean) / self.state_var
+
+        # 3. Prepend time (scalar or per-sample)
+        if isinstance(t_query, (int, float)):
+            time_col = torch.full(
+                (*states.shape[:-1], 1), t_query,
+                dtype=states.dtype, device=self.device)
+        else:
+            time_col = t_query.unsqueeze(-1)  # (..., 1)
+        net_input = torch.cat([time_col, norm], dim=-1)  # (..., 14)
+
+        # 4. Quaternion sign canonicalization (matching periodic_transform_fn)
+        q0 = net_input[..., 7:8]
+        sign = torch.sign(q0)
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        net_input = torch.cat([
+            net_input[..., :7],           # time + pos(3) + vel(3)
+            net_input[..., 7:11] * sign,  # quaternion (canonicalized)
+            net_input[..., 11:],          # angular velocity(3)
+        ], dim=-1)
+
+        # 5. Forward through SIREN
+        raw_output = self.net(net_input).squeeze(-1)
+
+        # 6. Denormalize (t_query broadcasts for both scalar and tensor)
+        if self.deepReach_model == 'exact':
+            value = (raw_output * t_query * self.value_var / self.value_normto
+                     + self.dynamics.boundary_fn(states_clamped))
+        elif self.deepReach_model == 'diff':
+            value = (raw_output * self.value_var / self.value_normto
+                     + self.dynamics.boundary_fn(states_clamped))
+        else:
+            value = raw_output * self.value_var / self.value_normto + self.dynamics.value_mean
+
+        return value
+
+
 class GradientMPC:
     """Multi-start gradient-based trajectory optimization via differentiable shooting.
 

@@ -129,6 +129,14 @@ class ControllerAnimation13D:
         times = result['times']
         key_idx = select_key_frames(len(traj), max_frames)
 
+        # Build per-step safety-filter-active mask
+        sf_log = result.get('safety_filter_log', [])
+        if sf_log:
+            safety_active = np.array([
+                e.get('filter_active', False) for e in sf_log], dtype=bool)
+        else:
+            safety_active = None
+
         # --- Pre-compute unified grid bounds + scene axis limits ------ #
         if self.grid_bounds is not None:
             unified_bounds = self.grid_bounds
@@ -163,6 +171,7 @@ class ControllerAnimation13D:
                 trajectory=traj[:idx + 1],
                 title='',
                 axis_range=scene_limits,
+                safety_active=safety_active,
             )
 
             # --- Gradient arrows (Cone trace) --- #
@@ -199,9 +208,13 @@ class ControllerAnimation13D:
             start, cnt = traces_per_frame[fi]
             for j in range(start, start + cnt):
                 vis[j] = True
+            title_parts = [f"t = {times[idx]:.1f}s"]
+            if safety_active is not None and idx < len(safety_active):
+                sf_str = '🔴 Safety Filter ACTIVE' if safety_active[idx] else '🟢 Nominal'
+                title_parts.append(sf_str)
             slider_steps.append(dict(
                 args=[{"visible": vis},
-                      {"title": f"t = {times[idx]:.1f}s"}],
+                      {"title": '  |  '.join(title_parts)}],
                 label=f"t={times[idx]:.1f}s",
                 method="update",
             ))
@@ -258,6 +271,14 @@ class ControllerAnimation13D:
         sim_times = result['times']
         t_queries = get_t_queries(result)
         key_idx = select_key_frames(len(traj), max_frames)
+
+        # Safety filter mask for trajectory colouring
+        sf_log = result.get('safety_filter_log', [])
+        if sf_log:
+            sf_active = np.array([
+                e.get('filter_active', False) for e in sf_log], dtype=bool)
+        else:
+            sf_active = None
 
         # Pre-compute unified grid bounds for MP4
         if self.grid_bounds is not None:
@@ -331,6 +352,7 @@ class ControllerAnimation13D:
                 axis_limits=dict(xlim=(x_lo, x_hi),
                                  ylim=(y_lo, y_hi),
                                  zlim=(z_lo, z_hi)),
+                safety_active=sf_active,
             )
 
             # Data panel — update line data, no clearing
@@ -338,13 +360,17 @@ class ControllerAnimation13D:
             line_val.set_data(t_slice, values[:idx + 1])
             line_dist.set_data(t_slice, all_dists[:idx + 1])
 
-            # Phase indicator
+            # Phase + safety filter indicator
+            parts = []
             if 'phases' in result:
                 phase = result['phases'][idx]
-                title_text.set_text(f"Phase {phase}  |  "
-                                    f"t_q = {t_queries[idx]:.2f}s")
+                parts.append(f"Phase {phase}  |  t_q = {t_queries[idx]:.2f}s")
             else:
-                title_text.set_text(f"t = {sim_times[idx]:.1f}s")
+                parts.append(f"t = {sim_times[idx]:.1f}s")
+            if sf_active is not None and idx < len(sf_active):
+                sf_str = 'ACTIVE' if sf_active[idx] else 'inactive'
+                parts.append(f"Safety: {sf_str}")
+            title_text.set_text('  |  '.join(parts))
 
         print("[Animation] Rendering MP4...")
         anim = FuncAnimation(fig, update, frames=len(key_idx),

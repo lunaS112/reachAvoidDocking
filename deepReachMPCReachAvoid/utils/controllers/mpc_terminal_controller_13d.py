@@ -36,66 +36,75 @@ sys.path.insert(0, os.path.join(_THIS_DIR, '..', '..'))
 
 from utils import modules
 from utils import diff_operators  # noqa: F401
-from utils.MPC import MPC
+from utils.gradient_mpc import GradientMPC, DifferentiableValueFunction13D
 from dynamics import dynamics as dynamics_module
 from utils.controllers.docking13d_mixin import Docking13DControllerMixin
+from utils.controllers.safety_filter import SafetyFilter
 
 
 class MPCTerminalController13D(Docking13DControllerMixin):
-    """Short-horizon MPC + learned terminal cost for 13D docking."""
+    """Short-horizon gradient MPC + learned terminal cost for 13D docking."""
 
     def __init__(self, checkpoint_path, effective_horizon_sec=2.0, tMax=14.0,
-                 dt=0.1, num_samples=500, num_refinement=10, device='cuda',
-                 cost_type='reachability', effort_weight=0.0,
+                 dt=0.1, device='cuda',
+                 effort_weight=0.0,
                  exploration_factor=3.0, exploration_patience=2,
-                 escape_thresh=0.5):
+                 escape_thresh=0.5,
+                 gradient_lr=1.0, gradient_iters=50, num_restarts=8,
+                 goal_weight=0.01, safety_filter=None,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.02):
         """
         Args:
             checkpoint_path:       Path to trained model checkpoint.
             effective_horizon_sec: Short MPC planning horizon (seconds).
             tMax:                  Time at which V(x, tMax) is queried.
             dt:                    Control / integration timestep (seconds).
-            num_samples:           Random-shooting samples per refinement.
-            num_refinement:        Iterative refinement passes per step.
             device:                Torch device.
-            cost_type:             Base cost for the short horizon.
             effort_weight:         Weight for control effort penalty (0 = off).
             exploration_factor:    eps_var multiplier in EXPLORING mode.
             exploration_patience:  Stagnation windows before BRT fallback.
             escape_thresh:         Distance improvement (m) to escape local min.
+            gradient_lr:           Adam learning rate (default 1.0).
+            gradient_iters:        Adam iterations per MPC step (default 50).
+            num_restarts:          Parallel random restarts (default 8).
+            goal_weight:           Weight for goal-directed regularisation (default 0.01).
         """
         self.checkpoint_path = checkpoint_path
         self.effective_horizon_sec = effective_horizon_sec
         self.effective_horizon = int(effective_horizon_sec / dt)
         self.tMax = tMax
         self.dt = dt
-        self.num_samples = num_samples
-        self.num_refinement = num_refinement
         self.device = device
-        self.cost_type = cost_type
         self.effort_weight = effort_weight
         self.exploration_factor_setting = exploration_factor
         self.exploration_patience = exploration_patience
         self.escape_thresh = escape_thresh
+        self._goal_weight = goal_weight
+        self._near_obstacle = False
 
         self.experiment_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(checkpoint_path)))
 
         self._load_dynamics_and_model()
 
-        self.mpc = MPC(
-            dT=self.dt,
+        self.gradient_mpc = GradientMPC(
+            dt=self.dt,
             horizon=self.effective_horizon,
-            receding_horizon=1,
-            num_samples=self.num_samples,
-            dynamics_=self.dynamics,
+            dynamics=self.dynamics,
             device=self.device,
-            mode='MPC',
-            sample_mode='gaussian',
-            style='direct',
-            num_iterative_refinement=self.num_refinement,
-            cost_type=self.cost_type,
+            num_iters=gradient_iters,
+            lr=gradient_lr,
+            num_restarts=num_restarts,
         )
+
+        # Differentiable value function (bypasses SingleBVPNet's .detach())
+        self.diff_value_fn = DifferentiableValueFunction13D(
+            self.model, self.dynamics, self.device)
+
+        # Safety filter (no-op when mode=0 or None)
+        self.safety_filter = safety_filter or SafetyFilter(mode=0)
+        self.safety_margin_phase1 = safety_margin_phase1
+        self.safety_margin_phase2 = safety_margin_phase2
 
         self.reset()
 
@@ -103,7 +112,8 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                       if self.effort_weight > 0 else "")
         print(f"MPCTerminalController13D initialised | "
               f"horizon={self.effective_horizon_sec}s  tMax={self.tMax}s  "
-              f"samples={self.num_samples}  refinements={self.num_refinement}"
+              f"iters={gradient_iters}  restarts={num_restarts}  "
+              f"lr={gradient_lr}  goal_weight={goal_weight}"
               f"{effort_str}")
 
     # ------------------------------------------------------------------
@@ -154,7 +164,8 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         self.sim_time_history = []
         self.phase_history = []
         self.t_remaining_history = []
-        self._warm_started = False
+        self._warm_controls = None
+        self.safety_filter.reset()
 
         # Phase tracking (one-way)
         self.in_brt = False
@@ -290,6 +301,274 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         return self._compute_brt_control_13d(dvds, state)
 
     # ------------------------------------------------------------------
+    # Batched simulation
+    # ------------------------------------------------------------------
+
+    def _batch_is_in_brt(self, states):
+        """Vectorised BRT membership check. Returns (B,) bool tensor."""
+        B = states.shape[0]
+        time_col = torch.full(
+            (B, 1), self.tMax, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+        with torch.no_grad():
+            result = self.model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)
+        values = self.dynamics.io_to_value(model_input, output)
+        return values <= 0
+
+    def _build_batch_cost_fn(self, t_queries):
+        """Build cost function with per-IC time queries for batch_optimize.
+
+        Args:
+            t_queries: (B,) tensor of per-IC time queries.
+        """
+        diff_value_fn = self.diff_value_fn
+        dynamics = self.dynamics
+        effort_weight = self.effort_weight
+        dt = self.dt
+        goal_weight = self._goal_weight
+        device = self.device
+
+        def cost_fn(trajectory, controls):
+            # trajectory: (B, H+1, 13), controls: (B, H, 6)
+
+            # 1. Short-horizon reach-avoid cost
+            reach_avoid = dynamics.cost_fn(trajectory)  # (B,)
+
+            # 2. Differentiable terminal cost with per-IC time
+            terminal_states = trajectory[:, -1, :]  # (B, 13)
+            terminal_values = diff_value_fn(terminal_states, t_queries)
+
+            # 3. Combine
+            combined = torch.minimum(reach_avoid, terminal_values)
+            avoid_max = torch.max(
+                -dynamics.avoid_fn(trajectory), dim=-1).values
+            combined = torch.maximum(combined, avoid_max)
+
+            # 4. Control effort penalty
+            if effort_weight > 0:
+                control_norms = torch.norm(controls, dim=-1)
+                effort = torch.sum(control_norms, dim=-1) * dt
+                on_track = (combined <= 0).float()
+                combined = combined + effort_weight * effort * on_track
+
+            # 5. Goal-directed regularisation
+            if goal_weight > 0:
+                combined = combined + goal_weight * _goal_directed_cost_13d(
+                    trajectory, dynamics, device)
+
+            return combined
+
+        return cost_fn
+
+    def simulate_docking_batch(self, initial_states_np, max_sim_time):
+        """Run docking simulations for multiple ICs in parallel on GPU.
+
+        Uses batch_optimize to process all ICs simultaneously each step.
+        Phase tracking (BRT entry) is handled per-IC via masking.
+        Stagnation detection is disabled in batch mode.
+
+        Args:
+            initial_states_np: (B, 13) numpy array of initial conditions.
+            max_sim_time: Maximum simulation time (seconds).
+
+        Returns:
+            list of B result dicts (same format as simulate_docking).
+        """
+        B = len(initial_states_np)
+        num_steps = int(max_sim_time / self.dt) + 1
+        cdim = self.dynamics.control_dim
+        H = self.effective_horizon
+
+        t_wall_start = time.perf_counter()
+
+        states = torch.tensor(
+            initial_states_np, dtype=torch.float32, device=self.device)
+
+        # Pre-allocate storage
+        state_buf = torch.zeros(num_steps, B, 13)
+        ctrl_buf = torch.zeros(num_steps, B, cdim)
+        cost_buf = torch.zeros(num_steps, B)
+        phase_buf = torch.ones(num_steps, B, dtype=torch.long)
+        sf_active_buf = torch.zeros(num_steps, B, dtype=torch.bool)
+
+        # Per-IC tracking
+        active = torch.ones(B, dtype=torch.bool, device=self.device)
+        docked = torch.zeros(B, dtype=torch.bool, device=self.device)
+        collided = torch.zeros(B, dtype=torch.bool, device=self.device)
+        dock_step = torch.full((B,), num_steps, dtype=torch.long,
+                               device=self.device)
+        final_step = torch.zeros(B, dtype=torch.long, device=self.device)
+        post_dock_steps = int(1.0 / self.dt)
+
+        # Per-IC wall time: recorded when each IC terminates
+        ic_wall_time = np.zeros(B, dtype=np.float64)
+        ic_terminated = np.zeros(B, dtype=bool)
+
+        # Phase tracking (per-IC)
+        in_brt = torch.zeros(B, dtype=torch.bool, device=self.device)
+        t_remaining = torch.full((B,), self.tMax, dtype=torch.float32,
+                                 device=self.device)
+        brt_entry_step = torch.full((B,), -1, dtype=torch.long,
+                                    device=self.device)
+
+        # Warm-start controls (B, H, cdim)
+        warm = torch.zeros(B, H, cdim, device=self.device)
+
+        for step in range(num_steps):
+            # Coast check
+            coast_done = docked & ((step - dock_step) >= post_dock_steps)
+            active = active & ~coast_done & ~collided
+
+            if not active.any():
+                break
+
+            # Record state
+            state_buf[step] = states.detach().cpu()
+            final_step[active] = step
+
+            # --- Phase update (one-way transition) ---
+            with torch.no_grad():
+                newly_in_brt = active & ~in_brt & self._batch_is_in_brt(states)
+                in_brt = in_brt | newly_in_brt
+                brt_entry_step = torch.where(
+                    newly_in_brt,
+                    torch.tensor(step, device=self.device),
+                    brt_entry_step)
+
+            # Build per-IC t_query
+            t_queries = torch.where(
+                in_brt,
+                torch.clamp(t_remaining, min=0.01),
+                torch.full_like(t_remaining, self.tMax))
+
+            phase_buf[step] = torch.where(in_brt, 2, 1).cpu()
+
+            # --- MPC optimisation (all ICs simultaneously) ---
+            cost_fn = self._build_batch_cost_fn(t_queries)
+            best_controls, best_costs, _ = self.gradient_mpc.batch_optimize(
+                states, cost_fn, warm)
+
+            controls = best_controls[:, 0, :]
+            controls = controls * active.unsqueeze(-1).float()
+
+            # --- Safety filter (phase-aware per-IC margin, no-op when mode=0) ---
+            sf_margins = torch.where(
+                in_brt,
+                torch.tensor(self.safety_margin_phase2, device=self.device),
+                torch.tensor(self.safety_margin_phase1, device=self.device))
+            controls, sf_active_step = self.safety_filter.batch_apply(
+                states, controls, active_mask=active, margins=sf_margins)
+            sf_active_buf[step] = sf_active_step.cpu()
+
+            ctrl_buf[step] = controls.detach().cpu()
+            cost_buf[step] = best_costs.detach().cpu()
+
+            # Decrement timer for phase-2 ICs
+            t_remaining = torch.where(
+                in_brt, t_remaining - self.dt, t_remaining)
+
+            # --- Termination checks ---
+            with torch.no_grad():
+                reach_vals = self.dynamics.reach_fn(states)
+                newly_docked = active & ~docked & (reach_vals <= 0)
+                docked = docked | newly_docked
+                dock_step = torch.where(
+                    newly_docked,
+                    torch.tensor(step, device=self.device),
+                    dock_step)
+
+                # Collision: oriented 8-corner box (matches sequential)
+                coll_mask = self._batch_check_collision_oriented(states)
+                newly_collided = active & ~docked & coll_mask
+                collided = collided | newly_collided
+
+            # Record wall time for ICs that just terminated
+            _now = time.perf_counter() - t_wall_start
+            newly_done = (newly_docked | newly_collided).cpu().numpy()
+            for idx in np.where(newly_done & ~ic_terminated)[0]:
+                ic_wall_time[idx] = _now
+                ic_terminated[idx] = True
+
+            # --- Euler integration ---
+            with torch.no_grad():
+                state_dot = self.dynamics.dsdt(states, controls, None)
+                states = states + self.dt * state_dot
+                # Quaternion-only normalisation (matches sequential _wrap_state_13d)
+                states = self._batch_wrap_quat(states)
+
+            # Shift warm-start
+            warm = torch.cat([
+                best_controls[:, 1:, :].detach(),
+                torch.zeros(B, 1, cdim, device=self.device),
+            ], dim=1)
+
+            if step % 50 == 0:
+                n_a = int(active.sum().item())
+                n_d = int(docked.sum().item())
+                n_c = int(collided.sum().item())
+                n_p2 = int(in_brt.sum().item())
+                print(f'  [Batch MPC+T] step={step} t={step*self.dt:.1f}s  '
+                      f'active={n_a} docked={n_d} coll={n_c} phase2={n_p2}')
+
+        wall_time = time.perf_counter() - t_wall_start
+
+        # Assign wall time for ICs that never terminated (timed out)
+        ic_wall_time[~ic_terminated] = wall_time
+
+        # --- Build per-IC result dicts ---
+        docked_np = docked.cpu().numpy()
+        collided_np = collided.cpu().numpy()
+        final_step_np = final_step.cpu().numpy()
+        brt_entry_np = brt_entry_step.cpu().numpy()
+
+        sf_active_np = sf_active_buf.numpy()
+
+        results = []
+        for i in range(B):
+            n = int(final_step_np[i]) + 1
+            traj_i = state_buf[:n, i].numpy()
+            ctrl_i = ctrl_buf[:n, i].numpy()
+            cost_i = cost_buf[:n, i].numpy()
+            phase_i = phase_buf[:n, i].numpy()
+            times_i = np.arange(n) * self.dt
+            sf_i = sf_active_np[:n, i]
+
+            effort = float(
+                np.sum(np.linalg.norm(ctrl_i, axis=-1)) * self.dt)
+
+            brt_t = (float(brt_entry_np[i] * self.dt)
+                     if brt_entry_np[i] >= 0 else None)
+
+            sf_log_i = [{'filter_active': bool(sf_i[s])} for s in range(n)]
+
+            results.append({
+                'trajectory': traj_i,
+                'controls': ctrl_i,
+                'values': cost_i,
+                'times': times_i,
+                'phases': phase_i,
+                'success': bool(docked_np[i] and not collided_np[i]),
+                'collision': bool(collided_np[i]),
+                'docked': bool(docked_np[i]),
+                'final_state': traj_i[-1],
+                'controller_type': 'mpc_terminal_13d',
+                'control_effort': effort,
+                'wall_time': float(ic_wall_time[i]),
+                'brt_entry_time': brt_t,
+                'safety_filter_mode': self.safety_filter.mode,
+                'safety_filter_log': sf_log_i,
+            })
+
+        mean_ic_wall = float(np.mean(ic_wall_time))
+        print(f'  [Batch MPC+T] Done: {B} ICs in {wall_time:.1f}s '
+              f'(mean {mean_ic_wall:.2f}s/IC)  '
+              f'dock={int(docked_np.sum())} coll={int(collided_np.sum())}')
+
+        return results
+
+    # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------
 
@@ -340,6 +619,11 @@ class MPCTerminalController13D(Docking13DControllerMixin):
             else:
                 control, cost_val = self._mpc_step(state, sim_time)
 
+            # Post-process through safety filter (no-op when mode=0)
+            self.safety_filter.set_margin(
+                self.safety_margin_phase2 if self.in_brt else self.safety_margin_phase1)
+            control = self.safety_filter.apply(state, control)
+
             # Record
             self.state_history.append(state.copy())
             self.control_history.append(control.copy())
@@ -373,7 +657,7 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                                 self._control_mode = 'normal'
                                 self._exploration_factor = 1.0
                                 self._stagnation_count = 0
-                                self._warm_started = False
+                                self._warm_controls = None
                                 print('    -> Escaped local min, mode=NORMAL')
                     else:
                         self._stagnation_count += 1
@@ -437,14 +721,69 @@ class MPCTerminalController13D(Docking13DControllerMixin):
             'control_effort': control_effort,
             'wall_time': wall_time,
             'brt_entry_time': self.brt_entry_time,
+            'safety_filter_mode': self.safety_filter.mode,
+            'safety_filter_log': self.safety_filter.get_log(),
         }
 
     # ------------------------------------------------------------------
-    # Core MPC + terminal cost
+    # Cost function construction
+    # ------------------------------------------------------------------
+
+    def _build_cost_fn(self, phase, t_query):
+        """Build the cost function for gradient MPC.
+
+        Combines:
+          1. Short-horizon reach-avoid cost (analytical)
+          2. Terminal cost from learned value function (differentiable through SIREN)
+          3. Control effort penalty (optional)
+          4. Goal-directed regularisation (stagnation escape)
+        """
+        diff_value_fn = self.diff_value_fn
+        dynamics = self.dynamics
+        effort_weight = self.effort_weight
+        dt = self.dt
+        goal_weight = self._goal_weight
+        device = self.device
+
+        def cost_fn(trajectory, controls):
+            # 1. Short-horizon reach-avoid cost
+            reach_avoid = dynamics.cost_fn(trajectory)  # (K,)
+
+            # 2. Terminal cost (differentiable through SIREN)
+            terminal_states = trajectory[:, -1, :]  # (K, 13)
+            terminal_values = diff_value_fn(terminal_states, t_query)  # (K,)
+
+            # 3. Combine (reach-avoid formulation)
+            combined = torch.minimum(reach_avoid, terminal_values)
+            avoid_max = torch.max(
+                -dynamics.avoid_fn(trajectory), dim=-1).values  # (K,)
+            combined = torch.maximum(combined, avoid_max)
+
+            # 4. Control effort penalty
+            if effort_weight > 0:
+                control_norms = torch.norm(controls, dim=-1)  # (K, H)
+                effort = torch.sum(control_norms, dim=-1) * dt  # (K,)
+                on_track = (combined <= 0).float()
+                combined = combined + effort_weight * effort * on_track
+
+            # 5. Goal-directed regularisation (stagnation escape)
+            if goal_weight > 0:
+                combined = combined + goal_weight * _goal_directed_cost_13d(
+                    trajectory, dynamics, device)
+
+            return combined
+
+        return cost_fn
+
+    # ------------------------------------------------------------------
+    # Core MPC + terminal cost logic (gradient-based)
     # ------------------------------------------------------------------
 
     def _mpc_step(self, state, sim_time):
-        """One MPC step with phase-aware terminal cost.
+        """Run one gradient-based MPC step with phase-aware terminal cost.
+
+        Phase 1 (Approach): terminal cost = V(x, tMax)
+        Phase 2 (Tracking): terminal cost = V(x, t_remaining)
 
         Returns:
             (first_control, best_combined_cost)
@@ -452,66 +791,66 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         phase, t_query = self._update_phase(state, sim_time)
 
         state_tensor = torch.tensor(
-            state, dtype=torch.float32, device=self.device).unsqueeze(0)
+            state, dtype=torch.float32, device=self.device)
 
-        self.mpc.batch_size = 1
-        self.mpc.horizon = self.effective_horizon
+        cost_fn = self._build_cost_fn(phase, t_query)
 
-        if not self._warm_started:
-            self.mpc.init_control_tensors()
-            self._warm_started = True
-        else:
-            shifted = self.mpc.control_tensors[:, 1:, :].clone()
-            pad = torch.zeros(
-                1, 1, self.dynamics.control_dim, device=self.device)
-            self.mpc.control_tensors = torch.cat([shifted, pad], dim=1)
+        # Warm-start: shift previous solution
+        warm = None
+        if self._warm_controls is not None:
+            cdim = self.dynamics.control_dim
+            warm = torch.cat([
+                self._warm_controls[1:],
+                torch.zeros(1, cdim, device=self.device)
+            ], dim=0)
 
-        best_cost_val = float('inf')
-        for _ in range(self.num_refinement):
-            state_trajs, permuted_controls = self.mpc.rollout_dynamics(
-                state_tensor, start_iter=0,
-                rollout_horizon=self.effective_horizon,
-                eps_var_factor=self._exploration_factor)
+        best_controls, best_cost, best_traj = self.gradient_mpc.optimize(
+            state_tensor, cost_fn, warm_start=warm)
 
-            # Short-horizon reachability cost
-            reach_avoid_cost = self.dynamics.cost_fn(state_trajs)
+        self._warm_controls = best_controls.detach()
 
-            # Terminal cost from learned VF
-            terminal_states = state_trajs[:, :, -1, :]
-            terminal_values = self._evaluate_terminal_values(
-                terminal_states, t_query=t_query)
-
-            # Combine: max( min(reach_avoid, terminal), cummax(-avoid) )
-            combined = torch.minimum(reach_avoid_cost, terminal_values)
-            avoid_max = torch.max(
-                -self.dynamics.avoid_fn(state_trajs), dim=-1).values
-            combined = torch.maximum(combined, avoid_max)
-
-            # Control effort penalty
-            if self.effort_weight > 0:
-                control_norms = torch.norm(permuted_controls, dim=-1)
-                effort_per_sample = torch.sum(control_norms, dim=-1) * self.dt
-                on_track = (combined <= 0).float()
-                combined = combined + self.effort_weight * effort_per_sample * on_track
-
-            # Select best
-            best_costs, best_idx = combined.min(dim=1)
-            best_cost_val = best_costs.item()
-
-            bi = best_idx[0]
-            self._last_reach_avoid = reach_avoid_cost[0, bi].item()
-            self._last_terminal = terminal_values[0, bi].item()
-
-            idx_ctrl = best_idx.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            idx_ctrl = idx_ctrl.expand(
-                -1, -1, permuted_controls.size(2), permuted_controls.size(3))
-            best_controls = torch.gather(
-                permuted_controls, dim=1, index=idx_ctrl).squeeze(1)
-            self.mpc.control_tensors = best_controls.clone()
+        # Diagnostics (matching existing interface)
+        with torch.no_grad():
+            self._last_reach_avoid = self.dynamics.cost_fn(
+                best_traj.unsqueeze(0)).item()
+            self._last_terminal = self.diff_value_fn(
+                best_traj[-1].unsqueeze(0), t_query).item()
 
         # Decrement timer (Phase 2 only)
         if self.in_brt:
             self.t_remaining -= self.dt
 
-        first_control = self.mpc.control_tensors[0, 0, :].detach().cpu().numpy()
-        return first_control, best_cost_val
+        first_control = best_controls[0].cpu().numpy()
+        return first_control, best_cost
+
+
+# ------------------------------------------------------------------
+# Module-level helpers
+# ------------------------------------------------------------------
+
+def _goal_directed_cost_13d(trajectory, dynamics, device):
+    """Quadratic goal-directed cost for 13D stagnation escape.
+
+    Provides useful gradients everywhere, unlike the tanh-saturated reach_fn.
+    """
+    terminal = trajectory[:, -1, :]  # (K, 13)
+
+    # Position error (goal at origin / goal_y_center)
+    goal_pos = torch.zeros(3, device=device)
+    if hasattr(dynamics, 'goal_y_center'):
+        goal_pos[1] = dynamics.goal_y_center
+    pos_err = terminal[:, :3] - goal_pos
+    vel_err = terminal[:, 3:6]
+
+    # Quaternion error: 1 - |q . q_goal|^2
+    q = terminal[:, 6:10]
+    q_goal = dynamics.q_goal.to(device).float()
+    dot = torch.sum(q * q_goal, dim=-1)
+    quat_err = 1.0 - dot ** 2
+
+    omega_err = terminal[:, 10:13]
+
+    return (3.0 * (pos_err ** 2).sum(-1)
+            + 10.0 * (vel_err ** 2).sum(-1)
+            + 5.0 * quat_err
+            + 5.0 * (omega_err ** 2).sum(-1))
