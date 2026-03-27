@@ -21,9 +21,9 @@ python train_docking.py --dynamics 6d -wi 5000 -w -g 0.9 -a \
 
 # === 13D Docking ===
 echo "=== Training 13D Docking ==="
-python train_docking.py --dynamics 13d -wi 10000 -w -g 0.9 -a \
+python train_docking.py --dynamics 13d -wi 5000 -w -g 0.9 -a \
     --pd_attitude --tight_ic \
     --importance_sampling --target_ratio 0.3 \
     --tau 0.005 \
-    -arc 512 512 512 -mc 200000 -ms 500 -mu 4000000 \
+    -arc 512 512 512 -mc 100000 -ms 500 -mu 400000 \
     -n 13d_improved -sf
