@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/../.venv/bin/activate"
 CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
 CKPT_VANILLA="runs/Docking6D_10sec_Vanilla_BaseLine/training/checkpoints/model_final.pth"
 CKPT_AVOID="runs/Docking6D_RA_avoid/training/checkpoints/model_final.pth"
+CKPT_RL="../RLBaseline/experiments/docking-6d-DDQN/6d_improved-TF/model/Q-400221.pth"
 
 #################### Gradient MPC Baseline (analytical cost only) ############
 
@@ -120,16 +121,13 @@ python run_controller.py compare --controllers brat \
   --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
   --sampling_method uniform --output_dir ./outputs/BRT_10000_safety_filter_1
 
-# Volume comparison
-python volume_comparison.py \
-    --checkpoint_path $CKPT \
-    --time_horizons 5 10 15 --n_monte_carlo 500000
+
 
 # 6D Geometry: UNIFORM IC
-python run_controller.py compare --controllers vanilla_brat \
-  --checkpoint_path $CKPT --vanilla_checkpoint_path $CKPT_VANILLA --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 10 --tMax 100.0 --max_sim_time 90.0 --gradient_fallback --grad_threshold 0.01\
-  --sampling_method uniform --output_dir ./outputs/BRAT_10_uniform_IC_SF1_Vanilla
+python run_controller.py compare --controllers rl \
+  --checkpoint_path $CKPT --vanilla_checkpoint_path $CKPT_VANILLA --rl_checkpoint_path $CKPT_RL --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
+  --n_rollouts 10 --tMax 1000.0 --max_sim_time 90.0 --gradient_fallback --grad_threshold 0.01\
+  --sampling_method uniform --output_dir ./outputs/BRAT_10_uniform_IC_SF1_rl
 # 6D Geometry: BRAT IC
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 0 --safety_checkpoint_path $CKPT_AVOID \
