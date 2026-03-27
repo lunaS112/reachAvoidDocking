@@ -57,7 +57,7 @@ class DifferentiableValueFunction:
 
         Args:
             states:  (..., 6) raw (unnormalized) state tensor.
-            t_query: scalar time value.
+            t_query: scalar float **or** (...,) tensor of per-sample times.
         Returns:
             (...,) value tensor.
         """
@@ -78,9 +78,12 @@ class DifferentiableValueFunction:
         sin_theta = torch.sin(norm_theta * self.theta_var)
         cos_theta = torch.cos(norm_theta * self.theta_var)
 
-        time_col = torch.full(
-            (*states.shape[:-1], 1), t_query,
-            dtype=states.dtype, device=self.device)
+        if isinstance(t_query, (int, float)):
+            time_col = torch.full(
+                (*states.shape[:-1], 1), t_query,
+                dtype=states.dtype, device=self.device)
+        else:
+            time_col = t_query.unsqueeze(-1)  # (..., 1)
 
         # 8D input: [time, norm_x, norm_y, norm_vx, norm_vy, sin, cos, norm_omega]
         net_input = torch.cat(

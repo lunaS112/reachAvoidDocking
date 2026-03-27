@@ -317,18 +317,80 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         values = self.dynamics.io_to_value(model_input, output)
         return values <= 0
 
-    def _build_batch_cost_fn(self, t_queries):
+    def _batch_compute_brt_control_batch(self, states, t_queries):
+        """Batch bang-bang control from value function gradient for 13D fallback ICs.
+
+        Uses reach-avoid sign convention (MINIMISE V), matching
+        ``_compute_brt_control_13d`` from the mixin.
+
+        Args:
+            states:    (N, 13) states of fallback ICs on device.
+            t_queries: (N,) per-IC time queries on device.
+
+        Returns:
+            (N, 6) bang-bang controls on device.
+        """
+        N = states.shape[0]
+        time_col = t_queries.unsqueeze(-1)  # (N, 1)
+        coords = torch.cat([time_col, states.float()], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)
+        model_in = result['model_in']
+
+        dv = self.dynamics.io_to_dv(model_in, output)  # (N, 14)
+        dvds = dv[:, 1:].detach()                       # (N, 13)
+
+        # Rotation-aware force allocation (reach-avoid convention: MINIMISE V)
+        q = states[:, 6:10]
+        q = q / (q.norm(dim=-1, keepdim=True) + 1e-12)
+        R = self.dynamics.quat_to_R_LVLH_to_body(q)  # (N, 3, 3) LVLH→body
+
+        # Force: body coefficients = R @ p_v / mc
+        p_v = dvds[:, 3:6].unsqueeze(-1)              # (N, 3, 1)
+        mc = self.dynamics.mc
+        coeff_body = (torch.bmm(R, p_v).squeeze(-1)) / mc  # (N, 3)
+        F_bar = self.dynamics.F_bar
+        # Reach-avoid convention: OPPOSITE of safety filter
+        F = torch.where(coeff_body > 0, -F_bar, F_bar)  # (N, 3)
+
+        # Torque: coeff_tau = I^{-T} @ p_omega
+        I_np = self.dynamics.I.detach().cpu().numpy()
+        I_inv_T = torch.tensor(
+            np.linalg.inv(I_np).T, dtype=torch.float32,
+            device=states.device)
+        p_omega = dvds[:, 10:13]                        # (N, 3)
+        coeff_tau = p_omega @ I_inv_T.T                  # (N, 3)
+        tau_bar = self.dynamics.tau_bar
+        tau = torch.where(coeff_tau > 0, -tau_bar, tau_bar)  # (N, 3)
+
+        return torch.cat([F, tau], dim=-1)               # (N, 6)
+
+    def _build_batch_cost_fn(self, t_queries, goal_weights=None,
+                             near_obstacle_mask=None):
         """Build cost function with per-IC time queries for batch_optimize.
 
         Args:
-            t_queries: (B,) tensor of per-IC time queries.
+            t_queries:          (B,) tensor of per-IC time queries.
+            goal_weights:       (B,) tensor of per-IC goal weights, or None
+                                to use the scalar ``self._goal_weight``.
+            near_obstacle_mask: (B,) bool tensor, or None (no suppression).
         """
         diff_value_fn = self.diff_value_fn
         dynamics = self.dynamics
         effort_weight = self.effort_weight
         dt = self.dt
-        goal_weight = self._goal_weight
         device = self.device
+
+        # Determine whether to use per-IC or scalar goal weight
+        if goal_weights is not None:
+            per_ic_goal = True
+            _goal_weights = goal_weights
+            _near_mask = near_obstacle_mask
+        else:
+            per_ic_goal = False
+            _scalar_goal_weight = self._goal_weight
 
         def cost_fn(trajectory, controls):
             # trajectory: (B, H+1, 13), controls: (B, H, 6)
@@ -354,8 +416,15 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                 combined = combined + effort_weight * effort * on_track
 
             # 5. Goal-directed regularisation
-            if goal_weight > 0:
-                combined = combined + goal_weight * _goal_directed_cost_13d(
+            if per_ic_goal:
+                active_goal = _goal_weights * (
+                    ~_near_mask).float() if _near_mask is not None else _goal_weights
+                if active_goal.sum() > 0:
+                    goal_cost = _goal_directed_cost_13d(
+                        trajectory, dynamics, device)
+                    combined = combined + active_goal * goal_cost
+            elif _scalar_goal_weight > 0:
+                combined = combined + _scalar_goal_weight * _goal_directed_cost_13d(
                     trajectory, dynamics, device)
 
             return combined
@@ -367,7 +436,8 @@ class MPCTerminalController13D(Docking13DControllerMixin):
 
         Uses batch_optimize to process all ICs simultaneously each step.
         Phase tracking (BRT entry) is handled per-IC via masking.
-        Stagnation detection is disabled in batch mode.
+        Per-IC stagnation detection with graduated escalation
+        (NORMAL -> EXPLORING -> BRT_FALLBACK).
 
         Args:
             initial_states_np: (B, 13) numpy array of initial conditions.
@@ -413,6 +483,18 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         brt_entry_step = torch.full((B,), -1, dtype=torch.long,
                                     device=self.device)
 
+        # Per-IC stagnation detection state
+        MODE_NORMAL, MODE_EXPLORING, MODE_FALLBACK = 0, 1, 2
+        control_mode = np.zeros(B, dtype=np.int32)
+        stagnation_count = np.zeros(B, dtype=np.int32)
+        goal_weights_np = np.full(B, self._goal_weight, dtype=np.float64)
+        mode_entry_dist = np.full(B, np.inf, dtype=np.float64)
+        prev_log_dist = np.full(B, np.inf, dtype=np.float64)
+        first_log = np.ones(B, dtype=bool)
+
+        log_interval = 50
+        stagnation_thresh = 0.1
+
         # Warm-start controls (B, H, cdim)
         warm = torch.zeros(B, H, cdim, device=self.device)
 
@@ -445,13 +527,94 @@ class MPCTerminalController13D(Docking13DControllerMixin):
 
             phase_buf[step] = torch.where(in_brt, 2, 1).cpu()
 
+            # --- Per-IC stagnation check (every log_interval steps) ---
+            if step % log_interval == 0:
+                with torch.no_grad():
+                    dists = torch.norm(
+                        states[:, :3], dim=-1).cpu().numpy()
+
+                active_np = active.cpu().numpy()
+                for i in range(B):
+                    if not active_np[i]:
+                        continue
+                    if first_log[i]:
+                        first_log[i] = False
+                        prev_log_dist[i] = dists[i]
+                        continue
+
+                    d_dist = prev_log_dist[i] - dists[i]
+
+                    if d_dist >= stagnation_thresh:
+                        # Making progress — check if escaped
+                        if (control_mode[i] != MODE_NORMAL
+                                and mode_entry_dist[i] != np.inf):
+                            if (mode_entry_dist[i] - dists[i]
+                                    >= self.escape_thresh):
+                                control_mode[i] = MODE_NORMAL
+                                goal_weights_np[i] = self._goal_weight
+                                stagnation_count[i] = 0
+                    else:
+                        # Stagnating
+                        stagnation_count[i] += 1
+                        if control_mode[i] == MODE_NORMAL:
+                            control_mode[i] = MODE_EXPLORING
+                            goal_weights_np[i] = 0.1
+                            mode_entry_dist[i] = dists[i]
+                        elif control_mode[i] == MODE_EXPLORING:
+                            goal_weights_np[i] = min(
+                                goal_weights_np[i]
+                                * self.exploration_factor_setting, 1.0)
+                            if (stagnation_count[i]
+                                    >= self.exploration_patience):
+                                control_mode[i] = MODE_FALLBACK
+
+                    prev_log_dist[i] = dists[i]
+
+                # Print batch stagnation summary
+                n_a = int(active_np.sum())
+                n_exploring = int(
+                    (control_mode[active_np] == MODE_EXPLORING).sum())
+                n_fallback = int(
+                    (control_mode[active_np] == MODE_FALLBACK).sum())
+                n_d = int(docked.sum().item())
+                n_c = int(collided.sum().item())
+                n_p2 = int(in_brt.sum().item())
+                print(f'  [Batch MPC+T] step={step} '
+                      f't={step*self.dt:.1f}s  '
+                      f'active={n_a} docked={n_d} coll={n_c} '
+                      f'phase2={n_p2} '
+                      f'exploring={n_exploring} '
+                      f'fallback={n_fallback}')
+
+            # --- Near-obstacle check (batch) ---
+            with torch.no_grad():
+                avoid_vals = self.dynamics.avoid_fn(states)
+                near_obstacle_mask = (avoid_vals < 1.0)  # proximity margin
+
+            # --- Build per-IC goal weights and cost function ---
+            goal_weights_t = torch.tensor(
+                goal_weights_np, dtype=torch.float32,
+                device=self.device)
+
+            cost_fn = self._build_batch_cost_fn(
+                t_queries, goal_weights=goal_weights_t,
+                near_obstacle_mask=near_obstacle_mask)
+
             # --- MPC optimisation (all ICs simultaneously) ---
-            cost_fn = self._build_batch_cost_fn(t_queries)
             best_controls, best_costs, _ = self.gradient_mpc.batch_optimize(
                 states, cost_fn, warm)
 
             controls = best_controls[:, 0, :]
             controls = controls * active.unsqueeze(-1).float()
+
+            # --- Override controls for BRT_FALLBACK ICs ---
+            fallback_mask = (torch.tensor(
+                control_mode == MODE_FALLBACK,
+                device=self.device) & active)
+            if fallback_mask.any():
+                fb_controls = self._batch_compute_brt_control_batch(
+                    states[fallback_mask], t_queries[fallback_mask])
+                controls[fallback_mask] = fb_controls
 
             # --- Safety filter (phase-aware per-IC margin, no-op when mode=0) ---
             sf_margins = torch.where(
@@ -503,14 +666,6 @@ class MPCTerminalController13D(Docking13DControllerMixin):
                 best_controls[:, 1:, :].detach(),
                 torch.zeros(B, 1, cdim, device=self.device),
             ], dim=1)
-
-            if step % 50 == 0:
-                n_a = int(active.sum().item())
-                n_d = int(docked.sum().item())
-                n_c = int(collided.sum().item())
-                n_p2 = int(in_brt.sum().item())
-                print(f'  [Batch MPC+T] step={step} t={step*self.dt:.1f}s  '
-                      f'active={n_a} docked={n_d} coll={n_c} phase2={n_p2}')
 
         wall_time = time.perf_counter() - t_wall_start
 

@@ -284,8 +284,9 @@ def compute_metrics(all_results):
     timeouts   = n - dockings - failures
     times      = [r['wall_time'] for r in all_results]
 
-    # Control effort only for successful (docking) trajectories
+    # Control effort and docking time — only for successful (docking) runs
     docking_efforts = [r['control_effort'] for r in all_results if r['success']]
+    docking_times = [r['times'][-1] for r in all_results if r['success']]
 
     total_clipped = sum(r.get('n_clipped_steps', 0) for r in all_results)
     n_with_clipping = sum(1 for r in all_results
@@ -299,6 +300,9 @@ def compute_metrics(all_results):
         'mean_control_effort':  float(np.mean(docking_efforts)) if docking_efforts else 0.0,
         'std_control_effort':   float(np.std(docking_efforts)) if docking_efforts else 0.0,
         'n_docking_effort':     len(docking_efforts),
+        'mean_dock_time':       float(np.mean(docking_times)) if docking_times else 0.0,
+        'median_dock_time':     float(np.median(docking_times)) if docking_times else 0.0,
+        'std_dock_time':        float(np.std(docking_times)) if docking_times else 0.0,
         'mean_wall_time':       float(np.mean(times)),
         'std_wall_time':        float(np.std(times)),
         'total_clipped_steps':  total_clipped,
@@ -352,11 +356,15 @@ def compute_docking_optimality(all_results, controller_names):
     if len(common_idxs) == 0:
         return result
 
-    # Gather docking times on the common set
+    # Gather docking times and wall times on the common set
     dock_times = {}
+    wall_times = {}
     for name in names:
         dock_times[name] = np.array([
             all_results[name][i]['times'][-1] for i in common_idxs
+        ])
+        wall_times[name] = np.array([
+            all_results[name][i]['wall_time'] for i in common_idxs
         ])
 
     # Baseline for time-ratio computation (first controller)
@@ -365,6 +373,7 @@ def compute_docking_optimality(all_results, controller_names):
 
     for name in names:
         t = dock_times[name]
+        w = wall_times[name]
         # Per-IC ratio relative to baseline
         with np.errstate(divide='ignore', invalid='ignore'):
             ratios = np.where(baseline_times > 0, t / baseline_times, 1.0)
@@ -375,6 +384,8 @@ def compute_docking_optimality(all_results, controller_names):
             'mean_dock_time': float(np.mean(t)),
             'std_dock_time': float(np.std(t)),
             'geo_mean_ratio': geo_mean_ratio,
+            'mean_wall_time': float(np.mean(w)),
+            'std_wall_time': float(np.std(w)),
         }
 
     # Head-to-head win rates
@@ -479,7 +490,7 @@ def print_comparison_table(metrics_by_controller):
 
 
 def plot_metrics_bar(metrics_by_controller, save_path=None, optimality=None):
-    """Grouped bar chart of comparison metrics."""
+    """Grouped bar chart of comparison metrics (always 4 panels)."""
     names = list(metrics_by_controller.keys())
     n_ctrl = len(names)
 
@@ -487,11 +498,10 @@ def plot_metrics_bar(metrics_by_controller, save_path=None, optimality=None):
     colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brat'), '#1f77b4')
               for n in names]
 
-    n_panels = 4 if (optimality and optimality['common_n'] > 0) else 3
-    fig, axes = plt.subplots(1, n_panels, figsize=(5.5 * n_panels, 5.5))
+    fig, axes = plt.subplots(1, 4, figsize=(22, 5.5))
     x = np.arange(n_ctrl)
 
-    # Rates
+    # Panel 1 — Rates
     w = 0.25
     axes[0].bar(x - w,
                 [metrics_by_controller[n]['docking_rate'] * 100 for n in names],
@@ -510,60 +520,90 @@ def plot_metrics_bar(metrics_by_controller, save_path=None, optimality=None):
     axes[0].set_ylim([0, 105])
     axes[0].grid(axis='y', alpha=0.3)
 
-    # Control effort (docking trajectories only)
+    # Panel 2 — Control effort (docking trajectories only)
     means = [metrics_by_controller[n]['mean_control_effort'] for n in names]
     stds  = [metrics_by_controller[n]['std_control_effort']  for n in names]
-    bars = axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+    axes[1].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
     axes[1].set_ylabel('Control Effort')
     axes[1].set_title('Mean Control Effort (Docking Only)')
     axes[1].grid(axis='y', alpha=0.3)
-    # Annotate bars with count of docking runs
     for i, n in enumerate(names):
         n_dock = metrics_by_controller[n].get('n_docking_effort', 0)
         n_total = metrics_by_controller[n]['n']
         if n_dock > 0:
-            axes[1].text(i, means[i] + stds[i] + 0.02 * max(means),
+            axes[1].text(i, means[i] + stds[i] + 0.02 * max(max(means), 1),
                          f'n={n_dock}/{n_total}', ha='center', va='bottom',
                          fontsize=7)
 
-    # Runtime
-    means = [metrics_by_controller[n]['mean_wall_time'] for n in names]
-    stds  = [metrics_by_controller[n]['std_wall_time']  for n in names]
-    axes[2].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+    # Common-success set availability (used by Panels 3 & 4)
+    has_opt = optimality and optimality['common_n'] > 0
+
+    # Panel 3 — Computation wall time (common-success set when available)
+    if has_opt:
+        pc = optimality['per_controller']
+        common_n = optimality['common_n']
+        total_n = optimality['total_n']
+        means = [pc[n]['mean_wall_time'] if n in pc else 0.0 for n in names]
+        stds  = [pc[n]['std_wall_time']  if n in pc else 0.0 for n in names]
+        axes[2].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+        axes[2].set_title(f'Wall Time — Common Success Set (n={common_n}/{total_n})')
+    else:
+        means = [metrics_by_controller[n]['mean_wall_time'] for n in names]
+        stds  = [metrics_by_controller[n]['std_wall_time']  for n in names]
+        axes[2].bar(x, means, 0.5, yerr=stds, color=colors, capsize=5)
+        axes[2].set_title('Mean Computation Wall Time per Rollout')
     axes[2].set_xticks(x)
     axes[2].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
     axes[2].set_ylabel('Wall Time (s)')
-    axes[2].set_title('Mean Computation Wall Time per Rollout')
     axes[2].grid(axis='y', alpha=0.3)
 
-    # Docking-time optimality (common-success set)
-    if n_panels == 4:
+    # Panel 4 — Docking time (common-success set when available)
+    if has_opt:
         pc = optimality['per_controller']
-        opt_names = list(pc.keys())
-        medians = [pc[n]['median_dock_time'] for n in opt_names]
-        means   = [pc[n]['mean_dock_time']   for n in opt_names]
-        stds    = [pc[n]['std_dock_time']     for n in opt_names]
-        xo = np.arange(len(opt_names))
+        common_n = optimality['common_n']
+        total_n = optimality['total_n']
+        medians = [pc[n]['median_dock_time'] if n in pc else 0.0 for n in names]
+        means   = [pc[n]['mean_dock_time']   if n in pc else 0.0 for n in names]
+        stds    = [pc[n]['std_dock_time']     if n in pc else 0.0 for n in names]
         w = 0.3
-        axes[3].bar(xo - w/2, medians, w, label='Median', color='#66c2a5')
-        axes[3].bar(xo + w/2, means, w, yerr=stds, label='Mean ± std',
-                    color=colors[:len(opt_names)], capsize=5)
-        axes[3].set_xticks(xo)
-        axes[3].set_xticklabels(opt_names, fontsize=8, rotation=25, ha='right')
-        axes[3].set_ylabel('Docking Time (s)')
-        cn = optimality['common_n']
-        tn = optimality['total_n']
-        axes[3].set_title(f'Docking Time (common set: {cn}/{tn} ICs)')
+        axes[3].bar(x - w/2, medians, w, label='Median', color='#66c2a5')
+        axes[3].bar(x + w/2, means, w, yerr=stds, label='Mean ± std',
+                    color=colors, capsize=5)
+        axes[3].set_title(f'Docking Time — Common Success Set (n={common_n}/{total_n})')
         axes[3].legend(fontsize=8)
-        axes[3].grid(axis='y', alpha=0.3)
         # Annotate with geo-mean ratio
-        for i, n in enumerate(opt_names):
-            r = pc[n]['geo_mean_ratio']
-            axes[3].text(i, means[i] + stds[i] + 0.02 * max(means),
-                         f'ratio={r:.3f}', ha='center', va='bottom',
-                         fontsize=7)
+        for i, n in enumerate(names):
+            if n in pc:
+                ratio_str = f'ratio={pc[n]["geo_mean_ratio"]:.3f}'
+                y_top = means[i] + stds[i]
+                axes[3].text(i, y_top + 0.02 * max(max(means), 1),
+                             ratio_str, ha='center', va='bottom', fontsize=7)
+    else:
+        # No common-success set — show per-controller info with "no data" markers
+        axes[3].set_title('Docking Time — No Common Success Set')
+        for i, n in enumerate(names):
+            n_dock = metrics_by_controller[n].get('n_docking_effort', 0)
+            n_total = metrics_by_controller[n]['n']
+            if n_dock > 0:
+                m = metrics_by_controller[n]
+                axes[3].bar(i, m['mean_dock_time'], 0.5, yerr=m['std_dock_time'],
+                            color=colors[i], capsize=5, alpha=0.4)
+                axes[3].text(i, m['mean_dock_time'] + m['std_dock_time']
+                             + 0.5, f'{n_dock}/{n_total} docked',
+                             ha='center', va='bottom', fontsize=7)
+            else:
+                # No successes — draw a prominent "no docking" marker
+                axes[3].bar(i, 0, 0.5, color='#d9d9d9', edgecolor='red',
+                            linewidth=2, hatch='///')
+                axes[3].text(i, 0.5, 'NO\nSUCCESS',
+                             ha='center', va='bottom', fontsize=9,
+                             fontweight='bold', color='red')
+    axes[3].set_xticks(x)
+    axes[3].set_xticklabels(names, fontsize=8, rotation=25, ha='right')
+    axes[3].set_ylabel('Docking Time (s)')
+    axes[3].grid(axis='y', alpha=0.3)
 
     plt.tight_layout()
     if save_path:
@@ -975,27 +1015,44 @@ def run_compare(args):
         print(f"Running {len(ics)} rollouts for {display}")
         print(f"{'=' * 60}")
 
-        results = []
         idx_w = len(str(len(ics)))  # width for index formatting
-        for i, ic in enumerate(ics):
-            result = ctrl.simulate_docking(ic, args.max_sim_time)
-            results.append(result)
 
-            # Per-rollout summary
-            fs = result['final_state']
-            theta_err = np.arctan2(np.sin(fs[4] - np.pi/2),
-                                   np.cos(fs[4] - np.pi/2))
-            if result['collision']:
-                outcome = 'COLLISION'
-            elif result['docked']:
-                outcome = 'DOCKED'
-            else:
-                outcome = 'TIMEOUT'
-            t_final = result['times'][-1]
-            print(f"  [{i+1:>{idx_w}}/{len(ics)}] {outcome:<10} "
-                  f"t={t_final:6.1f}s  "
-                  f"θ_err={np.degrees(theta_err):+7.2f}°  "
-                  f"effort={result['control_effort']:7.1f}")
+        # Use batch simulation for MPC controllers when available
+        if hasattr(ctrl, 'simulate_docking_batch'):
+            results = ctrl.simulate_docking_batch(
+                ics, max_sim_time=args.max_sim_time)
+            for i, result in enumerate(results):
+                if result['collision']:
+                    outcome = 'COLLISION'
+                elif result['docked']:
+                    outcome = 'DOCKED'
+                else:
+                    outcome = 'TIMEOUT'
+                t_final = result['times'][-1]
+                print(f"  [{i+1:>{idx_w}}/{len(ics)}] {outcome:<10} "
+                      f"t={t_final:6.1f}s  "
+                      f"effort={result['control_effort']:7.1f}")
+        else:
+            results = []
+            for i, ic in enumerate(ics):
+                result = ctrl.simulate_docking(ic, args.max_sim_time)
+                results.append(result)
+
+                # Per-rollout summary
+                fs = result['final_state']
+                theta_err = np.arctan2(np.sin(fs[4] - np.pi/2),
+                                       np.cos(fs[4] - np.pi/2))
+                if result['collision']:
+                    outcome = 'COLLISION'
+                elif result['docked']:
+                    outcome = 'DOCKED'
+                else:
+                    outcome = 'TIMEOUT'
+                t_final = result['times'][-1]
+                print(f"  [{i+1:>{idx_w}}/{len(ics)}] {outcome:<10} "
+                      f"t={t_final:6.1f}s  "
+                      f"θ_err={np.degrees(theta_err):+7.2f}°  "
+                      f"effort={result['control_effort']:7.1f}")
 
         all_results[ctrl_name] = results
         m = compute_metrics(results)

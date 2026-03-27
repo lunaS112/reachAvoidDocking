@@ -288,6 +288,177 @@ class MPCController:
         return result
 
     # ------------------------------------------------------------------
+    # Batched simulation
+    # ------------------------------------------------------------------
+
+    def simulate_docking_batch(self, initial_states_np, max_sim_time):
+        """Run docking simulations for multiple ICs in parallel on GPU.
+
+        Uses batch_optimize to process all ICs simultaneously each step,
+        giving a large speedup over sequential simulate_docking calls.
+
+        Args:
+            initial_states_np: (B, 6) numpy array of initial conditions.
+            max_sim_time: Maximum simulation time (seconds).
+
+        Returns:
+            list of B result dicts (same format as simulate_docking).
+        """
+        B = len(initial_states_np)
+        num_steps = int(max_sim_time / self.dt) + 1
+        cdim = 3  # 6D control dim
+        H = self.planning_horizon_steps
+
+        t_wall_start = time.perf_counter()
+
+        states = torch.tensor(
+            initial_states_np, dtype=torch.float32, device=self.device)
+
+        # Cache state test range for batch wrapping
+        sr = self.dynamics.state_test_range()
+
+        # Pre-allocate storage (timestep-major)
+        state_buf = torch.zeros(num_steps, B, 6)
+        ctrl_buf = torch.zeros(num_steps, B, cdim)
+        cost_buf = torch.zeros(num_steps, B)
+        sf_active_buf = torch.zeros(num_steps, B, dtype=torch.bool)
+
+        # Per-IC tracking
+        active = torch.ones(B, dtype=torch.bool, device=self.device)
+        docked = torch.zeros(B, dtype=torch.bool, device=self.device)
+        collided = torch.zeros(B, dtype=torch.bool, device=self.device)
+        dock_step = torch.full((B,), num_steps, dtype=torch.long,
+                               device=self.device)
+        final_step = torch.zeros(B, dtype=torch.long, device=self.device)
+        post_dock_steps = int(1.0 / self.dt)
+
+        # Per-IC wall time
+        ic_wall_time = np.zeros(B, dtype=np.float64)
+        ic_terminated = np.zeros(B, dtype=bool)
+
+        # Warm-start controls (B, H, cdim)
+        warm = torch.zeros(B, H, cdim, device=self.device)
+
+        cost_fn = self._build_cost_fn()
+
+        for step in range(num_steps):
+            # Coast check
+            coast_done = docked & ((step - dock_step) >= post_dock_steps)
+            active = active & ~coast_done & ~collided
+
+            if not active.any():
+                break
+
+            # Record state
+            state_buf[step] = states.detach().cpu()
+            final_step[active] = step
+
+            # --- MPC optimisation (all ICs simultaneously) ---
+            best_controls, best_costs, _ = self.gradient_mpc.batch_optimize(
+                states, cost_fn, warm)
+
+            controls = best_controls[:, 0, :]  # (B, cdim)
+            controls = controls * active.unsqueeze(-1).float()
+
+            # --- Safety filter (vectorised, no-op when mode=0) ---
+            controls, sf_active_step = self.safety_filter.batch_apply(
+                states, controls, active_mask=active)
+            sf_active_buf[step] = sf_active_step.cpu()
+
+            ctrl_buf[step] = controls.detach().cpu()
+            cost_buf[step] = best_costs.detach().cpu()
+
+            # --- Termination checks ---
+            with torch.no_grad():
+                # Docking: reach_fn <= 0
+                reach_vals = self.dynamics.reach_fn(states)
+                newly_docked = active & ~docked & (reach_vals <= 0)
+                docked = docked | newly_docked
+                dock_step = torch.where(
+                    newly_docked,
+                    torch.tensor(step, device=self.device),
+                    dock_step)
+
+                # Collision: oriented 4-corner box
+                coll_mask = _batch_check_collision_6d(states, self.dynamics)
+                newly_collided = active & ~docked & coll_mask
+                collided = collided | newly_collided
+
+            # Record wall time for ICs that just terminated
+            _now = time.perf_counter() - t_wall_start
+            newly_done = (newly_docked | newly_collided).cpu().numpy()
+            for idx in np.where(newly_done & ~ic_terminated)[0]:
+                ic_wall_time[idx] = _now
+                ic_terminated[idx] = True
+
+            # --- Euler integration ---
+            with torch.no_grad():
+                state_dot = self.dynamics.dsdt(states, controls, None)
+                states = states + self.dt * state_dot
+                states = _batch_wrap_state_6d(states, sr)
+
+            # Shift warm-start
+            warm = torch.cat([
+                best_controls[:, 1:, :].detach(),
+                torch.zeros(B, 1, cdim, device=self.device),
+            ], dim=1)
+
+            if step % 50 == 0:
+                n_a = int(active.sum().item())
+                n_d = int(docked.sum().item())
+                n_c = int(collided.sum().item())
+                print(f'  [Batch MPC] step={step} t={step*self.dt:.1f}s  '
+                      f'active={n_a} docked={n_d} coll={n_c}')
+
+        wall_time = time.perf_counter() - t_wall_start
+
+        # Assign wall time for ICs that never terminated (timed out)
+        ic_wall_time[~ic_terminated] = wall_time
+
+        # --- Build per-IC result dicts ---
+        docked_np = docked.cpu().numpy()
+        collided_np = collided.cpu().numpy()
+        final_step_np = final_step.cpu().numpy()
+        sf_active_np = sf_active_buf.numpy()
+
+        results = []
+        for i in range(B):
+            n = int(final_step_np[i]) + 1
+            traj_i = state_buf[:n, i].numpy()
+            ctrl_i = ctrl_buf[:n, i].numpy()
+            cost_i = cost_buf[:n, i].numpy()
+            times_i = np.arange(n) * self.dt
+            sf_i = sf_active_np[:n, i]
+
+            effort = float(np.sum(np.linalg.norm(ctrl_i, axis=-1)) * self.dt)
+
+            sf_log_i = [{'filter_active': bool(sf_i[s])} for s in range(n)]
+
+            results.append({
+                'trajectory': traj_i,
+                'controls': ctrl_i,
+                'values': cost_i,
+                'times': times_i,
+                'success': bool(docked_np[i] and not collided_np[i]),
+                'collision': bool(collided_np[i]),
+                'docked': bool(docked_np[i]),
+                'final_state': traj_i[-1],
+                'controller_type': 'mpc',
+                'control_effort': effort,
+                'wall_time': float(ic_wall_time[i]),
+                'safety_filter_mode': self.safety_filter.mode,
+                'safety_filter_log': sf_log_i,
+                'n_clipped_steps': 0,
+            })
+
+        mean_ic_wall = float(np.mean(ic_wall_time))
+        print(f'  [Batch MPC] Done: {B} ICs in {wall_time:.1f}s '
+              f'(mean {mean_ic_wall:.2f}s/IC)  '
+              f'dock={int(docked_np.sum())} coll={int(collided_np.sum())}')
+
+        return results
+
+    # ------------------------------------------------------------------
     # Core MPC logic (gradient-based)
     # ------------------------------------------------------------------
 
@@ -341,3 +512,69 @@ class MPCController:
     def _check_collision(self, state):
         """Orientation-aware collision check (actual chaser corners)."""
         return self.dynamics.check_collision_oriented(state)
+
+
+# ------------------------------------------------------------------
+# Module-level helpers for 6D batch simulation
+# ------------------------------------------------------------------
+
+def _batch_wrap_state_6d(states, sr):
+    """Wrap theta and clamp velocities for (B, 6) tensor.
+
+    Args:
+        states: (B, 6) tensor on device.
+        sr: state_test_range() list — sr[i] = (lo, hi).
+    Returns:
+        (B, 6) wrapped tensor.
+    """
+    return torch.stack([
+        states[:, 0],
+        states[:, 1],
+        torch.clamp(states[:, 2], sr[2][0], sr[2][1]),
+        torch.clamp(states[:, 3], sr[3][0], sr[3][1]),
+        torch.atan2(torch.sin(states[:, 4]), torch.cos(states[:, 4])),
+        torch.clamp(states[:, 5], sr[5][0], sr[5][1]),
+    ], dim=-1)
+
+
+def _batch_check_collision_6d(states, dynamics):
+    """Vectorised 4-corner oriented box collision check for 6D.
+
+    Args:
+        states: (B, 6) tensor on device.
+        dynamics: Docking6D instance.
+    Returns:
+        (B,) bool tensor — True where any chaser corner is inside obstacle.
+    """
+    px = states[:, 0]
+    py = states[:, 1]
+    theta = states[:, 4]
+    cos_t = torch.cos(theta)
+    sin_t = torch.sin(theta)
+    hw = dynamics.w_c / 2.0
+    hh = dynamics.h_c / 2.0
+
+    # 4 corners in world frame: (B, 4)
+    cx = torch.stack([
+        px + hw * cos_t - hh * sin_t,
+        px - hw * cos_t - hh * sin_t,
+        px - hw * cos_t + hh * sin_t,
+        px + hw * cos_t + hh * sin_t,
+    ], dim=-1)
+    cy = torch.stack([
+        py + hw * sin_t + hh * cos_t,
+        py - hw * sin_t + hh * cos_t,
+        py - hw * sin_t - hh * cos_t,
+        py + hw * sin_t - hh * cos_t,
+    ], dim=-1)
+
+    # Target body (y in [0, h_t])
+    half_w = dynamics.w_t / 2.0
+    in_body = ((torch.abs(cx) <= half_w)
+               & (cy >= 0) & (cy <= dynamics.h_t))
+
+    # Docking post (y in [-post_length, 0])
+    in_post = ((torch.abs(cx) <= dynamics.post_hw_x)
+               & (cy >= -dynamics.post_length) & (cy <= 0))
+
+    return (in_body | in_post).any(dim=-1)  # (B,)

@@ -340,7 +340,7 @@ class SafetyFilter:
         Only supports mode 1.  Mode 0 returns controls unchanged.
 
         Args:
-            states:      (B, 13) torch tensor on device.
+            states:      (B, state_dim) torch tensor on device (6D or 13D).
             controls:    (B, cdim) torch tensor on device.
             active_mask: (B,) bool torch tensor — only process active ICs.
                          None → process all.
@@ -412,14 +412,37 @@ class SafetyFilter:
         dvds = dv[:, 1:].detach()                                # (No, 13)
 
         # --- Batch bang-bang safety control ------------------------------ #
-        u_safety = self._batch_compute_safety_control_13d(
-            dvds, ovr_states)                                    # (No, 6)
+        if self._is_13d:
+            u_safety = self._batch_compute_safety_control_13d(
+                dvds, ovr_states)                                # (No, 6)
+        else:
+            u_safety = self._batch_compute_safety_control_6d(
+                dvds, ovr_states)                                # (No, 3)
 
         # Replace controls for overridden ICs
         filtered = controls.clone()
         filtered[override_global] = u_safety.to(controls.dtype)
 
         return filtered, filter_active
+
+    def _batch_compute_safety_control_6d(self, dvds, states):
+        """Batched 6D bang-bang safety control (maximise V_avoid).
+
+        Args:
+            dvds:   (N, 6) gradient tensor on device.
+            states: (N, 6) state tensor on device (unused, kept for API parity).
+
+        Returns:
+            (N, 3) safety control tensor on device.
+        """
+        u_bar = self.avoid_dynamics.u_bar
+        u_theta_bar = self.avoid_dynamics.u_theta_bar
+
+        u_x = torch.where(dvds[:, 2] > 0, u_bar, -u_bar)
+        u_y = torch.where(dvds[:, 3] > 0, u_bar, -u_bar)
+        u_theta = torch.where(dvds[:, 5] > 0, u_theta_bar, -u_theta_bar)
+
+        return torch.stack([u_x, u_y, u_theta], dim=-1)  # (N, 3)
 
     def _batch_compute_safety_control_13d(self, dvds, states):
         """Batched 13D bang-bang safety control (maximise V_avoid).

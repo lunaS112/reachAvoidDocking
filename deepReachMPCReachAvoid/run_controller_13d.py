@@ -209,9 +209,21 @@ def build_controller(name, args):
 #  Initial-condition sampling
 # ------------------------------------------------------------------ #
 
+# Fixed IC that is always used as the first rollout in comparisons.
+FIXED_IC_13D = np.array([
+    10.0, -5.0, 2.0,          # position
+    0.0,   0.0, 0.0,          # velocity
+    0.7071, 0.0, 0.0, 0.7071, # quaternion (90° yaw)
+    0.0,   0.0, 0.0,          # angular velocity
+])
+
+
 def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
                               value_filter_fn=None):
     """Sample *n* valid 13D initial conditions.
+
+    The first IC is always the fixed reference state
+    (:data:`FIXED_IC_13D`).  The remaining *n − 1* are randomly sampled.
 
     Filters out states that are already docked (reach_fn <= 0) or
     inside the failure set (avoid_fn <= 0).
@@ -232,6 +244,12 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
             kept (inside the BRAT).  ``None`` disables this filter.
     """
     rng = np.random.RandomState(seed)
+
+    # --- Fixed first IC ------------------------------------------------ #
+    samples = [FIXED_IC_13D.copy()]
+    n_random = n - 1
+    if n_random <= 0:
+        return np.array(samples[:n])
 
     # Sampling bounds: subset of training range
     dyn_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
@@ -264,14 +282,13 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
         sample_hi[10:13] = np.minimum(sample_hi[10:13],  0.3)
         quat_sigma = None  # uniform on S^3
 
-    samples = []
     attempts = 0
-    max_attempts = n * 5000 if value_filter_fn is not None else n * 500
+    max_attempts = n_random * 5000 if value_filter_fn is not None else n_random * 500
     n_rejected_geom = 0
     n_rejected_brt  = 0
 
     while len(samples) < n and attempts < max_attempts:
-        batch_size = min(n * 10, 5000)
+        batch_size = min(n_random * 10, 5000)
 
         # Uniform sample for non-quaternion states
         batch = rng.uniform(sample_lo, sample_hi, size=(batch_size, 13))
@@ -312,19 +329,21 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
 
     if len(samples) < n:
         print(f"  WARNING: only found {len(samples)}/{n} valid ICs "
+              f"(1 fixed + {len(samples)-1} random) "
               f"after {attempts:,} attempts.")
 
     total = attempts
+    n_random_found = len(samples) - 1  # exclude the fixed IC
     if value_filter_fn is not None:
-        accept_pct = 100 * len(samples) / max(total, 1)
-        print(f"  IC sampling: {total:,} checked | "
+        accept_pct = 100 * n_random_found / max(total, 1)
+        print(f"  IC sampling: 1 fixed + {total:,} checked | "
               f"{n_rejected_geom:,} reject(geom) | "
               f"{n_rejected_brt:,} reject(BRAT) | "
-              f"{len(samples)} accepted ({accept_pct:.2f}%)")
+              f"{n_random_found} random accepted ({accept_pct:.2f}%)")
     else:
-        print(f"  IC sampling: {total:,} checked | "
+        print(f"  IC sampling: 1 fixed + {total:,} checked | "
               f"{n_rejected_geom:,} reject(geom) | "
-              f"{len(samples)} accepted")
+              f"{n_random_found} random accepted")
 
     return np.array(samples[:n])
 
