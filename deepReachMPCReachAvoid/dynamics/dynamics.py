@@ -1051,8 +1051,9 @@ class Docking13D(Dynamics):
     # Fraction of state_range width used for Tier 4 broad uniform target sampling
     tier4_fraction = 0.15
 
-    def __init__(self, set_mode: str):
+    def __init__(self, set_mode: str, avoid_target_sampling: str = 'basic'):
         goal_state = None
+        self.avoid_target_sampling = avoid_target_sampling
 
         # Orbit / control bounds
         self.orbit_alt = 400  # km
@@ -1148,6 +1149,12 @@ class Docking13D(Dynamics):
             l_type = 'brt_hjivi'
         else:
             raise NotImplementedError(f"set_mode '{set_mode}' is not implemented for Docking13D")
+
+        valid_avoid_sampling = ('basic', 'boundary')
+        if avoid_target_sampling not in valid_avoid_sampling:
+            raise ValueError(
+                f"avoid_target_sampling must be one of {valid_avoid_sampling}, "
+                f"got '{avoid_target_sampling}'")
 
         # (HJ/DeepReach) ranges (ASSUMPTION: expand from planar; tune as needed)
         self.state_dim = 13
@@ -1392,6 +1399,137 @@ class Docking13D(Dynamics):
         q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
         return q
 
+    def _sample_avoid_boundary(self, num_samples):
+        """Multi-tier obstacle-boundary-focused sampling for avoid-only BRT training.
+
+        The basic avoid sampling uses a fixed 3m margin around the obstacle,
+        but the BRT boundary extends much further at high approach velocities
+        (stopping distance = v^2 / (2*a_max) ≈ 20m at v_max). This method
+        scales position coverage with velocity magnitude and emphasizes
+        high-energy approach states where the BRT is hardest to learn.
+
+        Tier 1 (15%): Near obstacle surface + high velocity/angular rate
+        Tier 2 (30%): Positions at physics-estimated stopping distance
+        Tier 3 (25%): Broad approach envelope, full velocity/rotation range
+        Tier 4 (30%): Full state space uniform coverage
+        """
+        num_samples = int(num_samples)
+        samples = torch.zeros(num_samples, self.state_dim)
+        sr = self.state_range_.cpu()
+        idx = 0
+
+        cb = self.chaser_buffer
+        a_max = self.F_bar / self.mc  # max linear deceleration (m/s^2)
+
+        # Inflated obstacle bounding box dimensions
+        obs_half_x = self.w_t / 2.0 + cb
+        obs_half_z = self.d_t / 2.0 + cb
+        obs_y_lo = -(self.post_length + cb)
+        obs_y_hi = self.h_t + cb
+
+        # Cap position margin so samples stay within state bounds
+        pos_bound = sr[0, 1].item()
+        max_margin = pos_bound - max(obs_half_x, abs(obs_y_lo), obs_y_hi, obs_half_z)
+
+        def _random_quat(n):
+            """Uniform random unit quaternions, canonical q0 >= 0."""
+            q = torch.randn(n, 4)
+            q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+            sign = torch.sign(q[:, 0:1])
+            sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+            return q * sign
+
+        def _pos_around_obstacle(n, margin):
+            """Uniform positions in a box [margin] meters around the inflated obstacle."""
+            x = torch.empty(n).uniform_(-(obs_half_x + margin), obs_half_x + margin)
+            y = torch.empty(n).uniform_(obs_y_lo - margin, obs_y_hi + margin)
+            z = torch.empty(n).uniform_(-(obs_half_z + margin), obs_half_z + margin)
+            return torch.stack([x, y, z], dim=-1)
+
+        def _velocity_with_mag(n, frac_lo, frac_hi):
+            """Velocity vectors with magnitude in [frac_lo, frac_hi] * v_max."""
+            mag = (frac_lo + (frac_hi - frac_lo) * torch.rand(n)) * self.v_max
+            d = torch.randn(n, 3)
+            d = d / (torch.norm(d, dim=-1, keepdim=True) + 1e-12)
+            return d * mag.unsqueeze(-1)
+
+        def _omega_with_mag(n, frac_lo, frac_hi):
+            """Angular rate vectors with magnitude in [frac_lo, frac_hi] * omega_max."""
+            mag = (frac_lo + (frac_hi - frac_lo) * torch.rand(n)) * self.omega_max
+            d = torch.randn(n, 3)
+            d = d / (torch.norm(d, dim=-1, keepdim=True) + 1e-12)
+            return d * mag.unsqueeze(-1)
+
+        def _uniform_dim(n, dim):
+            lo, hi = sr[dim]
+            return torch.empty(n).uniform_(lo.item(), hi.item())
+
+        # --- Tier 1 (15%): Near surface + high-energy approaches ---
+        # Close to obstacle with fast approach and high rotation; clearly
+        # inside the BRT — teaches the network to recognize dangerous states.
+        n1 = int(num_samples * 0.15)
+        samples[idx:idx+n1, 0:3] = _pos_around_obstacle(n1, margin=1.5)
+        samples[idx:idx+n1, 3:6] = _velocity_with_mag(n1, 0.5, 1.0)
+        samples[idx:idx+n1, 6:10] = _random_quat(n1)
+        samples[idx:idx+n1, 10:13] = _omega_with_mag(n1, 0.5, 1.0)
+        idx += n1
+
+        # --- Tier 2 (30%): Velocity-scaled stopping-distance region ---
+        # Position margin proportional to stopping distance v^2/(2*a_max),
+        # placing samples near where the BRT boundary should be for each velocity.
+        n2 = int(num_samples * 0.30)
+        vel = _velocity_with_mag(n2, 0.0, 1.0)
+        v_mag = torch.norm(vel, dim=-1)
+        stop_dist = v_mag ** 2 / (2.0 * a_max)
+        spread = 0.5 + torch.rand(n2)  # [0.5, 1.5]x spread
+        margin_per = torch.clamp(spread * stop_dist + cb, min=0.5, max=max_margin)
+        # Per-sample bounding box around obstacle
+        x_ext = obs_half_x + margin_per
+        z_ext = obs_half_z + margin_per
+        y_lo_ext = obs_y_lo - margin_per
+        y_hi_ext = obs_y_hi + margin_per
+        samples[idx:idx+n2, 0] = (2 * torch.rand(n2) - 1) * x_ext
+        samples[idx:idx+n2, 1] = y_lo_ext + torch.rand(n2) * (y_hi_ext - y_lo_ext)
+        samples[idx:idx+n2, 2] = (2 * torch.rand(n2) - 1) * z_ext
+        samples[idx:idx+n2, 3:6] = vel
+        samples[idx:idx+n2, 6:10] = _random_quat(n2)
+        for d in range(10, 13):
+            samples[idx:idx+n2, d] = _uniform_dim(n2, d)
+        idx += n2
+
+        # --- Tier 3 (25%): Broad approach envelope ---
+        # Covers the wider region where the BRT may extend at moderate velocities.
+        n3 = int(num_samples * 0.25)
+        broad_margin = min(self.v_max ** 2 / (2.0 * a_max) * 0.5, max_margin)
+        samples[idx:idx+n3, 0:3] = _pos_around_obstacle(n3, margin=broad_margin)
+        for d in range(3, 6):
+            samples[idx:idx+n3, d] = _uniform_dim(n3, d)
+        samples[idx:idx+n3, 6:10] = _random_quat(n3)
+        for d in range(10, 13):
+            samples[idx:idx+n3, d] = _uniform_dim(n3, d)
+        idx += n3
+
+        # --- Tier 4 (30%): Full state space ---
+        # Global coverage to maintain accuracy far from the obstacle.
+        n4 = num_samples - idx
+        for d in range(self.state_dim):
+            samples[idx:, d] = _uniform_dim(n4, d)
+        samples[idx:, 6:10] = _random_quat(n4)
+
+        # Final quaternion normalization and state-range clamping
+        q = samples[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        sign = torch.sign(q[:, 0:1])
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        samples[:, 6:10] = q * sign
+        for d in range(self.state_dim):
+            if 6 <= d <= 9:
+                continue
+            lo, hi = sr[d]
+            samples[:, d] = torch.clamp(samples[:, d], lo.item(), hi.item())
+
+        return samples
+
     def sample_target_state(self, num_samples):
         """Multi-scale target sampling concentrated near the goal region.
 
@@ -1406,6 +1544,9 @@ class Docking13D(Dynamics):
         num_samples = int(num_samples)
 
         if self.set_mode == 'avoid':
+            if self.avoid_target_sampling == 'boundary':
+                return self._sample_avoid_boundary(num_samples)
+            # Basic avoid sampling: uniform positions near obstacle, full-range dynamics
             samples = torch.zeros(num_samples, self.state_dim)
             margin = 3.0
             cb = self.chaser_buffer

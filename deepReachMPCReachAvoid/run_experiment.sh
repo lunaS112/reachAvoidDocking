@@ -87,11 +87,11 @@ python3 run_experiment.py --mode train --experiment_name Docking13D_RA --dynamic
  --use_wandb --wandb_project Docking13D_test_Fixed_GoalSet --wandb_name Docking13D_10s --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
 
 # Avoid formulation 13D
-python3 run_experiment.py --mode train --experiment_name Docking13D_Avoid --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 32500\
- --pretrain_iters 2000 --num_epochs 200000 --pause_epoch 3000  --counter_end 120000 --num_nl 512 --set_mode avoid --lr 1e-5 \
- --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 150 --num_MPC_data_samples 7500 --numpoints 65000 --mpc_ground_truth_frequency 0\
+python3 run_experiment.py --mode train --experiment_name Docking13D_avoid_HighSamp --dynamics_class Docking13D --tMax 10 --pretrain --num_target_samples 32500\
+ --pretrain_iters 2000 --num_epochs 200000 --pause_epoch 3000  --counter_end 120000 --num_nl 512 --set_mode avoid --lr 1e-5 --avoid_target_sampling boundary \
+ --num_iterative_refinement 10 --MPC_batch_size 1000 --num_MPC_batches 150 --num_MPC_data_samples 7500 --numpoints 75000 --mpc_ground_truth_frequency 0\
  --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability \
- --use_wandb --wandb_project Docking13D_final --wandb_name Docking13D_avoid --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
+ --use_wandb --wandb_project Docking13D_final --wandb_name Docking13D_avoid_HighSamp --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
 
 # 15s quick test (reduced MPC rollouts for faster iteration)
 python3 run_experiment.py --mode train --experiment_name Docking13D_RA_test_15s_fastish --dynamics_class Docking13D --tMax 15 --pretrain --pretrain_iters 1000 --num_epochs 130000 --pause_epochs 1000 --counter_end 100000 --num_nl 512 --set_mode reach_avoid --lr 2e-5 --num_iterative_refinement 10 --MPC_batch_size 1500 --num_MPC_batches 50 --num_MPC_data_samples 7500 --numpoints 50000 --MPC_style receding --MPC_receding_horizon 1 --MPC_dt 0.1 --deepReach_model exact --time_till_refinement 0.5 --cost_type reachability --use_wandb --wandb_project Docking13D --wandb_name Docking13D_test_15s_fastish --wandb_group Docking13D --wandb_entity santiagothorup-stanford-university
