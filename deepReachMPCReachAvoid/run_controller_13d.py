@@ -38,6 +38,8 @@ from utils.controllers.controller_animation_13d import ControllerAnimation13D
 from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation13D
 from utils.controllers.slice_gif_13d import SliceGIF13D
 from utils.controllers.combined_gif_13d import CombinedGIF13D
+from utils.controllers.velocity_slice_gif_13d import VelocitySliceGIF13D
+from utils.controllers.attitude_slice_gif_13d import AttitudeSliceGIF13D
 from utils.controllers.docking13d_mixin import _quat_error_angle_np
 from utils.controllers.static_plots_13d import (
     plot_trajectory_13d, plot_states_13d, plot_controls_13d,
@@ -53,6 +55,7 @@ CONTROLLER_LABELS = {
     'brt_13d':          'BRT 13D',
     'vanilla_brt_13d':  'Vanilla BRT 13D',
     'brt_safety_13d':   'BRT+Safety 13D',
+    'brt_pd_hybrid':    'BRT+PD Hybrid 13D',
     'mpc_13d':          'MPC 13D',
     'mpc_terminal_13d': 'MPC+Terminal 13D',
     'rl_13d':           'RL 13D (DDQN)',
@@ -136,13 +139,38 @@ def build_controller(name, args):
             device=args.device,
         )
     elif name == 'brt_safety_13d':
-        sf = _build_optional_safety_filter(args)
+        sf = SafetyFilter(
+            mode=args.safety_filter_mode,
+            checkpoint_path=args.safety_checkpoint_path,
+            tMax=args.safety_tMax,
+            margin=args.safety_filter_margin,
+            gamma=args.safety_filter_gamma,
+            device=args.device,
+        )
         return BRTController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
             device=args.device,
             safety_filter=sf,
+            pd_torque_proximity=getattr(args, 'pd_torque_proximity', 2.0),
+        )
+    elif name == 'brt_pd_hybrid':
+        sf = SafetyFilter(
+            mode=args.safety_filter_mode,
+            checkpoint_path=args.safety_checkpoint_path,
+            tMax=args.safety_tMax,
+            margin=args.safety_filter_margin,
+            gamma=args.safety_filter_gamma,
+            device=args.device,
+        )
+        return BRTController13D(
+            checkpoint_path=args.checkpoint_path,
+            tMax=args.tMax,
+            dt=args.dt,
+            device=args.device,
+            safety_filter=sf,
+            pd_torque_proximity=getattr(args, 'pd_torque_proximity', 2.0),
         )
     elif name == 'mpc_13d':
         sf = _build_optional_safety_filter(args,
@@ -740,11 +768,18 @@ def run_single(args):
 
     # ---- Choose initial condition ------------------------------------
     ic_source = 'cli'
-    if args.initial_state is not None:
+    ic_save_path = os.path.join(args.output_dir, 'last_ic.npy')
+    sampling = getattr(args, 'sampling_method', 'default')
+    if getattr(args, 'repeat', False):
+        assert os.path.exists(ic_save_path), \
+            f"--repeat: no saved IC found at {ic_save_path}"
+        initial_state = np.load(ic_save_path)
+        ic_source = 'repeat'
+    elif args.initial_state is not None:
         initial_state = np.array(json.loads(args.initial_state), dtype=np.float64)
         assert len(initial_state) == 13, \
             f"initial_state must be length 13, got {len(initial_state)}"
-    elif getattr(args, 'sampling_method', 'uniform') == 'brt':
+    elif sampling == 'brt':
         ic_source = 'brt'
         print(f"\n  Sampling 1 IC from BRAT  (tMax={args.tMax}s) ...")
         # Use the controller's own checkpoint for value queries
@@ -766,6 +801,15 @@ def run_single(args):
         initial_state = ics[0]
         v_val = value_filter_fn(initial_state[None])[0]
         print(f"  V(x, {args.tMax}) = {v_val:.4f}  (<= 0 ✓)")
+    elif sampling == 'random':
+        ic_source = 'random'
+        seed = getattr(args, 'seed', 42)
+        print(f"\n  Sampling 1 random IC outside failure set (seed={seed}) ...")
+        ics = sample_initial_conditions(
+            dynamics, 1, device=args.device, seed=seed,
+            value_filter_fn=None)
+        assert len(ics) == 1, "Failed to sample a valid IC"
+        initial_state = ics[0]
     else:
         ic_source = 'default'
         q_goal = dynamics.q_goal.cpu().numpy()
@@ -778,6 +822,7 @@ def run_single(args):
 
     print(f"\n  IC source : {ic_source}")
     print(f"  IC state  : {_fmt_state(initial_state)}")
+    np.save(ic_save_path, initial_state)
 
     # ---- Run simulation ----------------------------------------------
     result = controller.simulate_docking(
@@ -802,6 +847,12 @@ def run_single(args):
     print(f"  Final dist    : {final_dist:.4f} m")
     print(f"  Final quat err: {np.degrees(final_qerr):.2f} deg")
 
+    # PD torque summary
+    n_pd = result.get('n_pd_torque_steps', 0)
+    if n_pd > 0:
+        print(f"  PD torque steps: {n_pd}/{len(traj)} "
+              f"({100.0 * n_pd / max(len(traj), 1):.1f}%)")
+
     # Safety filter summary
     sf_log = result.get('safety_filter_log', [])
     if sf_log:
@@ -819,13 +870,13 @@ def run_single(args):
     print("  Generating static plots...")
     plot_trajectory_13d(
         result, dynamics,
-        os.path.join(args.output_dir, 'trajectory.png'))
+        os.path.join(args.output_dir, 'trajectory.svg'))
     plot_states_13d(
         result, dynamics,
-        os.path.join(args.output_dir, 'simulation_states.png'))
+        os.path.join(args.output_dir, 'simulation_states.svg'))
     plot_controls_13d(
         result, dynamics,
-        os.path.join(args.output_dir, 'simulation_controls.png'))
+        os.path.join(args.output_dir, 'simulation_controls.svg'))
 
     # ---- Animated visualisation (optional) ----------------------------
     if args.viz_html or args.viz_mp4:
@@ -875,6 +926,24 @@ def run_single(args):
             max_frames=args.viz_max_frames,
             resolution=getattr(args, 'viz_gif_resolution', 80),
             resolution_3d=min(30, getattr(args, 'viz_gif_resolution', 80) // 3),
+            fps=getattr(args, 'viz_gif_fps', 5),
+        )
+        # Velocity-space 3-panel GIF
+        vel_gif = VelocitySliceGIF13D(brt_viz_for_gif, dynamics)
+        vel_gif.generate(
+            result,
+            os.path.join(args.output_dir, 'brt_velocity.gif'),
+            max_frames=args.viz_max_frames,
+            resolution=getattr(args, 'viz_gif_resolution', 80),
+            fps=getattr(args, 'viz_gif_fps', 5),
+        )
+        # Attitude & angular-velocity 6-panel GIF
+        att_gif = AttitudeSliceGIF13D(brt_viz_for_gif, dynamics)
+        att_gif.generate(
+            result,
+            os.path.join(args.output_dir, 'brt_attitude.gif'),
+            max_frames=args.viz_max_frames,
+            resolution=getattr(args, 'viz_gif_resolution', 60),
             fps=getattr(args, 'viz_gif_fps', 5),
         )
 
@@ -1186,7 +1255,12 @@ def main():
     parent.add_argument('--safety_filter_gamma', type=float, default=0.2,
                         help='CBF decay rate for mode 2')
 
-    # MPC arguments (shared defaults)
+    # PD hybrid arguments
+    parent.add_argument('--pd_torque_proximity', type=float, default=2.0,
+                        help='Proximity multiplier for PD torque activation '
+                             '(brt_pd_hybrid only). Default: 2.0')
+
+    # MPC arguments 
     parent.add_argument('--planning_horizon', type=float, default=2.0)
     parent.add_argument('--mpc_dt', type=float, default=0.5)
     parent.add_argument('--effective_horizon', type=float, default=1.0)
@@ -1251,22 +1325,29 @@ def main():
     sp_single.add_argument('--controller', type=str, required=True,
                            choices=['brt_13d', 'vanilla_brt_13d',
                                     'brt_safety_13d',
+                                    'brt_pd_hybrid',
                                     'mpc_13d', 'mpc_terminal_13d',
                                     'rl_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
-    sp_single.add_argument('--sampling_method', type=str, default='uniform',
-                           choices=['uniform', 'brt'],
+    sp_single.add_argument('--sampling_method', type=str, default='default',
+                           choices=['default', 'random', 'brt'],
                            help='IC sampling method when --initial_state is '
-                                'not provided: "brt" ensures V(x,tMax)<=0')
+                                'not provided: "default" uses a hardcoded IC, '
+                                '"random" samples outside failure set, '
+                                '"brt" ensures V(x,tMax)<=0')
     sp_single.add_argument('--seed', type=int, default=42,
                            help='Random seed for IC sampling')
+    sp_single.add_argument('--repeat', action='store_true',
+                           help='Reuse the initial condition from the last '
+                                'single run (saved in output_dir/last_ic.npy)')
 
     # --- compare ----------------------------------------------------- #
     sp_compare = subparsers.add_parser('compare', parents=[parent])
     sp_compare.add_argument('--controllers', nargs='+', required=True,
                             choices=['brt_13d', 'vanilla_brt_13d',
                                      'brt_safety_13d',
+                                     'brt_pd_hybrid',
                                      'mpc_13d', 'mpc_terminal_13d',
                                      'rl_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)

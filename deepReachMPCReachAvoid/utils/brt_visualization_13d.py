@@ -700,6 +700,69 @@ class BRTVisualizer13D:
         return A, B, V, dVda, dVdb
 
     # ------------------------------------------------------------------ #
+    #  Generic 2D slice evaluation (arbitrary state indices)
+    # ------------------------------------------------------------------ #
+
+    def evaluate_brt_grid_2d_generic(
+        self,
+        base_state: np.ndarray,
+        time_query: float,
+        idx_a: int,
+        idx_b: int,
+        grid_bounds_2d: list,
+        resolution: int = 100,
+    ) -> tuple:
+        """Evaluate V over a 2D slice at arbitrary state indices.
+
+        Parameters
+        ----------
+        base_state    : (13,) array — all states start from here.
+        time_query    : scalar time for V query.
+        idx_a, idx_b  : state indices to sweep (0-12).
+        grid_bounds_2d: [(a_min, a_max), (b_min, b_max)].
+        resolution    : grid points per axis.
+
+        Returns
+        -------
+        A, B  : (res, res) meshgrid arrays.
+        V     : (res, res) value field.
+        dVda, dVdb : (res, res) gradients w.r.t. the swept axes.
+        """
+        a_vals = np.linspace(grid_bounds_2d[0][0], grid_bounds_2d[0][1],
+                             resolution)
+        b_vals = np.linspace(grid_bounds_2d[1][0], grid_bounds_2d[1][1],
+                             resolution)
+        A, B = np.meshgrid(a_vals, b_vals, indexing='ij')
+
+        N = resolution * resolution
+        states = np.tile(np.asarray(base_state, dtype=np.float32), (N, 1))
+        states[:, idx_a] = A.ravel()
+        states[:, idx_b] = B.ravel()
+
+        states_t = torch.tensor(states, dtype=torch.float32,
+                                device=self.device).requires_grad_(True)
+        time_col = torch.full((N, 1), time_query, dtype=torch.float32,
+                              device=self.device)
+        coords = torch.cat([time_col, states_t], dim=-1)
+        model_input = self.dynamics.coord_to_input(coords)
+        model_input.requires_grad_(True)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)
+        V_raw = self.dynamics.io_to_value(model_input, output)
+
+        grad_outputs = torch.ones_like(V_raw)
+        grads = torch.autograd.grad(V_raw, states_t,
+                                    grad_outputs=grad_outputs,
+                                    create_graph=False)[0]
+        dVda = grads[:, idx_a].detach().cpu().numpy().reshape(resolution,
+                                                               resolution)
+        dVdb = grads[:, idx_b].detach().cpu().numpy().reshape(resolution,
+                                                               resolution)
+        V = V_raw.detach().cpu().numpy().reshape(resolution, resolution)
+        return A, B, V, dVda, dVdb
+
+    # ------------------------------------------------------------------ #
     #  3D gradient evaluation (for Cone arrows in HTML animation)
     # ------------------------------------------------------------------ #
 

@@ -32,7 +32,7 @@ from utils.controllers.anim_utils import select_key_frames, get_t_queries
 from utils.controllers.slice_gif_13d import (
     _draw_target_on_slice, _rotation_text, _IDX_MAP, _AXIS_LABELS,
 )
-from utils.brt_visualization_13d import BRTVisualizer13D, compute_scene_limits
+from utils.brt_visualization_13d import BRTVisualizer13D
 
 
 class CombinedGIF13D:
@@ -53,19 +53,13 @@ class CombinedGIF13D:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _slice_extent(traj: np.ndarray, idx_a: int, idx_b: int,
-                      margin: float = 2.0, clamp: float = 12.0,
-                      context: float = 5.0):
-        """Return ``[(a_min, a_max), (b_min, b_max)]`` for a given plane."""
-        a_min = float(np.clip(traj[:, idx_a].min() - margin, -clamp, clamp))
-        a_max = float(np.clip(traj[:, idx_a].max() + margin, -clamp, clamp))
-        b_min = float(np.clip(traj[:, idx_b].min() - margin, -clamp, clamp))
-        b_max = float(np.clip(traj[:, idx_b].max() + margin, -clamp, clamp))
-        a_min = min(a_min, -context)
-        a_max = max(a_max, context)
-        b_min = min(b_min, -context)
-        b_max = max(b_max, context)
-        return [(a_min, a_max), (b_min, b_max)]
+    def _slice_extent(dynamics, idx_a: int, idx_b: int):
+        """Return ``[(a_min, a_max), (b_min, b_max)]`` from state space bounds."""
+        sr = dynamics.state_range_
+        if hasattr(sr, 'cpu'):
+            sr = sr.detach().cpu().numpy()
+        return [(float(sr[idx_a, 0]), float(sr[idx_a, 1])),
+                (float(sr[idx_b, 0]), float(sr[idx_b, 1]))]
 
     # ------------------------------------------------------------------ #
     #  Internal: draw one 2-D slice panel
@@ -175,15 +169,22 @@ class CombinedGIF13D:
         slice_bounds = {}
         for plane in planes:
             idx_a, idx_b, _ = _IDX_MAP[plane]
-            slice_bounds[plane] = self._slice_extent(traj, idx_a, idx_b)
+            slice_bounds[plane] = self._slice_extent(self.dynamics, idx_a, idx_b)
 
-        # Pre-compute 3-D grid bounds (unified across trajectory)
-        scene_lim = compute_scene_limits(traj, self.dynamics, padding=1.5)
+        # Pre-compute 3-D grid bounds from state space bounds
+        sr = self.dynamics.state_range_
+        if hasattr(sr, 'cpu'):
+            sr = sr.detach().cpu().numpy()
         grid_bounds_3d = [
-            (scene_lim['xlim'][0], scene_lim['xlim'][1]),
-            (scene_lim['ylim'][0], scene_lim['ylim'][1]),
-            (scene_lim['zlim'][0], scene_lim['zlim'][1]),
+            (float(sr[0, 0]), float(sr[0, 1])),
+            (float(sr[1, 0]), float(sr[1, 1])),
+            (float(sr[2, 0]), float(sr[2, 1])),
         ]
+        scene_lim = {
+            'xlim': grid_bounds_3d[0],
+            'ylim': grid_bounds_3d[1],
+            'zlim': grid_bounds_3d[2],
+        }
 
         # ---- Pre-evaluate all frames -------------------------------- #
         n_frames = len(key_idx)

@@ -755,6 +755,12 @@ class MPCTerminalController13D(Docking13DControllerMixin):
         prev_log_dist = None
         prev_log_V = None
 
+        # Per-component reach_fn tracking
+        reach_fn_comp_history = {
+            'position': [], 'vlat': [], 'vax': [],
+            'attitude': [], 'omega_py': [], 'omega_roll': [],
+        }
+
         for step in range(num_steps):
             sim_time = step * self.dt
 
@@ -785,6 +791,13 @@ class MPCTerminalController13D(Docking13DControllerMixin):
             self.value_history.append(cost_val)
             self.sim_time_history.append(sim_time)
 
+            # Record per-component reach_fn values
+            with torch.no_grad():
+                s_t = torch.tensor(state, dtype=torch.float32,
+                                   device=self.device)
+                comps = self.dynamics.reach_fn_components(s_t)
+                for k in reach_fn_comp_history:
+                    reach_fn_comp_history[k].append(float(comps[k]))
 
             # --- Periodic logging + graduated stagnation ---
             if step % log_interval == 0:
@@ -876,8 +889,15 @@ class MPCTerminalController13D(Docking13DControllerMixin):
             'control_effort': control_effort,
             'wall_time': wall_time,
             'brt_entry_time': self.brt_entry_time,
+<<<<<<< HEAD
             'safety_filter_mode': self.safety_filter.mode,
             'safety_filter_log': self.safety_filter.get_log(),
+=======
+            # --- per-component reach_fn breakdown ---
+            'reach_fn_components': {
+                k: np.array(v) for k, v in reach_fn_comp_history.items()
+            },
+>>>>>>> origin/main
         }
 
     # ------------------------------------------------------------------
