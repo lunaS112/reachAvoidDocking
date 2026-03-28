@@ -52,6 +52,9 @@ from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation1
 from utils.controllers.vanilla_brat_controller import VanillaBRATController
 from utils.controllers.vanilla_brt_controller_13d import VanillaBRTController13D
 
-# RL controllers
-from utils.controllers.rl_controller import RLController
-from utils.controllers.rl_controller_13d import RLController13D
+# RL controllers (optional — requires RARL package)
+try:
+    from utils.controllers.rl_controller import RLController
+    from utils.controllers.rl_controller_13d import RLController13D
+except ImportError:
+    pass

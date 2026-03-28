@@ -220,15 +220,12 @@ class MPCController13D(Docking13DControllerMixin):
             'controller_type': 'mpc_13d',
             'control_effort': control_effort,
             'wall_time': wall_time,
-<<<<<<< HEAD
             'safety_filter_mode': self.safety_filter.mode,
             'safety_filter_log': self.safety_filter.get_log(),
-=======
             # --- per-component reach_fn breakdown ---
             'reach_fn_components': {
                 k: np.array(v) for k, v in reach_fn_comp_history.items()
             },
->>>>>>> origin/main
         }
 
     # ------------------------------------------------------------------

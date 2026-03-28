@@ -598,57 +598,61 @@ def compute_all_brt_slices(mpc, dynamics_, device, T, resolution):
         }
     }
 
-def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution, 
+def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resolution,
                     T, save_def:pathlib, level_sets=[0.0, 0.3, 0.6]):
     import matplotlib.patches as patches
-    
+
     # Get pre-computed position BRT data
     position_costs = brt_data['position']['costs']
     x_min, x_max, y_min, y_max = brt_data['position']['coords']
     initial_condition_tensor = brt_data['position']['initial_conditions']
-    
-    # Get trajectories for interesting initial conditions
-    costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
-    state_trajs_np = state_trajs.detach().cpu().numpy()
-    
-    # Evaluate reach function for success determination
-    final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
-    reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
-    successful_dockings = reach_values <= 0
 
-    print("\n=== Position Plot: Final State Analysis ===")
-    print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
-    print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
-    print("-" * 105)
+    # Get trajectories for interesting initial conditions (if provided)
+    state_trajs_np = None
+    successful_dockings = None
+    n_trajs = 0
+    if interesting_ics_tensor is not None and len(interesting_ics_tensor) > 0:
+        costs, state_trajs, _, _ = mpc.get_batch_data(interesting_ics_tensor, T)
+        state_trajs_np = state_trajs.detach().cpu().numpy()
 
-    n_trajs = len(interesting_ics_tensor)
-    goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+        # Evaluate reach function for success determination
+        final_states_tensor = torch.tensor(state_trajs_np[:, -1, :]).to(mpc.device)
+        reach_values = mpc.dynamics_.reach_fn(final_states_tensor).detach().cpu().numpy()
+        successful_dockings = reach_values <= 0
 
-    for i in range(n_trajs):
-        final_state = state_trajs_np[i, -1, :]
-        px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
-        
-        # Compute errors from goal state
-        px_error = px_f - goal_state[0].item()
-        py_error = py_f - goal_state[1].item()
-        vx_error = vx_f - goal_state[2].item()
-        vy_error = vy_f - goal_state[3].item()
-        theta_error = theta_f - goal_state[4].item()
-        omega_error = omega_f - goal_state[5].item()
-        
-        # Compute distances (magnitudes)
-        pos_dist = np.sqrt(px_error**2 + py_error**2)
-        vel_dist = np.sqrt(vx_error**2 + vy_error**2)
-        theta_dist = abs(theta_error)
-        omega_dist = abs(omega_error)
-        
-        success_str = "Y" if successful_dockings[i] else "N"
-        print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
-            f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+        print("\n=== Position Plot: Final State Analysis ===")
+        print(f"{'Traj':<4} {'px_err':<8} {'py_err':<8} {'vx_err':<8} {'vy_err':<8} {'θ_err':<8} {'ω_err':<8} {'pos_dist':<9} {'vel_dist':<9} {'θ_dist':<8} {'ω_dist':<8} {'Success':<8}")
+        print(f"{'#':<4} {'(m)':<8} {'(m)':<8} {'(m/s)':<8} {'(m/s)':<8} {'(rad)':<8} {'(rad/s)':<8} {'(m)':<9} {'(m/s)':<9} {'(rad)':<8} {'(rad/s)':<8} {'(Y/N)':<8}")
+        print("-" * 105)
 
-    print("-" * 105)
-    print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
-    print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
+        n_trajs = len(interesting_ics_tensor)
+        goal_state = mpc.dynamics_.goal_state.to(mpc.device)
+
+        for i in range(n_trajs):
+            final_state = state_trajs_np[i, -1, :]
+            px_f, py_f, vx_f, vy_f, theta_f, omega_f = final_state
+
+            # Compute errors from goal state
+            px_error = px_f - goal_state[0].item()
+            py_error = py_f - goal_state[1].item()
+            vx_error = vx_f - goal_state[2].item()
+            vy_error = vy_f - goal_state[3].item()
+            theta_error = theta_f - goal_state[4].item()
+            omega_error = omega_f - goal_state[5].item()
+
+            # Compute distances (magnitudes)
+            pos_dist = np.sqrt(px_error**2 + py_error**2)
+            vel_dist = np.sqrt(vx_error**2 + vy_error**2)
+            theta_dist = abs(theta_error)
+            omega_dist = abs(omega_error)
+
+            success_str = "Y" if successful_dockings[i] else "N"
+            print(f"{i+1:<4} {px_error:<8.3f} {py_error:<8.3f} {vx_error:<8.3f} {vy_error:<8.3f} {theta_error:<8.3f} {omega_error:<8.3f} "
+                f"{pos_dist:<9.3f} {vel_dist:<9.3f} {theta_dist:<8.3f} {omega_dist:<8.3f} {success_str:<8}")
+
+        print("-" * 105)
+        print(f"Goal state: px={goal_state[0].item():.3f}, py={goal_state[1].item():.3f}, vx={goal_state[2].item():.3f}, vy={goal_state[3].item():.3f}, θ={goal_state[4].item():.3f}, ω={goal_state[5].item():.3f}")
+        print(f"Tolerances: pos={mpc.dynamics_.eps_p:.3f}m, vel={mpc.dynamics_.eps_v:.3f}m/s, theta={mpc.dynamics_.eps_theta:.3f}rad, omega={mpc.dynamics_.eps_omega:.3f}rad/s")
 
     # Prepare BRT data using pre-computed position costs
     BRT_img = position_costs.detach().cpu().numpy().reshape(x_resolution, y_resolution).T
@@ -674,54 +678,54 @@ def plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_resolution, y_resol
         'alpha': 0.7
     }
     im = ax.imshow(BRT_img, **imshow_kwargs)
-    
+
     # 2. Add level set contours
-    n_trajs = len(interesting_ics_tensor)
     level_colors = ['purple', 'blue', 'orange', 'cyan', 'magenta', 'yellow']
     level_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 5))]
-    
+
     level_set_handles = []
     for i, level in enumerate(level_sets):
         color = level_colors[i % len(level_colors)]
         style = level_styles[i % len(level_styles)]
-        
-        ax.contour(X, Y, BRT_img, levels=[level], colors=[color], 
+
+        ax.contour(X, Y, BRT_img, levels=[level], colors=[color],
                    linewidths=1.5, linestyles=style)
-        
+
         level_set_handles.append(
             mpatches.Patch(color=color, label=f'Level {level}')
         )
-    
-    # 3. Plot MPC trajectories
-    colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
+
+    # 3. Plot MPC trajectories (if provided)
     traj_handles = []
-    
-    for i in range(n_trajs):
-        px = state_trajs_np[i, :, 0]  # px trajectory
-        py = state_trajs_np[i, :, 1]  # py trajectory
+    if state_trajs_np is not None and n_trajs > 0:
+        colors = plt.cm.tab20(np.linspace(0, 1, n_trajs))
 
-        success_label = "Success" if successful_dockings[i] else "Failed"
+        for i in range(n_trajs):
+            px = state_trajs_np[i, :, 0]  # px trajectory
+            py = state_trajs_np[i, :, 1]  # py trajectory
 
-        line, = ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9, 
-               label=f'IC {i+1} ({success_label})')
-        traj_handles.append(line)
-        
-        # Add start and end markers
-        ax.scatter(px[0], py[0], color=colors[i], s=25, marker='o', 
-              edgecolors='black', linewidth=1, zorder=10)
-        ax.scatter(px[-1], py[-1], color=colors[i], s=25, marker='s', 
-              edgecolors='black', linewidth=1, zorder=10)
-        
-        # Add trajectory direction arrows
-        if len(px) > 1:
-            for frac in [0.25, 0.5, 0.75]:
-                idx = int(frac * (len(px) - 1))
-                if idx < len(px) - 1:
-                    dx = px[idx+1] - px[idx]
-                    dy = py[idx+1] - py[idx]
-                    ax.arrow(px[idx], py[idx], dx*0.3, dy*0.3, 
-                           head_width=0.05, head_length=0.03, 
-                           fc=colors[i], ec=colors[i], alpha=0.7)
+            success_label = "Success" if successful_dockings[i] else "Failed"
+
+            line, = ax.plot(px, py, color=colors[i], linewidth=1.5, alpha=0.9,
+                   label=f'IC {i+1} ({success_label})')
+            traj_handles.append(line)
+
+            # Add start and end markers
+            ax.scatter(px[0], py[0], color=colors[i], s=25, marker='o',
+                  edgecolors='black', linewidth=1, zorder=10)
+            ax.scatter(px[-1], py[-1], color=colors[i], s=25, marker='s',
+                  edgecolors='black', linewidth=1, zorder=10)
+
+            # Add trajectory direction arrows
+            if len(px) > 1:
+                for frac in [0.25, 0.5, 0.75]:
+                    idx = int(frac * (len(px) - 1))
+                    if idx < len(px) - 1:
+                        dx = px[idx+1] - px[idx]
+                        dy = py[idx+1] - py[idx]
+                        ax.arrow(px[idx], py[idx], dx*0.3, dy*0.3,
+                               head_width=0.05, head_length=0.03,
+                               fc=colors[i], ec=colors[i], alpha=0.7)
     
     # 4. Add target region visualization
     reach_value = mpc.dynamics_.reach_fn(initial_condition_tensor).detach().cpu().numpy().reshape(x_resolution, y_resolution).T
