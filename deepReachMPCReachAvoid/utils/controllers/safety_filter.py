@@ -331,6 +331,160 @@ class SafetyFilter:
         raise ValueError(f"Unknown safety filter mode {self.mode}")
 
     # ------------------------------------------------------------------
+    # Batched application (Mode 1 only, for GPU batch simulation)
+    # ------------------------------------------------------------------
+
+    def batch_apply(self, states, controls, active_mask=None, margins=None):
+        """Vectorised least-restrictive filter for a batch of states.
+
+        Only supports mode 1.  Mode 0 returns controls unchanged.
+
+        Args:
+            states:      (B, state_dim) torch tensor on device (6D or 13D).
+            controls:    (B, cdim) torch tensor on device.
+            active_mask: (B,) bool torch tensor — only process active ICs.
+                         None → process all.
+            margins:     (B,) float torch tensor — per-IC activation margin.
+                         None → use ``self.margin`` for all ICs.
+
+        Returns:
+            filtered_controls: (B, cdim) torch tensor.
+            filter_active:     (B,) bool torch tensor — True where filter fired.
+        """
+        B = states.shape[0]
+        device = states.device
+        filter_active = torch.zeros(B, dtype=torch.bool, device=device)
+
+        if self.mode == 0:
+            return controls, filter_active
+
+        if self.mode != 1:
+            raise NotImplementedError(
+                "batch_apply only supports mode 0 (disabled) and 1 "
+                f"(least-restrictive), got mode={self.mode}")
+
+        if active_mask is None:
+            active_mask = torch.ones(B, dtype=torch.bool, device=device)
+
+        active_idx = torch.where(active_mask)[0]
+        if len(active_idx) == 0:
+            return controls, filter_active
+
+        # --- Batch value query (no grad) -------------------------------- #
+        active_states = states[active_idx]                       # (Na, 13)
+        Na = active_states.shape[0]
+        time_col = torch.full(
+            (Na, 1), self.avoid_tMax, dtype=torch.float32, device=device)
+        coord = torch.cat([time_col, active_states.float()], dim=-1)
+        model_input = self.avoid_dynamics.coord_to_input(coord)
+
+        with torch.no_grad():
+            result = self.avoid_model({'coords': model_input})
+            output = result['model_out'].squeeze(-1)
+        V = self.avoid_dynamics.io_to_value(model_input, output)  # (Na,)
+
+        # --- Identify ICs that need safety override --------------------- #
+        if margins is not None:
+            active_margins = margins[active_idx]                 # (Na,)
+        else:
+            active_margins = torch.full((Na,), self.margin, device=device)
+        needs_override = V <= active_margins                     # (Na,)
+        if not needs_override.any():
+            return controls, filter_active
+
+        override_local = torch.where(needs_override)[0]          # indices in active_states
+        override_global = active_idx[override_local]              # indices in full batch
+        filter_active[override_global] = True
+
+        # --- Batch gradient query (requires grad) ----------------------- #
+        ovr_states = active_states[override_local]               # (No, 13)
+        No = ovr_states.shape[0]
+        time_col_o = torch.full(
+            (No, 1), self.avoid_tMax, dtype=torch.float32, device=device)
+        coord_o = torch.cat([time_col_o, ovr_states.float()], dim=-1)
+        model_input_o = self.avoid_dynamics.coord_to_input(coord_o)
+
+        result_o = self.avoid_model({'coords': model_input_o})
+        output_o = result_o['model_out'].squeeze(-1)
+        model_in_o = result_o['model_in']
+
+        dv = self.avoid_dynamics.io_to_dv(model_in_o, output_o)  # (No, 14)
+        dvds = dv[:, 1:].detach()                                # (No, 13)
+
+        # --- Batch bang-bang safety control ------------------------------ #
+        if self._is_13d:
+            u_safety = self._batch_compute_safety_control_13d(
+                dvds, ovr_states)                                # (No, 6)
+        else:
+            u_safety = self._batch_compute_safety_control_6d(
+                dvds, ovr_states)                                # (No, 3)
+
+        # Replace controls for overridden ICs
+        filtered = controls.clone()
+        filtered[override_global] = u_safety.to(controls.dtype)
+
+        return filtered, filter_active
+
+    def _batch_compute_safety_control_6d(self, dvds, states):
+        """Batched 6D bang-bang safety control (maximise V_avoid).
+
+        Args:
+            dvds:   (N, 6) gradient tensor on device.
+            states: (N, 6) state tensor on device (unused, kept for API parity).
+
+        Returns:
+            (N, 3) safety control tensor on device.
+        """
+        u_bar = self.avoid_dynamics.u_bar
+        u_theta_bar = self.avoid_dynamics.u_theta_bar
+
+        u_x = torch.where(dvds[:, 2] > 0, u_bar, -u_bar)
+        u_y = torch.where(dvds[:, 3] > 0, u_bar, -u_bar)
+        u_theta = torch.where(dvds[:, 5] > 0, u_theta_bar, -u_theta_bar)
+
+        return torch.stack([u_x, u_y, u_theta], dim=-1)  # (N, 3)
+
+    def _batch_compute_safety_control_13d(self, dvds, states):
+        """Batched 13D bang-bang safety control (maximise V_avoid).
+
+        Args:
+            dvds:   (N, 13) gradient tensor on device.
+            states: (N, 13) state tensor on device.
+
+        Returns:
+            (N, 6) safety control tensor on device.
+        """
+        device = states.device
+        q = states[:, 6:10]                                      # (N, 4)
+        q = q / (q.norm(dim=-1, keepdim=True) + 1e-12)
+
+        # Quaternion to rotation matrix (batched)
+        q0, q1, q2, q3 = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        R = torch.stack([
+            torch.stack([1 - 2*(q2*q2 + q3*q3), 2*(q1*q2 + q0*q3),     2*(q1*q3 - q0*q2)], dim=-1),
+            torch.stack([2*(q1*q2 - q0*q3),     1 - 2*(q1*q1 + q3*q3),  2*(q2*q3 + q0*q1)], dim=-1),
+            torch.stack([2*(q1*q3 + q0*q2),     2*(q2*q3 - q0*q1),      1 - 2*(q1*q1 + q2*q2)], dim=-1),
+        ], dim=-2)                                                # (N, 3, 3)
+
+        # Force: coeff_body = R @ p_v / mc
+        p_v = dvds[:, 3:6].unsqueeze(-1)                        # (N, 3, 1)
+        mc = self.avoid_dynamics.mc
+        coeff_body = (torch.bmm(R, p_v).squeeze(-1)) / mc       # (N, 3)
+        F_bar = self.avoid_dynamics.F_bar
+        F = torch.where(coeff_body > 0, F_bar, -F_bar)          # (N, 3)
+
+        # Torque: coeff_tau = I^{-T} @ p_omega
+        I_np = self.avoid_dynamics.I.detach().cpu().numpy()
+        I_inv_T = torch.tensor(
+            np.linalg.inv(I_np).T, dtype=torch.float32, device=device)
+        p_omega = dvds[:, 10:13]                                 # (N, 13→10:13)
+        coeff_tau = p_omega @ I_inv_T.T                          # (N, 3)
+        tau_bar = self.avoid_dynamics.tau_bar
+        tau = torch.where(coeff_tau > 0, tau_bar, -tau_bar)      # (N, 3)
+
+        return torch.cat([F, tau], dim=-1)                       # (N, 6)
+
+    # ------------------------------------------------------------------
     # Mode 1: Least-restrictive
     # ------------------------------------------------------------------
 

@@ -255,8 +255,13 @@ class BRATController:
         dv = self.dynamics.io_to_dv(model_in, output)
         
         # dv is [dvdt, dvds1, dvds2, ..., dvds6]
+        # Shape depends on deepReach_model type: 1D [7] for vanilla, 2D [1,7] for exact
         # Return only spatial gradients (dvds)
-        dvds = dv[0, 1:].detach().cpu().numpy()
+        dv = dv.detach().cpu()
+        if dv.dim() == 1:
+            dvds = dv[1:].numpy()
+        else:
+            dvds = dv[0, 1:].numpy()
         
         return dvds
     

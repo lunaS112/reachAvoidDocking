@@ -42,6 +42,21 @@ from utils.brt_visualization_13d import (
 # internal sub-traces, making a fixed count unreliable.
 
 
+def _contiguous_ranges(mask):
+    """Yield (start, end) index pairs for contiguous True runs in *mask*."""
+    if len(mask) == 0:
+        return
+    changes = np.diff(mask.astype(int))
+    starts = np.where(changes == 1)[0] + 1
+    ends = np.where(changes == -1)[0] + 1
+    if mask[0]:
+        starts = np.concatenate([[0], starts])
+    if mask[-1]:
+        ends = np.concatenate([ends, [len(mask)]])
+    for s, e in zip(starts, ends):
+        yield s, e
+
+
 class TrajectoryAnimation13D:
     """Trajectory-only animated output (no BRT grid evaluation).
 
@@ -79,6 +94,14 @@ class TrajectoryAnimation13D:
         times = result['times']
         key_idx = select_key_frames(len(traj), max_frames)
 
+        # Build per-step safety-filter-active mask
+        sf_log = result.get('safety_filter_log', [])
+        if sf_log:
+            safety_active = np.array([
+                e.get('filter_active', False) for e in sf_log], dtype=bool)
+        else:
+            safety_active = None
+
         scene_limits = compute_scene_limits(
             traj, self.dynamics, padding=1.5)
 
@@ -105,7 +128,8 @@ class TrajectoryAnimation13D:
             # Traces 8-9: Chaser orientation arrows
             add_chaser_axes_plotly(fig_tmp, self.dynamics, state)
             # Trace 10: Trajectory line
-            add_trajectory_plotly(fig_tmp, traj[:idx + 1])
+            add_trajectory_plotly(fig_tmp, traj[:idx + 1],
+                                 safety_active=safety_active)
 
             start_idx = len(all_traces)
             frame_trace_list = list(fig_tmp.data)
@@ -128,9 +152,13 @@ class TrajectoryAnimation13D:
             start, cnt = traces_per_frame[fi]
             for j in range(start, start + cnt):
                 vis[j] = True
+            title_parts = [f"t = {times[idx]:.1f}s"]
+            if safety_active is not None and idx < len(safety_active):
+                sf_str = '🔴 Safety Filter ACTIVE' if safety_active[idx] else '🟢 Nominal'
+                title_parts.append(sf_str)
             slider_steps.append(dict(
                 args=[{"visible": vis},
-                      {"title": f"t = {times[idx]:.1f}s"}],
+                      {"title": '  |  '.join(title_parts)}],
                 label=f"t={times[idx]:.1f}s",
                 method="update",
             ))
@@ -194,6 +222,14 @@ class TrajectoryAnimation13D:
         values = result.get('values', None)
         key_idx = select_key_frames(len(traj), max_frames)
 
+        # Safety filter mask for trajectory colouring
+        sf_log = result.get('safety_filter_log', [])
+        if sf_log:
+            sf_active = np.array([
+                e.get('filter_active', False) for e in sf_log], dtype=bool)
+        else:
+            sf_active = None
+
         goal_center = np.array([0.0, self.dynamics.goal_y_center, 0.0])
         all_dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
         dist_hi = all_dists.max() * 1.1 + 0.5
@@ -244,8 +280,28 @@ class TrajectoryAnimation13D:
             draw_chaser_mpl(ax_3d, self.dynamics, state)
 
             if idx > 0:
-                ax_3d.plot(traj[:idx + 1, 0], traj[:idx + 1, 1],
-                           traj[:idx + 1, 2], 'r-', lw=2, label='Trajectory')
+                if sf_active is not None:
+                    # Draw segments: cyan for nominal, red for safety active
+                    sa = sf_active[:idx + 1]
+                    nominal = ~sa
+                    # Draw nominal segments
+                    for seg_start, seg_end in _contiguous_ranges(nominal):
+                        s = max(seg_start - 1, 0)
+                        ax_3d.plot(traj[s:seg_end, 0], traj[s:seg_end, 1],
+                                   traj[s:seg_end, 2], 'c-', lw=2)
+                    # Draw safety-active segments
+                    for seg_start, seg_end in _contiguous_ranges(sa):
+                        s = max(seg_start - 1, 0)
+                        ax_3d.plot(traj[s:seg_end, 0], traj[s:seg_end, 1],
+                                   traj[s:seg_end, 2], 'r-', lw=3)
+                    # Legend entries
+                    ax_3d.plot([], [], 'c-', lw=2, label='Trajectory')
+                    if sa.any():
+                        ax_3d.plot([], [], 'r-', lw=3, label='Safety Filter')
+                else:
+                    ax_3d.plot(traj[:idx + 1, 0], traj[:idx + 1, 1],
+                               traj[:idx + 1, 2], 'c-', lw=2,
+                               label='Trajectory')
 
             ax_3d.set_xlabel('x (m)')
             ax_3d.set_ylabel('y (m)')

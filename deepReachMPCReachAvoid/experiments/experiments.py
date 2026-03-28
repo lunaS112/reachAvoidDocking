@@ -33,8 +33,8 @@ class Experiment(ExperimentVizMixin, ABC):
         # Rollback tracking
         self.rollback_state = {}
         if self.dataset.dynamics.set_mode == 'reach_avoid':
-            self.max_partial_rollbacks = 1
-            self.max_full_rollbacks = 1
+            self.max_partial_rollbacks = 0
+            self.max_full_rollbacks = 0
         elif self.dataset.dynamics.set_mode == 'avoid' or self.dataset.dynamics.set_mode == 'reach':
             self.max_partial_rollbacks = 1
             self.max_full_rollbacks = 0
@@ -47,8 +47,8 @@ class Experiment(ExperimentVizMixin, ABC):
         self.horizon_checkpoint_map = {} # Path to checkpoint
 
         # Convergance threshold param
-        self.min_cov_threshold = 0.5
-        self.max_cov_threshold = 0.80
+        self.min_cov_threshold = 0.001
+        self.max_cov_threshold = 0.01
 
     @abstractmethod
     def init_special(self):

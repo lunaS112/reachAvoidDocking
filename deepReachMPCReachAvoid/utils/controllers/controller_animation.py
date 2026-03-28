@@ -23,16 +23,20 @@ import os
 # Default colour palette per controller type
 CONTROLLER_COLORS = {
     'brat': '#1f77b4',           # blue
+    'vanilla_brat': '#17becf',   # cyan
     'mpc': '#ff7f0e',            # orange
     'mpc_terminal': '#2ca02c',   # green
     'grid_based': '#d62728',     # red
+    'rl': '#9467bd',             # purple
 }
 
 CONTROLLER_LABELS = {
     'brat': 'BRAT',
+    'vanilla_brat': 'Vanilla BRAT',
     'mpc': 'MPC',
     'mpc_terminal': 'MPC+Terminal',
     'grid_based': 'Grid-Based HJ',
+    'rl': 'RL (DDQN)',
 }
 
 

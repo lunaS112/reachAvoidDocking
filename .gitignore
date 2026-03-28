@@ -206,8 +206,10 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Custom 
-DeepReach_MPC_ReachAvoid/runs/
-DeepReach_MPC_ReachAvoid/wandb/
-DeepReach_MPC_ReachAvoid/data/
-RLBaseline/experiments/
+# Custom
+deepReachMPCReachAvoid/RLBaseline/experiments/
+deepReachMPCReachAvoid/runs/
+deepReachMPCReachAvoid/wandb/
+deepReachMPCReachAvoid/data/
+deepReachMPCReachAvoid/outputs/
+deepReachMPCReachAvoid/outputs_Old/

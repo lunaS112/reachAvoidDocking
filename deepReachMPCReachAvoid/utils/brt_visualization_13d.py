@@ -373,22 +373,43 @@ def add_goal_ghost_plotly(fig, dynamics):
     ))
 
 
-def add_trajectory_plotly(fig, trajectory):
-    """Add trajectory Scatter3d trace (always emits exactly 1 trace)."""
+def add_trajectory_plotly(fig, trajectory, safety_active=None):
+    """Add trajectory Scatter3d trace (always emits exactly 1 trace).
+
+    Parameters
+    ----------
+    fig : plotly Figure
+    trajectory : (T, 13) array or None
+    safety_active : (T,) bool array or None
+        Per-step flag indicating safety filter was active.  When provided
+        the trajectory is coloured cyan normally and red where the filter
+        intervened.
+    """
     import plotly.graph_objects as go
 
     if trajectory is not None and len(trajectory) > 1:
+        if safety_active is not None and len(safety_active) >= len(trajectory):
+            # Per-point colour: 0 = nominal (cyan), 1 = filter active (red)
+            color_vals = safety_active[:len(trajectory)].astype(float)
+            line_kwargs = dict(
+                color=color_vals,
+                colorscale=[[0, 'cyan'], [1, 'red']],
+                cmin=0, cmax=1,
+                width=4,
+            )
+        else:
+            line_kwargs = dict(color='cyan', width=4)
         fig.add_trace(go.Scatter3d(
             x=trajectory[:, 0], y=trajectory[:, 1], z=trajectory[:, 2],
             mode='lines',
-            line=dict(color='red', width=4),
+            line=line_kwargs,
             name='Trajectory',
         ))
     else:
         fig.add_trace(go.Scatter3d(
             x=[], y=[], z=[],
             mode='lines',
-            line=dict(color='red', width=4),
+            line=dict(color='cyan', width=4),
             name='Trajectory',
             visible=False,
         ))
@@ -811,7 +832,8 @@ class BRTVisualizer13D:
 
     def render_plotly(self, X, Y, Z, V, chaser_state,
                       trajectory=None, title: str = '',
-                      axis_range: dict | None = None):
+                      axis_range: dict | None = None,
+                      safety_active=None):
         """Build a Plotly ``Figure`` with BRT blob + spacecraft geometry.
 
         Always emits a **fixed** number and order of traces so that the
@@ -921,17 +943,27 @@ class BRTVisualizer13D:
 
         # --- Trace 12: Trajectory (always present, may be empty) ------- #
         if trajectory is not None and len(trajectory) > 1:
+            if safety_active is not None and len(safety_active) >= len(trajectory):
+                color_vals = safety_active[:len(trajectory)].astype(float)
+                line_kwargs = dict(
+                    color=color_vals,
+                    colorscale=[[0, 'cyan'], [1, 'red']],
+                    cmin=0, cmax=1,
+                    width=4,
+                )
+            else:
+                line_kwargs = dict(color='cyan', width=4)
             fig.add_trace(go.Scatter3d(
                 x=trajectory[:, 0], y=trajectory[:, 1], z=trajectory[:, 2],
                 mode='lines',
-                line=dict(color='red', width=4),
+                line=line_kwargs,
                 name='Trajectory',
             ))
         else:
             fig.add_trace(go.Scatter3d(
                 x=[], y=[], z=[],
                 mode='lines',
-                line=dict(color='red', width=4),
+                line=dict(color='cyan', width=4),
                 name='Trajectory',
                 visible=False,
             ))
@@ -1073,7 +1105,8 @@ class BRTVisualizer13D:
 
     def render_matplotlib(self, X, Y, Z, V, chaser_state,
                           trajectory=None, title: str = '', ax=None,
-                          axis_limits: dict | None = None):
+                          axis_limits: dict | None = None,
+                          safety_active=None):
         """Render BRT blob with matplotlib 3D.
 
         Uses marching cubes to extract the V=0 isosurface and colour-maps
@@ -1159,8 +1192,24 @@ class BRTVisualizer13D:
 
         # --- Trajectory ----------------------------------------------- #
         if trajectory is not None and len(trajectory) > 1:
-            ax.plot(trajectory[:, 0], trajectory[:, 1], trajectory[:, 2],
-                    'r-', lw=2, label='Trajectory')
+            if safety_active is not None and len(safety_active) >= len(trajectory):
+                from utils.controllers.trajectory_only_animation_13d import _contiguous_ranges
+                sa = safety_active[:len(trajectory)]
+                nominal = ~sa
+                for seg_s, seg_e in _contiguous_ranges(nominal):
+                    s = max(seg_s - 1, 0)
+                    ax.plot(trajectory[s:seg_e, 0], trajectory[s:seg_e, 1],
+                            trajectory[s:seg_e, 2], 'c-', lw=2)
+                for seg_s, seg_e in _contiguous_ranges(sa):
+                    s = max(seg_s - 1, 0)
+                    ax.plot(trajectory[s:seg_e, 0], trajectory[s:seg_e, 1],
+                            trajectory[s:seg_e, 2], 'r-', lw=3)
+                ax.plot([], [], 'c-', lw=2, label='Trajectory')
+                if sa.any():
+                    ax.plot([], [], 'r-', lw=3, label='Safety Filter')
+            else:
+                ax.plot(trajectory[:, 0], trajectory[:, 1], trajectory[:, 2],
+                        'c-', lw=2, label='Trajectory')
 
         ax.set_xlabel('x (m)')
         ax.set_ylabel('y (m)')

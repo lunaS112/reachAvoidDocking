@@ -99,6 +99,63 @@ class Docking13DControllerMixin:
             state[6:10] /= q_norm
         return state
 
+    def _batch_check_collision_oriented(self, states):
+        """Vectorised 8-corner oriented-box collision check.
+
+        Args:
+            states: (B, 13) torch tensor on device.
+
+        Returns:
+            (B,) bool tensor — True where any chaser corner is inside obstacle.
+        """
+        d = self.dynamics
+        q = states[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        pos = states[:, :3]  # (B, 3)
+
+        R = d.quat_to_R_LVLH_to_body(q)  # (B, 3, 3)  LVLH→body
+
+        hw = d.w_c / 2.0
+        hh = d.h_c / 2.0
+        hd = d.d_c / 2.0
+        # 8 body-frame corners (8, 3)
+        signs = torch.tensor([
+            [-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1],
+            [1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1],
+        ], dtype=states.dtype, device=states.device)
+        body_corners = signs * torch.tensor(
+            [hw, hh, hd], dtype=states.dtype, device=states.device)
+
+        # R^T maps body → LVLH:  corner @ R = (R^T @ corner^T)^T
+        lvlh = torch.matmul(body_corners, R) + pos.unsqueeze(1)  # (B, 8, 3)
+
+        cx, cy, cz = lvlh[..., 0], lvlh[..., 1], lvlh[..., 2]
+
+        # Target body (y ∈ [0, h_t])
+        half_w = d.w_t / 2.0
+        half_d = d.d_t / 2.0
+        in_body = ((torch.abs(cx) <= half_w)
+                   & (cy >= 0) & (cy <= d.h_t)
+                   & (torch.abs(cz) <= half_d))
+
+        # Docking post (y ∈ [-post_length, 0])
+        in_post = ((torch.abs(cx) <= d.post_hw_x)
+                   & (torch.abs(cz) <= d.post_hw_z)
+                   & (cy >= -d.post_length) & (cy <= 0))
+
+        return (in_body | in_post).any(dim=-1)  # (B,)
+
+    @staticmethod
+    def _batch_wrap_quat(states):
+        """Normalise quaternion for (B, 13) tensor (no velocity clamping).
+
+        Matches _wrap_state_13d behaviour for fair comparison with
+        sequential simulation.
+        """
+        q = states[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        return torch.cat([states[:, :6], q, states[:, 10:]], dim=-1)
+
     def _compute_brt_control_13d(self, dvds, state):
         """Bang-bang optimal control from value-function gradient for 13D.
 
