@@ -119,8 +119,8 @@ python run_controller.py compare --controllers grid_based brat mpc_terminal mpc 
 # Large-scale BRAT-only baseline (uniform IC)
 python run_controller.py compare --controllers brat \
   --checkpoint_path $CKPT --safety_filter_mode 1 --safety_checkpoint_path $CKPT_AVOID\
-  --n_rollouts 10000 --tMax 15.0 --max_sim_time 60.0 --effort_weight 0.005\
-  --sampling_method uniform --output_dir ./outputs/BRT_10000_safety_filter_1
+  --n_rollouts 500 --tMax 10.0 --seed 42 --max_sim_time 60.0 \
+  --sampling_method uniform --output_dir ./outputs/BRT_500_safety_filter_1
 
 
 
