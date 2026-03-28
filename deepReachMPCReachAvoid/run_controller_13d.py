@@ -1190,9 +1190,9 @@ def main():
     parent.add_argument('--planning_horizon', type=float, default=2.0)
     parent.add_argument('--mpc_dt', type=float, default=0.5)
     parent.add_argument('--effective_horizon', type=float, default=1.0)
-    parent.add_argument('--gradient_iters', type=int, default=80,
+    parent.add_argument('--gradient_iters', type=int, default=50,
                         help='Adam iterations per MPC step (default for both controllers)')
-    parent.add_argument('--num_restarts', type=int, default=16,
+    parent.add_argument('--num_restarts', type=int, default=8,
                         help='Parallel random restarts (default for both controllers)')
     parent.add_argument('--gradient_lr', type=float, default=1.0,
                         help='Adam learning rate for gradient MPC')
@@ -1208,9 +1208,9 @@ def main():
                         help='Override gradient_iters for mpc_13d only')
     parent.add_argument('--mpc_num_restarts', type=int, default=None,
                         help='Override num_restarts for mpc_13d only')
-    parent.add_argument('--mpc_terminal_gradient_iters', type=int, default=None,
+    parent.add_argument('--mpc_terminal_gradient_iters', type=int, default=20,
                         help='Override gradient_iters for mpc_terminal_13d only')
-    parent.add_argument('--mpc_terminal_num_restarts', type=int, default=None,
+    parent.add_argument('--mpc_terminal_num_restarts', type=int, default=1,
                         help='Override num_restarts for mpc_terminal_13d only')
 
     # Vanilla BRT arguments
