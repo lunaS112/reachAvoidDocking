@@ -37,3 +37,13 @@ python comparisons/value_function_comparison.py \
 python comparisons/volume_comparison.py \
     --checkpoint_path $CKPT --tMax 10 \
     --time_horizons 3 6 8 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_GradientRefine
+
+# ---- Script 4: BRAT metrics comparison ----
+python comparisons/brat_metrics.py \
+    --learned_checkpoint ./runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth \
+    --vanilla_checkpoint ./runs/Docking6D_10sec_Vanilla_BaseLine/training/checkpoints/model_final.pth \
+    --rl_checkpoint      ./RLBaseline/experiments/docking-6d-DDQN/6d_improved-TF/model/Q-400221.pth \
+    --rl_metadata        ./RLBaseline/experiments/docking-6d-DDQN/6d_improved-TF/train.pkl \
+    --tMax 10.0 \
+    --n_samples 500000 \
+    --output_dir ./outputs/brat_metrics
