@@ -21,7 +21,7 @@ if __name__ == "__main__":
     dynamics_ = dynamics.Docking6D('reach_avoid')
 
     # Required parameters
-    T = 3
+    T = 15
     dt = 0.5
     style = "receding" # Can be "direct" or "receding"
     cost_type = "reachability" # Can be "reachability", "classic_mpc", or "mixed"
@@ -72,8 +72,8 @@ if __name__ == "__main__":
 
     print("Generating BRT slice plots...")
     print("Generating Position BRT")
-    viz.plotBRTPosition(mpc, interesting_ics_tensor, brt_data, x_res, y_res, T,
-        save_def=save_def,level_sets=[0.0, 0.1, 0.15])
+    viz.plotBRTPosition(mpc, None, brt_data, x_res, y_res, T,
+        save_def=save_def,level_sets=[0.0])
     print("Generating Velocity BRT")
     #viz.plotBRTVelocity(mpc, interesting_ics_tensor, brt_data, vx_res, vy_res, T,
     #    save_def=save_def,level_sets=[0.0, 0.1, 0.15])
