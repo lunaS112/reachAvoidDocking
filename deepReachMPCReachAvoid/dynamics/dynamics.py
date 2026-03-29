@@ -729,7 +729,7 @@ class Docking6D(Dynamics):
         # Copy the remaining element: omega (at index 5 in state, index 6 in input)
         transformed_input[..., 7] = input[..., 6]
         
-        return transformed_input.cuda()
+        return transformed_input.to(input.device)
 
     # Docking6D dynamics (CW equations + rotational dynamics)
     # \dot px = vx

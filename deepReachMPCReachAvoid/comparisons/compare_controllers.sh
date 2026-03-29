@@ -7,7 +7,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../../.venv/bin/activate"
 
-CKPT="runs/Docking6D_RA_10sec_GradRefine/training/checkpoints/model_final.pth"
+CKPT="runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth"
 
 # ---- Script 1: Gradient quality outside learned BRAT ----
 # IC inside 25s grid BRAT, outside 10s DeepReach BRAT
@@ -36,7 +36,7 @@ python comparisons/value_function_comparison.py \
 # ---- Script 3: Volume comparison ----
 python comparisons/volume_comparison.py \
     --checkpoint_path $CKPT --tMax 10 \
-    --time_horizons 3 6 8 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_GradientRefine
+    --time_horizons 3 6 8 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_HighSamp_Paper
 
 # ---- Script 4: BRAT metrics comparison ----
 python comparisons/brat_metrics.py \

@@ -53,5 +53,9 @@ from utils.controllers.vanilla_brat_controller import VanillaBRATController
 from utils.controllers.vanilla_brt_controller_13d import VanillaBRTController13D
 
 # RL controllers
-from utils.controllers.rl_controller import RLController
-from utils.controllers.rl_controller_13d import RLController13D
+try:
+    from utils.controllers.rl_controller import RLController
+    from utils.controllers.rl_controller_13d import RLController13D
+except ImportError:
+    RLController = None
+    RLController13D = None

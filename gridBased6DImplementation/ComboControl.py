@@ -115,7 +115,7 @@ class ComboController:
                  u_bar_4D=20.0, u_bar_2D=1.5,
                  d_bar_4D=0.0, d_bar_2D=0.0,
                  final_time=-30.0, dt=0.1,
-                 grid_resolution_4D=(61, 61, 31, 31),
+                 grid_resolution_4D=(91, 101, 21, 21),
                  grid_resolution_2D=(361, 141),
                  cache_dir=None, filter_mode=2):
         """Grid-based 4D+2D decomposed HJ reach-avoid controller.

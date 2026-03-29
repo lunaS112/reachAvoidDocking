@@ -44,7 +44,30 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from matplotlib.colors import TwoSlopeNorm
+
+# ---- Paper-quality style (matches figureGuide.md) ----
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'Palatino Linotype', 'DejaVu Serif'],
+    'font.size': 12,
+    'axes.titlesize': 14,
+    'axes.labelsize': 12,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 10,
+    'figure.dpi': 300,
+    'savefig.dpi': 300,
+    'savefig.bbox': 'tight',
+    'savefig.pad_inches': 0.05,
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+    'axes.linewidth': 0.8,
+    'lines.linewidth': 1.5,
+    'pdf.fonttype': 42,
+    'ps.fonttype': 42,
+})
 
 # ---- path setup ----
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -443,7 +466,6 @@ def plot_slice_comparison(slice_result, slice_def, t_physical, save_path):
     axes[2].set_title('BRAT overlap')
     axes[2].set_xlabel(xlabel); axes[2].set_ylabel(ylabel)
     # Legend
-    import matplotlib.patches as mpatches
     patches = [
         mpatches.Patch(color='#f0f0f0', label='Neither'),
         mpatches.Patch(color='#fc8d62', label='Grid only'),
@@ -457,6 +479,71 @@ def plot_slice_comparison(slice_result, slice_def, t_physical, save_path):
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  Saved slice plot: {save_path}")
+
+
+def plot_overlap_single(slice_result, slice_def, t_physical, save_path):
+    """Single-panel BRAT overlap figure for the positional slice at t=10s.
+
+    Color scheme (guide palette):
+      Neither   — medium gray  #b3b3b3, low alpha  (background)
+      Grid only — orange       #ff9500, high alpha (your method)
+      DR only   — dark blue    #0048a6, high alpha (DeepReach baseline)
+      Both      — light purple #cdb3ff, high alpha (agreement)
+
+    Zero-level-set contours are overlaid:
+      Grid BRAT  — black dashed
+      DR BRAT    — solid orange (#ff9500)
+    """
+    gv = slice_result['grid_vals']
+    dv = slice_result['dr_vals']
+    xx = slice_result['xx']
+    yy = slice_result['yy']
+    xlabel, ylabel = slice_def['labels']
+    extent = slice_result['extent']
+
+    in_grid = gv <= 0
+    in_dr   = dv <= 0
+    # 0=neither, 1=grid only, 2=DR only, 3=both
+    zone = in_grid.astype(int) + 2 * in_dr.astype(int)
+
+    # Build per-region RGBA array for independent alpha control
+    rgba = np.zeros((*zone.shape, 4))
+    rgba[zone == 0] = [0.70, 0.70, 0.70, 0.30]          # neither — gray, faint
+    rgba[zone == 1] = [1.00, 149/255,   0.0, 0.80]       # grid only — orange
+    rgba[zone == 2] = [0.00,  72/255, 166/255, 0.80]     # DR only — dark blue
+    rgba[zone == 3] = [205/255, 179/255, 1.00, 0.90]     # both — light purple
+
+    fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
+    ax.imshow(rgba, origin='lower', aspect='auto',
+              extent=extent, interpolation='nearest')
+
+    # Zero-level-set contours
+    ax.contour(xx, yy, gv, levels=[0], colors='#000000',
+               linestyles='--', linewidths=1.2)
+    ax.contour(xx, yy, dv, levels=[0], colors='#ff9500',
+               linestyles='-',  linewidths=1.2)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+    ax.grid(True, alpha=0.3, linestyle='--')
+
+    legend_patches = [
+        mpatches.Patch(fc=[0.70, 0.70, 0.70], alpha=0.30, label='Neither'),
+        mpatches.Patch(fc='#ff9500',           alpha=0.80, label='Grid only'),
+        mpatches.Patch(fc='#0048a6',           alpha=0.80, label='DeepReach only'),
+        mpatches.Patch(fc='#cdb3ff',           alpha=0.90, label='Both'),
+    ]
+    ax.legend(handles=legend_patches, frameon=False, loc='upper right')
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path + '.pdf')
+    fig.savefig(save_path + '.png', dpi=300)
+    plt.close(fig)
+    print(f"  Saved overlap figure: {save_path}.{{pdf,png}}")
 
 
 def plot_volume_vs_time(volume_results, save_path):
@@ -556,8 +643,10 @@ def main():
     parser.add_argument('--output_dir', type=str,
                         default='./outputs/volume_comparison',
                         help='Directory for output files')
-    parser.add_argument('--device', type=str, default='cuda',
-                        help='Torch device for DeepReach queries')
+    _default_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    parser.add_argument('--device', type=str, default=_default_device,
+                        help='Torch device for DeepReach queries '
+                             '(default: auto — cuda if available, else cpu)')
     parser.add_argument('--grid_cache_dir', type=str, default=None,
                         help='Directory for caching grid HJ solutions. '
                              'Defaults to <output_dir>/grid_cache')
@@ -569,6 +658,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
     cache_dir = args.grid_cache_dir or os.path.join(args.output_dir, 'grid_cache')
+    print(f"Device: {args.device}  (CUDA available: {torch.cuda.is_available()})")
 
     # ---- 1. Load DeepReach model ----
     print('=' * 60)
@@ -626,6 +716,12 @@ def main():
             fname = f"slice_{sl['name']}_t{t_phys:.0f}s.png"
             plot_slice_comparison(res, sl, t_phys,
                                  os.path.join(args.output_dir, fname))
+
+            # Single-panel overlap figure for px_py at t=10s only
+            if sl['name'] == 'px_py' and abs(t_phys - 10.0) < 0.5:
+                overlap_path = os.path.join(
+                    args.output_dir, 'brat_overlap_px_py_t10s')
+                plot_overlap_single(res, sl, t_phys, overlap_path)
 
     # ---- 4. Monte Carlo volume estimation ----
     print('\n' + '=' * 60)
