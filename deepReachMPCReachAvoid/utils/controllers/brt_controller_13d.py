@@ -35,9 +35,11 @@ sys.path.insert(0, os.path.join(_THIS_DIR, '..', '..'))
 from utils import modules
 from utils import diff_operators  # noqa: F401 — used transitively by io_to_dv
 from dynamics import dynamics as dynamics_module
-from utils.controllers.docking13d_mixin import Docking13DControllerMixin, _quat_mul_np, _quat_error_angle_np
+from utils.controllers.docking13d_mixin import Docking13DControllerMixin, _quat_mul_np
 from utils.controllers.safety_filter import SafetyFilter
-from utils.controllers.min_time_search import find_min_brat_time_single, STATUS_HOLD
+from utils.controllers.min_time_search import (find_min_brat_time_single,
+                                                find_min_brat_time_batch,
+                                                STATUS_HOLD)
 
 
 class BRTController13D(Docking13DControllerMixin):
@@ -52,8 +54,7 @@ class BRTController13D(Docking13DControllerMixin):
                  safety_margin_phase1=0.1, safety_margin_phase2=0.02,
                  debug_phase2=False,
                  gradient_fallback=True, grad_threshold=0.01,
-                 avoid_proximity_margin=1.0,
-                 pd_torque_proximity=None):
+                 avoid_proximity_margin=1.0):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
@@ -72,10 +73,6 @@ class BRTController13D(Docking13DControllerMixin):
                                    which the gradient is considered stagnant.
             avoid_proximity_margin: Obstacle SDF distance (m) below which
                                    the fallback is hard-suppressed.
-            pd_torque_proximity:   Multiplier for goal tolerances that defines
-                                   the proximity region where PD torque
-                                   replaces bang-bang torque.  None = disabled
-                                   (pure bang-bang).  Float > 0 = enabled.
         """
         self.checkpoint_path = checkpoint_path
         self.tMax = tMax
@@ -92,9 +89,6 @@ class BRTController13D(Docking13DControllerMixin):
         self.grad_threshold = grad_threshold
         self.avoid_proximity_margin = avoid_proximity_margin
 
-        # Proximity PD torque parameters
-        self.pd_torque_proximity = pd_torque_proximity
-
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(checkpoint_path)))
@@ -108,15 +102,6 @@ class BRTController13D(Docking13DControllerMixin):
         self.fallback_kd_rot = 1.0 * self.dynamics.tau_bar
         self.goal_state_np = self.dynamics.goal_state.cpu().numpy()
         self.q_goal_np = self.dynamics.q_goal.detach().cpu().numpy()
-
-        # Proportional torque scaling: when |omega_i| < _omega_scale,
-        # BRAT torque magnitude is proportional to |omega_i| / _omega_scale.
-        # Above _omega_scale, full bang-bang.  Threshold set at 10x the
-        # tightest omega tolerance for a smooth transition zone.
-        if self.pd_torque_proximity is not None:
-            self._omega_scale = 10.0 * self.dynamics.eps_omega_pitchyaw  # ~0.0262 rad/s
-            print(f"  [PD Torque] Enabled  proximity={self.pd_torque_proximity:.1f}x  "
-                  f"omega_scale={self._omega_scale:.4f} rad/s")
 
         self.reset()
 
@@ -189,10 +174,6 @@ class BRTController13D(Docking13DControllerMixin):
         # --- Diagnostic tracking ---
         self.diagnostic_history = []
         self._consecutive_v_increases = 0
-
-        # Proportional torque tracking
-        self.pd_torque_active_history = []
-        self._pd_latched = False  # hysteresis latch
 
         self.safety_filter.reset()
 
@@ -293,6 +274,51 @@ class BRTController13D(Docking13DControllerMixin):
         values = self.dynamics.io_to_value(model_input, output)
         return values.cpu().numpy()
 
+    def get_gradient_batch(self, states, time_query):
+        """Query dV/ds for a batch of states at a single shared time.
+
+        Args:
+            states:     (B, 13) numpy array or torch tensor.
+            time_query: scalar time value.
+
+        Returns:
+            (B, state_dim) numpy array of spatial gradients.
+        """
+        if isinstance(states, np.ndarray):
+            states = torch.tensor(states, dtype=torch.float32)
+        states = states.to(self.device)
+        B = states.shape[0]
+        time_col = torch.full(
+            (B, 1), time_query, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states], dim=-1)  # (B, 14)
+        model_input = self.dynamics.coord_to_input(coords)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)        # (B,)
+        model_in = result['model_in']
+        dv = self.dynamics.io_to_dv(model_in, output)  # (B, 14)
+        return dv[:, 1:].detach().cpu().numpy()         # (B, 13)
+
+    def get_gradient_batch_mixed_times(self, states, times):
+        """Query dV/ds for a batch of states each at its own time.
+
+        Args:
+            states: (B, 13) torch tensor on self.device.
+            times:  (B,)   torch tensor on self.device of per-state times.
+
+        Returns:
+            (B, state_dim) numpy array of spatial gradients.
+        """
+        time_col = times.unsqueeze(-1).float()          # (B, 1)
+        coords = torch.cat([time_col, states.float()], dim=-1)  # (B, 14)
+        model_input = self.dynamics.coord_to_input(coords)
+
+        result = self.model({'coords': model_input})
+        output = result['model_out'].squeeze(-1)        # (B,)
+        model_in = result['model_in']
+        dv = self.dynamics.io_to_dv(model_in, output)  # (B, 14)
+        return dv[:, 1:].detach().cpu().numpy()         # (B, 13)
+
     # ------------------------------------------------------------------
     # Optimal control (13D-specific)
     # ------------------------------------------------------------------
@@ -372,131 +398,6 @@ class BRTController13D(Docking13DControllerMixin):
         with torch.no_grad():
             s = torch.tensor(state, dtype=torch.float32, device=self.device)
             return float(self.dynamics.avoid_fn(s)) < self.avoid_proximity_margin
-
-    def _boundary_outward_weight(self, state, margin_frac=0.7):
-        """Return a fallback weight in [0, 1] when position is near the domain
-        boundary AND the corresponding velocity is driving it further out.
-
-        For each position dimension (x, y, z = indices 0, 1, 2) with paired
-        velocity (vx, vy, vz = indices 3, 4, 5):
-          - Compute how far the position is into the outer margin zone
-            (the outer ``1 - margin_frac`` fraction of the half-range).
-          - Check if velocity is outward (same sign as displacement from center).
-          - Weight = max over dims of (penetration_depth / margin_width) * outward.
-
-        Returns 0.0 when comfortably inside the domain or velocity is inward.
-        """
-        sr = self.dynamics.state_range_.cpu().numpy()  # (13, 2)
-        max_w = 0.0
-        for p_idx, v_idx in [(0, 3), (1, 4), (2, 5)]:
-            lo, hi = float(sr[p_idx, 0]), float(sr[p_idx, 1])
-            half = (hi - lo) / 2.0
-            center = (lo + hi) / 2.0
-            margin_width = half * (1.0 - margin_frac)  # width of outer zone
-
-            pos = float(state[p_idx])
-            vel = float(state[v_idx])
-            displacement = pos - center  # signed distance from center
-
-            # How far into the margin zone (0 = at margin edge, 1 = at boundary)
-            penetration = (abs(displacement) - half * margin_frac) / (margin_width + 1e-12)
-            penetration = np.clip(penetration, 0.0, 1.5)  # allow >1 if already OOD
-
-            # Outward = velocity has same sign as displacement from center
-            outward = (displacement * vel) > 0
-
-            if outward and penetration > 0:
-                max_w = max(max_w, penetration)
-
-        return float(np.clip(max_w, 0.0, 1.0))
-
-    # ------------------------------------------------------------------
-    # Proximity PD torque
-    # ------------------------------------------------------------------
-
-    def _in_proximity_zone(self, state, mult):
-        """Check if state is within mult * tolerances for pos/vel/quat."""
-        d = self.dynamics
-        pos = state[:3]
-        vel = state[3:6]
-        q = state[6:10]
-
-        # Position: L2(x,z) < mult * eps_p, y in expanded goal band
-        if np.sqrt(pos[0]**2 + pos[2]**2) > mult * d.eps_p:
-            return False
-        y_margin = mult * (d.goal_y_max - d.goal_y_min) / 2.0
-        if not (d.goal_y_min - y_margin <= pos[1] <= d.goal_y_max + y_margin):
-            return False
-
-        # Velocity: lateral and axial within mult * tolerance
-        if np.sqrt(vel[0]**2 + vel[2]**2) > mult * d.eps_v_lateral:
-            return False
-        vy_center = (d.eps_v_axial_lo + d.eps_v_axial_hi) / 2.0
-        vy_half = (d.eps_v_axial_hi - d.eps_v_axial_lo) / 2.0
-        if abs(vel[1] - vy_center) > mult * vy_half:
-            return False
-
-        # Quaternion: angle error < mult * eps_q
-        q_norm = np.linalg.norm(q)
-        if q_norm > 1e-12:
-            q = q / q_norm
-        q_err = _quat_error_angle_np(q, self.q_goal_np)
-        if q_err > mult * d.eps_q:
-            return False
-
-        return True
-
-    def _check_pd_proximity(self, state):
-        """Check if PD torque should be active, with hysteresis.
-
-        Activates at ``pd_torque_proximity`` * tolerances.
-        Once latched on, stays active until state leaves a wider zone
-        (``2 * pd_torque_proximity``) to prevent flickering.
-        """
-        mult = self.pd_torque_proximity
-        if mult is None:
-            return False
-
-        if not self._pd_latched:
-            # Not yet latched — check activation threshold
-            if self._in_proximity_zone(state, mult):
-                self._pd_latched = True
-                return True
-            return False
-        else:
-            # Already latched — only deactivate if far outside (2x the zone)
-            if not self._in_proximity_zone(state, 2.0 * mult):
-                self._pd_latched = False
-                return False
-            return True
-
-    def _compute_proportional_torque(self, state, dvds):
-        """Scale BRAT bang-bang torque proportionally near zero omega.
-
-        Preserves the BRAT gradient direction (which accounts for coupled
-        attitude-translation dynamics) but reduces magnitude as omega
-        approaches zero, preventing chatter.
-
-        When |omega_i| > omega_scale: full bang-bang (±tau_bar)
-        When |omega_i| < omega_scale: tau = sign(coeff) * tau_bar * |omega_i| / omega_scale
-
-        Returns numpy (3,) torque vector.
-        """
-        omega = state[10:13]
-
-        # Get BRAT gradient direction (same as _compute_brt_control_13d)
-        I_np = self.dynamics.I.detach().cpu().numpy()
-        p_omega = np.asarray(dvds[10:13], dtype=np.float64)
-        coeff_tau = np.linalg.solve(I_np.T, p_omega)
-
-        # Per-axis proportional scaling
-        tau = np.zeros(3)
-        for i in range(3):
-            bang_dir = -1.0 if coeff_tau[i] > 0 else 1.0
-            scale = min(abs(omega[i]) / self._omega_scale, 1.0)
-            tau[i] = bang_dir * self.dynamics.tau_bar * scale
-
-        return tau
 
     # ------------------------------------------------------------------
     # BRAT min-time search (delegates to shared utility)
@@ -643,25 +544,11 @@ class BRTController13D(Docking13DControllerMixin):
             if self.gradient_fallback:
                 ctrl_dims = np.concatenate([dvds[3:6], dvds[10:13]])
                 grad_mag = np.linalg.norm(ctrl_dims)
-                boundary_w = self._boundary_outward_weight(state)
-
-                grad_stagnant = grad_mag < self.grad_threshold
-                near_boundary_outward = boundary_w > 0
-
-                avoid_near = self._avoid_proximity_check(state)
-                # Boundary-outward fallback overrides avoid proximity check —
-                # when the state is fleeing the domain, steering it back is
-                # more important than suppressing fallback near obstacles.
-                suppress = avoid_near and not near_boundary_outward
-                if ((grad_stagnant or near_boundary_outward)
-                        and not suppress):
-                    if grad_stagnant:
-                        fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
-                    if near_boundary_outward:
-                        fallback_weight = max(fallback_weight, boundary_w)
+                if (grad_mag < self.grad_threshold
+                        and not self._avoid_proximity_check(state)):
+                    fallback_weight = 1.0 - (grad_mag / self.grad_threshold)
                     virtual_dvds = self._compute_l2_virtual_gradient(state)
-                    # Interpolate: as weight -> 1, fully replace BRT grad
-                    blended = (1.0 - fallback_weight) * dvds + fallback_weight * virtual_dvds
+                    blended = dvds + fallback_weight * virtual_dvds
                     control = self._compute_brt_control_13d(blended, state)
 
             self.fallback_weight_history.append(fallback_weight)
@@ -726,13 +613,6 @@ class BRTController13D(Docking13DControllerMixin):
             'omega_norm': float(np.linalg.norm(state[10:13])),
         })
 
-        # --- Proportional torque substitution (if enabled and in proximity) ---
-        pd_active = False
-        if self.pd_torque_proximity is not None and self._check_pd_proximity(state):
-            pd_active = True
-            control[3:6] = self._compute_proportional_torque(state, dvds)
-        self.pd_torque_active_history.append(pd_active)
-
         # Safety filter post-processing (phase-dependent margin)
         raw_control = control.copy()
         self.safety_filter.set_margin(
@@ -783,12 +663,6 @@ class BRTController13D(Docking13DControllerMixin):
         dock_time = None
         post_dock_duration = 1.0  # seconds to continue after docking
 
-        # Per-component reach_fn tracking
-        reach_fn_comp_history = {
-            'position': [], 'vlat': [], 'vax': [],
-            'attitude': [], 'omega_py': [], 'omega_roll': [],
-        }
-
         for step in range(num_steps):
             sim_time = step * self.dt
 
@@ -799,14 +673,6 @@ class BRTController13D(Docking13DControllerMixin):
             # Normal control — keep BRT active even after docking so
             # the chaser can converge closer to the goal point.
             control = self.u_fn(state, sim_time)
-
-            # Record per-component reach_fn values
-            with torch.no_grad():
-                s_t = torch.tensor(state, dtype=torch.float32,
-                                   device=self.device)
-                comps = self.dynamics.reach_fn_components(s_t)
-                for k in reach_fn_comp_history:
-                    reach_fn_comp_history[k].append(float(comps[k]))
 
             # Termination checks (only before docking)
             if not docked and self._check_docked_13d(state):
@@ -856,13 +722,6 @@ class BRTController13D(Docking13DControllerMixin):
             'fallback_weights': self.fallback_weight_history,
             'n_fallback_steps': sum(
                 1 for w in self.fallback_weight_history if w > 0),
-            # --- per-component reach_fn breakdown ---
-            'reach_fn_components': {
-                k: np.array(v) for k, v in reach_fn_comp_history.items()
-            },
-            # --- PD torque tracking ---
-            'pd_torque_active': np.array(self.pd_torque_active_history, dtype=bool),
-            'n_pd_torque_steps': int(sum(self.pd_torque_active_history)),
         }
 
         # --- Diagnostic summary --- #
@@ -913,11 +772,6 @@ class BRTController13D(Docking13DControllerMixin):
                   f"({summary['v_increase_pct']:.1f}%), "
                   f"max run={summary['max_consecutive_v_increases']}")
             print(f"  Final V       : {summary['final_value']:.4f}")
-            n_pd = result.get('n_pd_torque_steps', 0)
-            total = summary['total_steps']
-            if self.pd_torque_proximity is not None:
-                print(f"  PD torque     : {n_pd}/{total} steps "
-                      f"({100.0 * n_pd / max(total, 1):.1f}%)")
             print("-"*60)
 
             result['diagnostics'] = {
@@ -926,6 +780,265 @@ class BRTController13D(Docking13DControllerMixin):
             }
 
         return result
+
+    # ------------------------------------------------------------------
+    # Batch simulation (GPU-parallel across ICs)
+    # ------------------------------------------------------------------
+
+    def simulate_docking_batch(self, initial_states_np, max_sim_time):
+        """Run docking simulations for all ICs in parallel on the GPU.
+
+        Phase 1 ICs (V(x, tMax) > 0): one shared forward pass at tMax.
+        Phase 2 ICs (V(x, tMax) ≤ 0): batch min-time search then one
+            mixed-time gradient forward pass with per-IC t_remaining.
+        Safety filter: uses batch_apply (already GPU-vectorised).
+        Dynamics: uses dynamics.dsdt batched.
+
+        Args:
+            initial_states_np: (B, 13) numpy array of initial conditions.
+            max_sim_time: Maximum simulation time in seconds.
+
+        Returns:
+            list of B result dicts compatible with simulate_docking output,
+            containing at minimum the fields used by run_compare / compute_metrics:
+            docked, collision, success, final_state, times, control_effort,
+            wall_time, safety_filter_mode, controller_type.
+        """
+        import time as _t
+        B = len(initial_states_np)
+        num_steps = int(max_sim_time / self.dt) + 1
+        post_dock_steps = int(1.0 / self.dt)
+
+        t_wall_start = _t.perf_counter()
+
+        # ---- State on GPU -----------------------------------------------
+        states = torch.tensor(
+            initial_states_np, dtype=torch.float32, device=self.device)
+
+        # ---- Per-IC tracking tensors ------------------------------------
+        active    = torch.ones(B, dtype=torch.bool, device=self.device)
+        docked    = torch.zeros(B, dtype=torch.bool, device=self.device)
+        collided  = torch.zeros(B, dtype=torch.bool, device=self.device)
+        dock_step = torch.full((B,), num_steps, dtype=torch.long,
+                               device=self.device)
+        final_step = torch.zeros(B, dtype=torch.long, device=self.device)
+
+        in_phase2   = torch.zeros(B, dtype=torch.bool, device=self.device)
+        t_remaining = torch.full((B,), self.tMax,
+                                 dtype=torch.float32, device=self.device)
+
+        # ---- Storage ----------------------------------------------------
+        ctrl_effort  = np.zeros(B, dtype=np.float64)
+        # final_states_gpu: updated each step to hold the post-integration
+        # state of each IC at its last active step.  Inactive ICs are frozen
+        # in place so their entry always reflects their true final position.
+        final_states_gpu = states.clone()
+
+        # Per-IC wall time: recorded when each IC first terminates (matching
+        # MPC batch behaviour so mean/std_wall_time are meaningful).
+        ic_wall_time  = np.zeros(B, dtype=np.float64)
+        ic_terminated = np.zeros(B, dtype=bool)
+
+        print(f"  [BRT13D batch] {B} ICs  "
+              f"max_sim={max_sim_time}s  dt={self.dt}s  "
+              f"device={self.device}")
+
+        for step in range(num_steps):
+            sim_time = step * self.dt
+
+            # Coast check: deactivate ICs that finished post-dock period
+            coast_done = docked & ((step - dock_step) >= post_dock_steps)
+            active = active & ~coast_done & ~collided
+
+            if not active.any():
+                break
+
+            # Snapshot which ICs are active at the START of this step so we
+            # can attribute the post-integration state correctly below.
+            active_at_step_start = active.clone()
+            final_step[active] = step
+
+            # ---- Separate Phase 1 / Phase 2 active ICs ------------------
+            p1_mask = active & ~in_phase2
+            p2_mask = active &  in_phase2
+
+            controls = torch.zeros(B, self.dynamics.control_dim,
+                                   dtype=torch.float32, device=self.device)
+
+            # === Phase 1 batch ============================================
+            if p1_mask.any():
+                p1_idx = torch.where(p1_mask)[0]
+                p1_states = states[p1_idx]
+
+                # Phase 1 → Phase 2 transition check
+                with torch.no_grad():
+                    v_tmax = self._batch_value_at_time(p1_states, self.tMax)
+                newly_p2 = v_tmax <= 0
+                if newly_p2.any():
+                    trans_global = p1_idx[newly_p2]
+                    in_phase2[trans_global] = True
+                    t_remaining[trans_global] = self.tMax
+
+                # Recompute after transitions
+                p1_mask = active & ~in_phase2
+                p2_mask = active &  in_phase2
+                p1_idx  = torch.where(p1_mask)[0]
+
+                if len(p1_idx) > 0:
+                    p1_states = states[p1_idx]
+                    dvds_p1 = self.get_gradient_batch(p1_states, self.tMax)
+                    dvds_p1_t = torch.tensor(
+                        dvds_p1, dtype=torch.float32, device=self.device)
+                    controls[p1_idx] = self._compute_brt_control_batch(
+                        dvds_p1_t, p1_states)
+
+            # === Phase 2 batch ============================================
+            if p2_mask.any():
+                p2_idx    = torch.where(p2_mask)[0]
+                p2_states = states[p2_idx]
+                t_rem_np  = t_remaining[p2_idx].cpu().numpy()
+
+                def _value_fn_batch(state_indices, query_times):
+                    M, K = len(state_indices), len(query_times)
+                    sel = torch.tensor(
+                        state_indices, dtype=torch.long, device=self.device)
+                    s = p2_states[sel]
+                    t = torch.tensor(
+                        query_times, dtype=torch.float32, device=self.device)
+                    s_rep = s.unsqueeze(1).expand(-1, K, -1).reshape(-1, 13)
+                    t_rep = t.unsqueeze(0).expand(M, -1).reshape(-1)
+                    coords = torch.cat(
+                        [t_rep.unsqueeze(-1), s_rep.float()], dim=-1)
+                    mi = self.dynamics.coord_to_input(coords)
+                    with torch.no_grad():
+                        out = self.model({'coords': mi})
+                        v = self.dynamics.io_to_value(
+                            mi, out['model_out'].squeeze(-1))
+                    return v.cpu().numpy().reshape(M, K)
+
+                t_stars_np, statuses = find_min_brat_time_batch(
+                    _value_fn_batch, len(p2_idx), self.tMax,
+                    resolution=self.search_resolution,
+                    t_remaining=t_rem_np)
+
+                t_stars_t = torch.tensor(
+                    t_stars_np, dtype=torch.float32, device=self.device)
+                hold_t = torch.tensor(
+                    [s == STATUS_HOLD for s in statuses], device=self.device)
+                t_remaining[p2_idx] = torch.where(
+                    hold_t,
+                    torch.clamp(t_stars_t - self.dt, min=0.01),
+                    t_stars_t)
+
+                query_times_t = torch.clamp(t_stars_t, min=0.01)
+                dvds_p2 = self.get_gradient_batch_mixed_times(
+                    p2_states, query_times_t)
+                dvds_p2_t = torch.tensor(
+                    dvds_p2, dtype=torch.float32, device=self.device)
+                controls[p2_idx] = self._compute_brt_control_batch(
+                    dvds_p2_t, p2_states)
+
+            # === Safety filter (vectorised) ==============================
+            if self.safety_filter.mode != 0:
+                margins = torch.where(
+                    in_phase2,
+                    torch.full((B,), self.safety_margin_phase2,
+                               device=self.device),
+                    torch.full((B,), self.safety_margin_phase1,
+                               device=self.device))
+                controls, _ = self.safety_filter.batch_apply(
+                    states, controls, active_mask=active, margins=margins)
+
+            # === Accumulate control effort ================================
+            # Inactive ICs have zero controls so the mask is redundant, but
+            # kept for clarity.
+            ctrl_np = controls.detach().cpu().numpy()
+            ctrl_effort += np.linalg.norm(ctrl_np, axis=-1) * self.dt
+
+            # === Dynamics (batched Euler step) ============================
+            with torch.no_grad():
+                state_dot = self.dynamics.dsdt(states, controls, None)
+                states = states + self.dt * state_dot
+            states = self._batch_wrap_quat(states)
+
+            # Update final_states for every IC that was active at the start
+            # of this step — their post-integration state is now their best
+            # known final state.  Inactive ICs' entries remain frozen.
+            final_states_gpu = torch.where(
+                active_at_step_start.unsqueeze(-1), states, final_states_gpu)
+
+            # === Termination checks =======================================
+            with torch.no_grad():
+                reach_vals = self.dynamics.reach_fn(states)
+                newly_docked = active & ~docked & (reach_vals <= 0)
+                docked = docked | newly_docked
+                dock_step = torch.where(
+                    newly_docked,
+                    torch.full((B,), step, dtype=torch.long,
+                               device=self.device),
+                    dock_step)
+
+                newly_collided = (active & ~docked
+                                  & self._batch_check_collision_oriented(states))
+                collided = collided | newly_collided
+                active = active & ~newly_collided
+
+            # Per-IC wall time: record when each IC first terminates
+            _now = _t.perf_counter() - t_wall_start
+            newly_done = (newly_docked | newly_collided).cpu().numpy()
+            for idx in np.where(newly_done & ~ic_terminated)[0]:
+                ic_wall_time[idx] = _now
+                ic_terminated[idx] = True
+
+        wall_total = _t.perf_counter() - t_wall_start
+        # Timed-out ICs: assign total wall time (consistent with MPC batch)
+        ic_wall_time[~ic_terminated] = wall_total
+
+        final_states_np = final_states_gpu.detach().cpu().numpy()
+        docked_np     = docked.cpu().numpy()
+        collided_np   = collided.cpu().numpy()
+        final_step_np = final_step.cpu().numpy()
+
+        results = []
+        for i in range(B):
+            fsim = float(final_step_np[i]) * self.dt
+            results.append({
+                'trajectory':         None,  # not stored in batch mode
+                'controls':           None,
+                'values':             None,
+                'phases':             None,
+                't_remaining':        None,
+                'times':              np.array([0.0, fsim]),
+                'success':            bool(docked_np[i] and not collided_np[i]),
+                'collision':          bool(collided_np[i]),
+                'docked':             bool(docked_np[i]),
+                'final_state':        final_states_np[i],
+                'controller_type':    'brt_safety_13d',
+                'control_effort':     float(ctrl_effort[i]),
+                'wall_time':          float(ic_wall_time[i]),
+                'safety_filter_mode': self.safety_filter.mode,
+                'n_clipped_steps':    0,
+            })
+
+        n_dock = int(docked_np.sum())
+        n_coll = int(collided_np.sum())
+        mean_wall = float(np.mean(ic_wall_time))
+        print(f"  [BRT13D batch] done  {n_dock}/{B} docked  "
+              f"{n_coll}/{B} collision  "
+              f"total_wall={wall_total:.1f}s  mean_per_ic={mean_wall*1000:.1f}ms")
+        return results
+
+    def _batch_value_at_time(self, states, time_query):
+        """Return V(states, time_query) as a (B,) GPU tensor (no grad)."""
+        B = states.shape[0]
+        time_col = torch.full(
+            (B, 1), time_query, dtype=torch.float32, device=self.device)
+        coords = torch.cat([time_col, states.float()], dim=-1)
+        mi = self.dynamics.coord_to_input(coords)
+        with torch.no_grad():
+            out = self.model({'coords': mi})
+            v = self.dynamics.io_to_value(mi, out['model_out'].squeeze(-1))
+        return v  # (B,) on self.device
 
     # ------------------------------------------------------------------
     # Visualization helpers

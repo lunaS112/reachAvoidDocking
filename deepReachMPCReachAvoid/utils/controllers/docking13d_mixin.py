@@ -193,6 +193,39 @@ class Docking13DControllerMixin:
 
         return np.concatenate([F, tau])
 
+    def _compute_brt_control_batch(self, dvds_batch, states_batch):
+        """Vectorised bang-bang optimal control for a batch of states.
+
+        Args:
+            dvds_batch:   (B, state_dim) torch tensor on self.device.
+            states_batch: (B, 13) torch tensor on self.device.
+
+        Returns:
+            (B, 6) torch tensor — [Fx, Fy, Fz, tx, ty, tz] for each IC.
+        """
+        d = self.dynamics
+        q = states_batch[:, 6:10]
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)
+        R = d.quat_to_R_LVLH_to_body(q)  # (B, 3, 3) LVLH→body
+
+        # Force: body coefficients = R @ p_v / mc
+        p_v = dvds_batch[:, 3:6].float().unsqueeze(-1)       # (B, 3, 1)
+        coeff_body = torch.bmm(R, p_v).squeeze(-1) / d.mc   # (B, 3)
+        F = torch.where(coeff_body > 0,
+                        torch.full_like(coeff_body, -d.F_bar),
+                        torch.full_like(coeff_body,  d.F_bar))
+
+        # Torque: I^{-T} @ p_omega
+        I_np = d.I.detach().to(dvds_batch.device)
+        I_inv_T = torch.inverse(I_np.T)                       # (3, 3)
+        p_omega = dvds_batch[:, 10:13].float()                # (B, 3)
+        coeff_tau = torch.mm(p_omega, I_inv_T.T)              # (B, 3)
+        tau = torch.where(coeff_tau > 0,
+                          torch.full_like(coeff_tau, -d.tau_bar),
+                          torch.full_like(coeff_tau,  d.tau_bar))
+
+        return torch.cat([F, tau], dim=-1)  # (B, 6)
+
     def _default_dynamics_fn_13d(self, state, control):
         """Evaluate Docking13D dynamics for Euler integration."""
         s = torch.tensor(state, dtype=torch.float32,
