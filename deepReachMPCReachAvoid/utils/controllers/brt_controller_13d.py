@@ -52,7 +52,7 @@ class BRTController13D(Docking13DControllerMixin):
 
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
                  search_resolution=0.1, safety_filter=None,
-                 safety_margin_phase1=0.1, safety_margin_phase2=0.01,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
                  debug_phase2=False,
                  gradient_fallback=True, grad_threshold=0.01,
                  avoid_proximity_margin=1.0,
@@ -887,8 +887,11 @@ class BRTController13D(Docking13DControllerMixin):
         final_step = torch.zeros(B, dtype=torch.long, device=self.device)
 
         in_phase2   = torch.zeros(B, dtype=torch.bool, device=self.device)
+        # float64: float32(9.8) = 9.800000190... so window lower bound
+        # 9.800000190 - 0.1 = 9.700000190 > 9.700000000 (grid point),
+        # excluding 9.7 from Window 1 and freezing t_remaining at 9.8.
         t_remaining = torch.full((B,), self.tMax,
-                                 dtype=torch.float32, device=self.device)
+                                 dtype=torch.float64, device=self.device)
 
         # ---- Storage ----------------------------------------------------
         ctrl_effort  = np.zeros(B, dtype=np.float64)
@@ -1020,7 +1023,7 @@ class BRTController13D(Docking13DControllerMixin):
                     t_remaining=t_rem_np)
 
                 t_stars_t = torch.tensor(
-                    t_stars_np, dtype=torch.float32, device=self.device)
+                    t_stars_np, dtype=torch.float64, device=self.device)
                 hold_t = torch.tensor(
                     [s == STATUS_HOLD for s in statuses], device=self.device)
                 t_remaining[p2_idx] = torch.where(
@@ -1028,7 +1031,8 @@ class BRTController13D(Docking13DControllerMixin):
                     torch.clamp(t_stars_t - self.dt, min=0.01),
                     t_stars_t)
 
-                query_times_t = torch.clamp(t_stars_t, min=0.01)
+                # Convert to float32 only for model input
+                query_times_t = torch.clamp(t_stars_t, min=0.01).float()
                 dvds_p2 = self.get_gradient_batch_mixed_times(
                     p2_states, query_times_t)
                 dvds_p2_t = torch.tensor(

@@ -933,7 +933,10 @@ class BRTVisualizer13D:
         self._add_reach_sphere_plotly(fig)
 
         # --- Trace 8: Chaser cube (oriented, face-coloured) ----------- #
-        self._add_chaser_plotly(fig, chaser_state)
+        sf_now = False
+        if safety_active is not None and trajectory is not None and len(trajectory) > 0:
+            sf_now = bool(safety_active[len(trajectory) - 1])
+        self._add_chaser_plotly(fig, chaser_state, safety_active=sf_now)
 
         # --- Trace 9: Chaser wireframe edges -------------------------- #
         add_chaser_wireframe_plotly(fig, self.dynamics, chaser_state)
@@ -1062,7 +1065,7 @@ class BRTVisualizer13D:
             showscale=False, name='Reach tol.',
         ))
 
-    def _add_chaser_plotly(self, fig, state):
+    def _add_chaser_plotly(self, fig, state, safety_active=False):
         import plotly.graph_objects as go
 
         d = self.dynamics
@@ -1084,8 +1087,10 @@ class BRTVisualizer13D:
             k_list += [qi[2], qi[3]]
 
         # Per-face coloring: dock face (body +x, quad 5 → tri 10-11) = blue,
-        # top face (body +z, quad 1 → tri 2-3) = green, rest = orange.
-        facecolor = ['orange'] * 12
+        # top face (body +z, quad 1 → tri 2-3) = green,
+        # rest = orange (nominal) or red (safety filter active).
+        body_color = 'red' if safety_active else 'orange'
+        facecolor = [body_color] * 12
         facecolor[10] = 'dodgerblue'   # body +x (dock face) tri A
         facecolor[11] = 'dodgerblue'   # body +x (dock face) tri B
         facecolor[2]  = 'limegreen'    # body +z (top face) tri A
@@ -1188,7 +1193,10 @@ class BRTVisualizer13D:
         self._draw_reach_sphere_mpl(ax)
 
         # --- Chaser box + orientation arrow --------------------------- #
-        self._draw_chaser_mpl(ax, chaser_state)
+        sf_now = False
+        if safety_active is not None and trajectory is not None and len(trajectory) > 0:
+            sf_now = bool(safety_active[len(trajectory) - 1])
+        self._draw_chaser_mpl(ax, chaser_state, safety_active=sf_now)
 
         # --- Trajectory ----------------------------------------------- #
         if trajectory is not None and len(trajectory) > 1:
@@ -1266,7 +1274,7 @@ class BRTVisualizer13D:
         zs = r * np.outer(np.ones_like(u), np.cos(v))
         ax.plot_surface(xs, ys, zs, color='lime', alpha=0.15)
 
-    def _draw_chaser_mpl(self, ax, state):
+    def _draw_chaser_mpl(self, ax, state, safety_active=False):
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         d = self.dynamics
@@ -1275,8 +1283,8 @@ class BRTVisualizer13D:
         _, faces = _oriented_box_mesh(
             pos, (d.w_c / 2, d.h_c / 2, d.d_c / 2), quaternion=q)
         mesh = Poly3DCollection(faces, alpha=0.6, linewidths=0.5)
-        mesh.set_facecolor('orange')
-        mesh.set_edgecolor('darkorange')
+        mesh.set_facecolor('red' if safety_active else 'orange')
+        mesh.set_edgecolor('darkred' if safety_active else 'darkorange')
         ax.add_collection3d(mesh)
 
         # Orientation arrow: body-frame +x direction ("nose")
