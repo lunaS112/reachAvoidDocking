@@ -1229,7 +1229,7 @@ def main():
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument('--checkpoint_path', type=str, default=None,
                         help='Path to model_final.pth (required for brt/mpc controllers)')
-    parent.add_argument('--tMax', type=float, default=14.0)
+    parent.add_argument('--tMax', type=float, default=10.0)
     parent.add_argument('--dt', type=float, default=0.1)
     parent.add_argument('--device', type=str, default='cuda')
     parent.add_argument('--max_sim_time', type=float, default=60.0)
@@ -1240,7 +1240,7 @@ def main():
                         help='Safety filter mode: 0=off, 1=least-restrictive, 2=CBF-QP')
     parent.add_argument('--safety_checkpoint_path', type=str, default=None,
                         help='Path to avoid-only BRT checkpoint for safety filter')
-    parent.add_argument('--safety_tMax', type=float, default=None,
+    parent.add_argument('--safety_tMax', type=float, default=10,
                         help='tMax for safety BRT queries (None = use model default)')
     parent.add_argument('--safety_filter_margin', type=float, default=0.1,
                         help='Phase-1 activation threshold for BRAT controllers '

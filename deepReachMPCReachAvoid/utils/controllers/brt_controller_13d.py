@@ -23,6 +23,7 @@ import time as _time
 
 import torch
 import numpy as np
+from tqdm import tqdm
 import pickle
 import os
 import sys
@@ -51,10 +52,11 @@ class BRTController13D(Docking13DControllerMixin):
 
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
                  search_resolution=0.1, safety_filter=None,
-                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.01,
                  debug_phase2=False,
                  gradient_fallback=True, grad_threshold=0.01,
-                 avoid_proximity_margin=1.0):
+                 avoid_proximity_margin=1.0,
+                 pd_torque_proximity=2.0):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
@@ -88,6 +90,7 @@ class BRTController13D(Docking13DControllerMixin):
         self.gradient_fallback = gradient_fallback
         self.grad_threshold = grad_threshold
         self.avoid_proximity_margin = avoid_proximity_margin
+        self.pd_torque_proximity = pd_torque_proximity
 
         # Derive experiment directory from checkpoint path
         self.experiment_dir = os.path.dirname(
@@ -391,6 +394,66 @@ class BRTController13D(Docking13DControllerMixin):
         vg = np.zeros(self.state_dim)
         vg[3:6] = self.fallback_kp_trans * pos_err + self.fallback_kd_trans * vel_err
         vg[10:13] = self.fallback_kp_rot * err_vec + self.fallback_kd_rot * omega_err
+        return vg
+
+    def _compute_l2_virtual_gradient_batch(self, states):
+        """Batched L2 virtual gradient for Phase 1 gradient fallback.
+
+        Mirrors _compute_l2_virtual_gradient exactly but operates on a
+        (B, 13) GPU tensor, so the same fallback logic can be applied to
+        all ICs in a single pass without a Python loop.
+
+        Only populates control-coupled indices [3:6] and [10:13].
+
+        Args:
+            states: (B, 13) float32 torch tensor on self.device.
+
+        Returns:
+            (B, 13) float32 torch tensor — virtual gradient.
+        """
+        B = states.shape[0]
+        goal = torch.tensor(
+            self.goal_state_np, dtype=torch.float32, device=self.device)
+        q_goal_t = torch.tensor(
+            self.q_goal_np, dtype=torch.float32, device=self.device)
+
+        # Position and velocity errors
+        pos_err = states[:, 0:3] - goal[0:3]   # (B, 3)
+        vel_err = states[:, 3:6] - goal[3:6]   # (B, 3)
+
+        # Normalise quaternion
+        q = states[:, 6:10].float()
+        q = q / (torch.norm(q, dim=-1, keepdim=True) + 1e-12)  # (B, 4)
+
+        # Error quaternion: q_err = q_goal_conj ⊗ q  (scalar-first Hamilton product)
+        qg_conj = q_goal_t * torch.tensor(
+            [1., -1., -1., -1.], dtype=torch.float32, device=self.device)
+        a0, a1, a2, a3 = qg_conj[0], qg_conj[1], qg_conj[2], qg_conj[3]
+        b0, b1, b2, b3 = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        q_err = torch.stack([
+            a0*b0 - a1*b1 - a2*b2 - a3*b3,
+            a0*b1 + a1*b0 + a2*b3 - a3*b2,
+            a0*b2 - a1*b3 + a2*b0 + a3*b1,
+            a0*b3 + a1*b2 - a2*b1 + a3*b0,
+        ], dim=-1)  # (B, 4)
+
+        # Shortest path: flip sign where scalar part < 0
+        flip = (q_err[:, 0] < 0).unsqueeze(-1).float()
+        q_err = q_err * (1.0 - 2.0 * flip)
+
+        # Rotation vector: err_vec = 2 * q_err_vec * atan2(|q_err_vec|, q0) / |q_err_vec|
+        qv_norm = torch.norm(q_err[:, 1:4], dim=-1, keepdim=True)  # (B, 1)
+        q0 = q_err[:, 0:1]                                          # (B, 1) ≥ 0
+        angle = 2.0 * torch.atan2(qv_norm, q0)                      # (B, 1)
+        err_vec = q_err[:, 1:4] * angle / torch.clamp(qv_norm, min=1e-12)  # (B, 3)
+
+        # Angular velocity error
+        omega_err = states[:, 10:13] - goal[10:13]  # (B, 3)
+
+        # Assemble — only control-coupled dims [3:6] and [10:13] are non-zero
+        vg = torch.zeros(B, self.state_dim, dtype=torch.float32, device=self.device)
+        vg[:, 3:6]  = self.fallback_kp_trans * pos_err + self.fallback_kd_trans * vel_err
+        vg[:, 10:13] = self.fallback_kp_rot  * err_vec + self.fallback_kd_rot  * omega_err
         return vg
 
     def _avoid_proximity_check(self, state):
@@ -843,7 +906,11 @@ class BRTController13D(Docking13DControllerMixin):
               f"max_sim={max_sim_time}s  dt={self.dt}s  "
               f"device={self.device}")
 
-        for step in range(num_steps):
+        pbar = tqdm(range(num_steps), desc="[BRT13D batch]", unit="step",
+                    leave=True,
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} steps"
+                                " [{elapsed}<{remaining}]  {postfix}")
+        for step in pbar:
             sim_time = step * self.dt
 
             # Coast check: deactivate ICs that finished post-dock period
@@ -889,6 +956,37 @@ class BRTController13D(Docking13DControllerMixin):
                     dvds_p1 = self.get_gradient_batch(p1_states, self.tMax)
                     dvds_p1_t = torch.tensor(
                         dvds_p1, dtype=torch.float32, device=self.device)
+
+                    # === Gradient fallback (mirrors sequential u_fn Phase 1) =
+                    # When the gradient on control-coupled dims is very small,
+                    # bang-bang direction is determined by floating-point noise.
+                    # Blend with an L2 virtual gradient (same logic as the
+                    # sequential gradient_fallback) to ensure a meaningful
+                    # control direction — the primary cause of batch/sequential
+                    # trajectory divergence when this was absent.
+                    if self.gradient_fallback:
+                        ctrl_dims = torch.cat(
+                            [dvds_p1_t[:, 3:6], dvds_p1_t[:, 10:13]], dim=-1)
+                        grad_mags = torch.norm(ctrl_dims, dim=-1)  # (B_p1,)
+                        stagnant = grad_mags < self.grad_threshold  # bool (B_p1,)
+                        if stagnant.any():
+                            with torch.no_grad():
+                                avoid_vals = self.dynamics.avoid_fn(p1_states)
+                            far = avoid_vals >= self.avoid_proximity_margin
+                            applies = stagnant & far
+                            if applies.any():
+                                weight = torch.where(
+                                    applies,
+                                    torch.clamp(
+                                        1.0 - grad_mags / self.grad_threshold,
+                                        0.0, 1.0),
+                                    torch.zeros_like(grad_mags))  # (B_p1,)
+                                virtual_dvds = (
+                                    self._compute_l2_virtual_gradient_batch(
+                                        p1_states))               # (B_p1, 13)
+                                dvds_p1_t = (dvds_p1_t
+                                             + weight.unsqueeze(-1) * virtual_dvds)
+
                     controls[p1_idx] = self._compute_brt_control_batch(
                         dvds_p1_t, p1_states)
 
@@ -955,19 +1053,11 @@ class BRTController13D(Docking13DControllerMixin):
             ctrl_np = controls.detach().cpu().numpy()
             ctrl_effort += np.linalg.norm(ctrl_np, axis=-1) * self.dt
 
-            # === Dynamics (batched Euler step) ============================
-            with torch.no_grad():
-                state_dot = self.dynamics.dsdt(states, controls, None)
-                states = states + self.dt * state_dot
-            states = self._batch_wrap_quat(states)
-
-            # Update final_states for every IC that was active at the start
-            # of this step — their post-integration state is now their best
-            # known final state.  Inactive ICs' entries remain frozen.
-            final_states_gpu = torch.where(
-                active_at_step_start.unsqueeze(-1), states, final_states_gpu)
-
-            # === Termination checks =======================================
+            # === Termination checks BEFORE integration ====================
+            # Matches sequential simulate_docking which calls
+            # _check_docked_13d / _check_collision_13d before the Euler step.
+            # Checking after integration causes overshoot past tight docking
+            # tolerances, producing 0 successful dockings even when ICs dock.
             with torch.no_grad():
                 reach_vals = self.dynamics.reach_fn(states)
                 newly_docked = active & ~docked & (reach_vals <= 0)
@@ -989,6 +1079,29 @@ class BRTController13D(Docking13DControllerMixin):
             for idx in np.where(newly_done & ~ic_terminated)[0]:
                 ic_wall_time[idx] = _now
                 ic_terminated[idx] = True
+
+            # Update progress bar
+            n_dock = int(docked.sum())
+            n_coll = int(collided.sum())
+            n_act  = int(active.sum())
+            pbar.set_postfix(
+                dock=f"{n_dock}/{B}",
+                coll=f"{n_coll}/{B}",
+                active=n_act,
+                t=f"{sim_time:.1f}s",
+                refresh=False)
+
+            # === Dynamics (batched Euler step) ============================
+            with torch.no_grad():
+                state_dot = self.dynamics.dsdt(states, controls, None)
+                states = states + self.dt * state_dot
+            states = self._batch_wrap_quat(states)
+
+            # Update final_states for every IC that was active at the start
+            # of this step — their post-integration state is now their best
+            # known final state.  Inactive ICs' entries remain frozen.
+            final_states_gpu = torch.where(
+                active_at_step_start.unsqueeze(-1), states, final_states_gpu)
 
         wall_total = _t.perf_counter() - t_wall_start
         # Timed-out ICs: assign total wall time (consistent with MPC batch)

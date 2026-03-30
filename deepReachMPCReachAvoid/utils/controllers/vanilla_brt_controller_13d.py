@@ -67,3 +67,14 @@ class VanillaBRTController13D(BRTController13D):
         result = super().simulate_docking(initial_state, max_sim_time, dynamics_fn)
         result['controller_type'] = 'vanilla_brt_13d'
         return result
+
+    def simulate_docking_batch(self, initial_states_np, max_sim_time):
+        """Batch simulation — delegates to BRTController13D and fixes the label.
+
+        The base-class batch methods already use squeeze(-1) throughout, so
+        they are correct for the vanilla model even at batch-size 1.
+        """
+        results = super().simulate_docking_batch(initial_states_np, max_sim_time)
+        for r in results:
+            r['controller_type'] = 'vanilla_brt_13d'
+        return results
