@@ -24,16 +24,25 @@ All GPU controllers receive a ``torch.cuda.synchronize()`` barrier before
 and after the timed call so that asynchronous kernel launches do not
 under-report execution time.
 
-6D controllers timed: BRAT, MPC-terminal, MPC, Grid
-13D controllers timed: BRT, MPC-terminal-13D, MPC-13D
+For RL controllers the same ``u_fn`` patching is used (added to
+``RLController`` / ``RLController13D`` for interface consistency).
+
+Vanilla BRAT / BRT controllers inherit ``u_fn`` from their parents and
+are timed identically to the full BRAT / BRT variants.
+
+6D controllers timed: BRAT, Vanilla BRAT, MPC-terminal, MPC, RL, Grid
+13D controllers timed: BRT, Vanilla BRT, MPC-terminal-13D, MPC-13D, RL
 
 Usage
 -----
     cd deepReachMPCReachAvoid
     python comparisons/controller_timing.py \\
         --learned_6d    ./runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth \\
-        --mpc_6d        ./runs/Docking6D_RA_10sec_HighSamp/training/checkpoints/model_final.pth \\
+        --vanilla_6d    ./runs/Vanilla6D/training/checkpoints/model_final.pth \\
         --learned_13d   ./runs/Docking13D_RA_BAD/training/checkpoints/model_epoch_104000.pth \\
+        --vanilla_13d   ./runs/Vanilla13D/training/checkpoints/model_final.pth \\
+        --rl_6d         ./RLBaseline/experiments/docking6d/model/Q-400000.pth \\
+        --rl_13d        ./RLBaseline/experiments/docking13d/model/Q-800000.pth \\
         --output_dir    ./outputs/timing
 """
 
@@ -313,6 +322,18 @@ def main():
     # -- 13D checkpoints --
     parser.add_argument('--learned_13d', default=None,
                         help='13D BRT checkpoint (enables 13D timing if given)')
+    parser.add_argument('--vanilla_13d', default=None,
+                        help='Vanilla BRT 13D checkpoint (optional; skipped if not given)')
+
+    # -- RL checkpoints --
+    parser.add_argument('--rl_6d', default=None,
+                        help='RL 6D Q-network checkpoint (optional; skipped if not given)')
+    parser.add_argument('--rl_13d', default=None,
+                        help='RL 13D Q-network checkpoint (optional; skipped if not given)')
+    parser.add_argument('--rl_architecture', type=int, nargs='+', default=[256, 256],
+                        help='RL hidden-layer dims (default: 256 256)')
+    parser.add_argument('--rl_activation', default='Tanh',
+                        help='RL activation function (default: Tanh)')
 
     # -- Grid controller --
     parser.add_argument('--grid_cache_dir', default=None,
@@ -329,6 +350,8 @@ def main():
                         help='Max steps for MPC timing (default 10; each step is slow)')
     parser.add_argument('--steps_grid',      type=int, default=200,
                         help='Max steps for Grid timing (default 200)')
+    parser.add_argument('--steps_rl',        type=int, default=200,
+                        help='Max steps for RL timing (default 200)')
 
     # -- BRATController / BRTController parameters --
     parser.add_argument('--tMax',    type=float, default=10.0,
@@ -375,7 +398,7 @@ def main():
     print('  6D Controllers')
     print('=' * 65)
 
-    from utils.controllers import BRATController
+    from utils.controllers import BRATController, VanillaBRATController
     from utils.controllers.mpc_terminal_controller import MPCTerminalController
     from utils.controllers.mpc_controller import MPCController
 
@@ -388,6 +411,18 @@ def main():
     st, _ = time_brat_like(brat6, ic_6d, args.steps_brat, label='BRAT-6D')
     all_results[('6D', 'BRAT')] = st
     del brat6
+
+    # ---- 6D Vanilla BRAT ----
+    if args.vanilla_6d:
+        print('\n── 6D Vanilla BRAT ──')
+        van6 = VanillaBRATController(checkpoint_path=args.vanilla_6d,
+                                     tMax=args.tMax, device=args.device)
+        st, _ = time_brat_like(van6, ic_6d, args.steps_brat,
+                               label='Vanilla-BRAT-6D')
+        all_results[('6D', 'Vanilla BRAT')] = st
+        del van6
+    else:
+        print('\n[6D Vanilla BRAT skipped — provide --vanilla_6d to enable]')
 
     # ---- 6D MPC-terminal ----
     print('\n── 6D MPC-terminal ──')
@@ -405,6 +440,19 @@ def main():
     all_results[('6D', 'MPC')] = st
     del mpc6
 
+    # ---- 6D RL ----
+    if args.rl_6d:
+        print('\n── 6D RL ──')
+        from utils.controllers.rl_controller import RLController
+        rl6 = RLController(rl_checkpoint_path=args.rl_6d, device=args.device,
+                           architecture=args.rl_architecture,
+                           activation=args.rl_activation)
+        st, _ = time_brat_like(rl6, ic_6d, args.steps_rl, label='RL-6D')
+        all_results[('6D', 'RL')] = st
+        del rl6
+    else:
+        print('\n[6D RL skipped — provide --rl_6d to enable]')
+
     # ---- 6D Grid ----
     if not args.skip_grid:
         print('\n── 6D Grid-based ──')
@@ -420,46 +468,78 @@ def main():
         print('\n[6D Grid skipped (--skip_grid)]')
 
     # ==================================================================== #
-    # 13D controllers (only if --learned_13d given)
+    # 13D controllers (each gated by its own checkpoint flag)
     # ==================================================================== #
-    if args.learned_13d:
+    has_any_13d = args.learned_13d or args.vanilla_13d or args.rl_13d
+    if has_any_13d:
         print('\n' + '=' * 65)
         print('  13D Controllers')
         print('=' * 65)
 
-        from utils.controllers.brt_controller_13d import BRTController13D
-        from utils.controllers.mpc_terminal_controller_13d import MPCTerminalController13D
-        from utils.controllers.mpc_controller_13d import MPCController13D
-
-        ckpt13 = args.learned_13d
-
         # ---- 13D BRT ----
-        print('\n── 13D BRT ──')
-        brt13 = BRTController13D(checkpoint_path=ckpt13, tMax=args.tMax,
-                                 device=args.device)
-        st, _ = time_brat_like(brt13, ic_13d, args.steps_brat, label='BRT-13D')
-        all_results[('13D', 'BRAT')] = st
-        del brt13
+        if args.learned_13d:
+            from utils.controllers.brt_controller_13d import BRTController13D
+            from utils.controllers.mpc_terminal_controller_13d import MPCTerminalController13D
+            from utils.controllers.mpc_controller_13d import MPCController13D
+
+            ckpt13 = args.learned_13d
+
+            print('\n── 13D BRT ──')
+            brt13 = BRTController13D(checkpoint_path=ckpt13, tMax=args.tMax,
+                                     device=args.device)
+            st, _ = time_brat_like(brt13, ic_13d, args.steps_brat,
+                                   label='BRT-13D')
+            all_results[('13D', 'BRAT')] = st
+            del brt13
+
+        # ---- 13D Vanilla BRT ----
+        if args.vanilla_13d:
+            from utils.controllers.vanilla_brt_controller_13d import VanillaBRTController13D
+
+            print('\n── 13D Vanilla BRT ──')
+            van13 = VanillaBRTController13D(checkpoint_path=args.vanilla_13d,
+                                            tMax=args.tMax, device=args.device)
+            st, _ = time_brat_like(van13, ic_13d, args.steps_brat,
+                                   label='Vanilla-BRT-13D')
+            all_results[('13D', 'Vanilla BRT')] = st
+            del van13
 
         # ---- 13D MPC-terminal ----
-        print('\n── 13D MPC-terminal ──')
-        mpc_term13 = MPCTerminalController13D(checkpoint_path=ckpt13,
-                                              tMax=args.tMax,
-                                              device=args.device)
-        st, _ = time_mpc_like(mpc_term13, ic_13d, args.steps_mpc_term,
-                              label='MPC-term-13D')
-        all_results[('13D', 'MPC-terminal')] = st
-        del mpc_term13
+        if args.learned_13d:
+            print('\n── 13D MPC-terminal ──')
+            mpc_term13 = MPCTerminalController13D(checkpoint_path=ckpt13,
+                                                  tMax=args.tMax,
+                                                  device=args.device)
+            st, _ = time_mpc_like(mpc_term13, ic_13d, args.steps_mpc_term,
+                                  label='MPC-term-13D')
+            all_results[('13D', 'MPC-terminal')] = st
+            del mpc_term13
 
-        # ---- 13D MPC ----
-        print('\n── 13D MPC ──')
-        mpc13 = MPCController13D(checkpoint_path=ckpt13, device=args.device)
-        st, _ = time_mpc_like(mpc13, ic_13d, args.steps_mpc, label='MPC-13D')
-        all_results[('13D', 'MPC')] = st
-        del mpc13
+            # ---- 13D MPC ----
+            print('\n── 13D MPC ──')
+            mpc13 = MPCController13D(checkpoint_path=ckpt13, device=args.device)
+            st, _ = time_mpc_like(mpc13, ic_13d, args.steps_mpc,
+                                  label='MPC-13D')
+            all_results[('13D', 'MPC')] = st
+            del mpc13
+
+        # ---- 13D RL ----
+        if args.rl_13d:
+            from utils.controllers.rl_controller_13d import RLController13D
+
+            print('\n── 13D RL ──')
+            rl13 = RLController13D(rl_checkpoint_path=args.rl_13d,
+                                   device=args.device,
+                                   architecture=args.rl_architecture,
+                                   activation=args.rl_activation)
+            st, _ = time_brat_like(rl13, ic_13d, args.steps_rl,
+                                   label='RL-13D')
+            all_results[('13D', 'RL')] = st
+            del rl13
 
     else:
-        print('\n[13D controllers skipped — provide --learned_13d to enable]')
+        print('\n[13D controllers skipped — provide --learned_13d, '
+              '--vanilla_13d, or --rl_13d to enable]')
 
     # ==================================================================== #
     # Results
@@ -470,7 +550,13 @@ def main():
     json_out = {
         '_metadata': {
             'learned_6d':      args.learned_6d,
+            'vanilla_6d':      args.vanilla_6d,
             'learned_13d':     args.learned_13d,
+            'vanilla_13d':     args.vanilla_13d,
+            'rl_6d':           args.rl_6d,
+            'rl_13d':          args.rl_13d,
+            'rl_architecture': args.rl_architecture,
+            'rl_activation':   args.rl_activation,
             'ic_6d':           ic_6d.tolist(),
             'ic_13d':          ic_13d.tolist(),
             'tMax':            args.tMax,
@@ -479,10 +565,13 @@ def main():
             'steps_mpc_term':  args.steps_mpc_term,
             'steps_mpc':       args.steps_mpc,
             'steps_grid':      args.steps_grid,
+            'steps_rl':        args.steps_rl,
             'timing_method': {
-                'BRAT/BRT':     'patch u_fn + torch.cuda.synchronize()',
-                'MPC variants': 'patch _mpc_step + torch.cuda.synchronize()',
-                'Grid':         'wall_time / n_steps (control is inline)',
+                'BRAT/BRT':      'patch u_fn + torch.cuda.synchronize()',
+                'Vanilla':       'patch u_fn (inherited) + torch.cuda.synchronize()',
+                'RL':            'patch u_fn + torch.cuda.synchronize()',
+                'MPC variants':  'patch _mpc_step + torch.cuda.synchronize()',
+                'Grid':          'wall_time / n_steps (control is inline)',
             },
             'note': ('First 2 steps discarded as warm-up for GPU controllers. '
                      'Times reported as mean ± std over remaining steps.'),
