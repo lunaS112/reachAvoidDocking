@@ -55,7 +55,7 @@ CTRL_COLORS = {
 }
 
 CTRL_DISPLAY = {
-    'BRT+Safety 13D':          'BRT+Safety',
+    'BRT+Safety 13D':    'BRAT',
     'MPC+Terminal 13D':  'T-MPC',
     'MPC 13D':           'MPC',
     'Vanilla BRT 13D':  'V-DR',
