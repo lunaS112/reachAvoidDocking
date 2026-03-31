@@ -106,9 +106,34 @@ class RLController13D(Docking13DControllerMixin):
         self.Q_network.to(device)
         self.Q_network.eval()
 
+        self._last_q_value = 0.0
+
         print(f"[RLController13D] Loaded {rl_checkpoint_path}")
         print(f"  arch={dim_list}, actions={action_num}, dt={dt}, "
               f"pd_attitude={pd_attitude}")
+
+    def reset(self):
+        """Reset controller state for a new simulation."""
+        self.safety_filter.reset()
+        self._last_q_value = 0.0
+
+    def u_fn(self, state, sim_time):
+        """Compute control action from state using the Q-network.
+
+        Includes PD attitude torques when ``self.pd_attitude`` is True.
+        Caches the min Q-value in ``self._last_q_value`` for diagnostic
+        logging without requiring a second forward pass.
+        """
+        s_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            q_vals = self.Q_network(s_t)
+            self._last_q_value = q_vals.min(dim=1)[0].item()
+            action_idx = q_vals.min(dim=1)[1].item()
+        raw_control = self.discrete_controls[action_idx].copy()
+        if self.pd_attitude:
+            torques = self._pd_torque(state)
+            return np.concatenate([raw_control, torques])
+        return raw_control
 
     def _pd_torque(self, state):
         """PD attitude controller: drives quaternion toward q_goal, damps omega.
@@ -164,21 +189,8 @@ class RLController13D(Docking13DControllerMixin):
         for step in range(num_steps):
             sim_time = step * self.dt
 
-            # Query Q-network
-            s_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-            with torch.no_grad():
-                q_vals = self.Q_network(s_t)
-                action_idx = q_vals.min(dim=1)[1].item()
-                value = q_vals.min(dim=1)[0].item()
-
-            raw_control = self.discrete_controls[action_idx].copy()
-
-            if self.pd_attitude:
-                # raw_control is (3,) forces; compute torques via PD
-                torques = self._pd_torque(state)
-                control = np.concatenate([raw_control, torques])
-            else:
-                control = raw_control
+            control = self.u_fn(state, sim_time)
+            value = self._last_q_value
 
             # Apply safety filter
             control = self.safety_filter.apply(state, control)
