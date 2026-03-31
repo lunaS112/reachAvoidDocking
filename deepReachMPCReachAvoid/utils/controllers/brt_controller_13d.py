@@ -52,7 +52,7 @@ class BRTController13D(Docking13DControllerMixin):
 
     def __init__(self, checkpoint_path, tMax=14.0, dt=0.1, device='cuda',
                  search_resolution=0.1, safety_filter=None,
-                 safety_margin_phase1=0.1, safety_margin_phase2=0.02,
+                 safety_margin_phase1=0.1, safety_margin_phase2=0.05,
                  debug_phase2=False,
                  gradient_fallback=True, grad_threshold=0.01,
                  avoid_proximity_margin=1.0,
