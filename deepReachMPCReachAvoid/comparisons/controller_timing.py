@@ -356,6 +356,8 @@ def main():
     # -- BRATController / BRTController parameters --
     parser.add_argument('--tMax',    type=float, default=10.0,
                         help='tMax for BRAT/BRT controllers (default 10.0)')
+    parser.add_argument('--dt',      type=float, default=0.1,
+                        help='Control timestep for all controllers (default 0.1)')
     parser.add_argument('--device',  default='cuda',
                         help='Torch device (default cuda, falls back to cpu)')
 
@@ -407,7 +409,7 @@ def main():
     # ---- 6D BRAT ----
     print('\n── 6D BRAT ──')
     brat6 = BRATController(checkpoint_path=ckpt6, tMax=args.tMax,
-                           device=args.device)
+                           dt=args.dt, device=args.device)
     st, _ = time_brat_like(brat6, ic_6d, args.steps_brat, label='BRAT-6D')
     all_results[('6D', 'BRAT')] = st
     del brat6
@@ -416,7 +418,8 @@ def main():
     if args.vanilla_6d:
         print('\n── 6D Vanilla BRAT ──')
         van6 = VanillaBRATController(checkpoint_path=args.vanilla_6d,
-                                     tMax=args.tMax, device=args.device)
+                                     tMax=args.tMax, dt=args.dt,
+                                     device=args.device)
         st, _ = time_brat_like(van6, ic_6d, args.steps_brat,
                                label='Vanilla-BRAT-6D')
         all_results[('6D', 'Vanilla BRAT')] = st
@@ -427,7 +430,7 @@ def main():
     # ---- 6D MPC-terminal ----
     print('\n── 6D MPC-terminal ──')
     mpc_term6 = MPCTerminalController(checkpoint_path=ckpt6, tMax=args.tMax,
-                                      device=args.device)
+                                      dt=args.dt, device=args.device)
     st, _ = time_mpc_like(mpc_term6, ic_6d, args.steps_mpc_term,
                           label='MPC-term-6D')
     all_results[('6D', 'MPC-terminal')] = st
@@ -435,7 +438,7 @@ def main():
 
     # ---- 6D MPC ----
     print('\n── 6D MPC ──')
-    mpc6 = MPCController(checkpoint_path=ckpt6, device=args.device)
+    mpc6 = MPCController(checkpoint_path=ckpt6, dt=args.dt, device=args.device)
     st, _ = time_mpc_like(mpc6, ic_6d, args.steps_mpc, label='MPC-6D')
     all_results[('6D', 'MPC')] = st
     del mpc6
@@ -444,7 +447,8 @@ def main():
     if args.rl_6d:
         print('\n── 6D RL ──')
         from utils.controllers.rl_controller import RLController
-        rl6 = RLController(rl_checkpoint_path=args.rl_6d, device=args.device,
+        rl6 = RLController(rl_checkpoint_path=args.rl_6d, dt=args.dt,
+                           device=args.device,
                            architecture=args.rl_architecture,
                            activation=args.rl_activation)
         st, _ = time_brat_like(rl6, ic_6d, args.steps_rl, label='RL-6D')
@@ -457,8 +461,8 @@ def main():
     if not args.skip_grid:
         print('\n── 6D Grid-based ──')
         from utils.controllers.grid_based_controller import GridBasedController
-        grid6 = GridBasedController(dt=0.1,
-                                    max_sim_time=args.steps_grid * 0.1 + 5.0,
+        grid6 = GridBasedController(dt=args.dt,
+                                    max_sim_time=args.steps_grid * args.dt + 5.0,
                                     cache_dir=cache_dir,
                                     filter_mode=None)
         st, _ = time_grid(grid6, ic_6d, args.steps_grid, label='Grid-6D')
@@ -486,7 +490,7 @@ def main():
 
             print('\n── 13D BRT ──')
             brt13 = BRTController13D(checkpoint_path=ckpt13, tMax=args.tMax,
-                                     device=args.device)
+                                     dt=args.dt, device=args.device)
             st, _ = time_brat_like(brt13, ic_13d, args.steps_brat,
                                    label='BRT-13D')
             all_results[('13D', 'BRAT')] = st
@@ -498,7 +502,8 @@ def main():
 
             print('\n── 13D Vanilla BRT ──')
             van13 = VanillaBRTController13D(checkpoint_path=args.vanilla_13d,
-                                            tMax=args.tMax, device=args.device)
+                                            tMax=args.tMax, dt=args.dt,
+                                            device=args.device)
             st, _ = time_brat_like(van13, ic_13d, args.steps_brat,
                                    label='Vanilla-BRT-13D')
             all_results[('13D', 'Vanilla BRT')] = st
@@ -509,6 +514,7 @@ def main():
             print('\n── 13D MPC-terminal ──')
             mpc_term13 = MPCTerminalController13D(checkpoint_path=ckpt13,
                                                   tMax=args.tMax,
+                                                  dt=args.dt,
                                                   device=args.device)
             st, _ = time_mpc_like(mpc_term13, ic_13d, args.steps_mpc_term,
                                   label='MPC-term-13D')
@@ -517,7 +523,8 @@ def main():
 
             # ---- 13D MPC ----
             print('\n── 13D MPC ──')
-            mpc13 = MPCController13D(checkpoint_path=ckpt13, device=args.device)
+            mpc13 = MPCController13D(checkpoint_path=ckpt13, dt=args.dt,
+                                     device=args.device)
             st, _ = time_mpc_like(mpc13, ic_13d, args.steps_mpc,
                                   label='MPC-13D')
             all_results[('13D', 'MPC')] = st
@@ -529,7 +536,7 @@ def main():
 
             print('\n── 13D RL ──')
             rl13 = RLController13D(rl_checkpoint_path=args.rl_13d,
-                                   device=args.device,
+                                   dt=args.dt, device=args.device,
                                    architecture=args.rl_architecture,
                                    activation=args.rl_activation)
             st, _ = time_brat_like(rl13, ic_13d, args.steps_rl,
@@ -560,6 +567,7 @@ def main():
             'ic_6d':           ic_6d.tolist(),
             'ic_13d':          ic_13d.tolist(),
             'tMax':            args.tMax,
+            'dt':              args.dt,
             'device':          args.device,
             'steps_brat':      args.steps_brat,
             'steps_mpc_term':  args.steps_mpc_term,
