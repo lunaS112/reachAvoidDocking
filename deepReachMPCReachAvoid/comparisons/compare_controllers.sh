@@ -16,10 +16,10 @@ python comparisons/gradient_quality_comparison.py \
     --tMax 10 \
     --grid_time_horizon 25 \
     --max_sim_time 60.0 \
-    --n_ics 5 \
+    --n_ics 15 \
     --n_candidates 500000 \
-    --device cuda \
-    --output_dir ./outputs/gradient_comparison_GradientRefine
+    --device cuda --seed 19 \
+    --output_dir ./outputs/gradient_comparison_Paper
 
 # ---- Script 2: Value function approximation quality ----
 # IC inside both 10s BRATs
@@ -36,7 +36,7 @@ python comparisons/value_function_comparison.py \
 # ---- Script 3: Volume comparison ----
 python comparisons/volume_comparison.py \
     --checkpoint_path $CKPT --tMax 10 \
-    --time_horizons 3 6 8 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_HighSamp_Paper
+    --time_horizons 10 --n_monte_carlo 500000 --output_dir ./outputs/volume_comparison_HighSamp_Paper
 
 # ---- Script 4: BRAT metrics comparison ----
 python comparisons/brat_metrics.py \

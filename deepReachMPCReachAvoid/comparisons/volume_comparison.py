@@ -526,17 +526,17 @@ def plot_overlap_single(slice_result, slice_def, t_physical, save_path):
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.set_xlim(extent[0], extent[1])
-    ax.set_ylim(extent[2], extent[3])
+    ax.set_xlim(-5, 5)
+    ax.set_ylim(-5, 3)
     ax.grid(True, alpha=0.3, linestyle='--')
 
     legend_patches = [
-        mpatches.Patch(fc=[0.70, 0.70, 0.70], alpha=0.30, label='Neither'),
-        mpatches.Patch(fc='#ff9500',           alpha=0.80, label='Grid only'),
-        mpatches.Patch(fc='#0048a6',           alpha=0.80, label='DeepReach only'),
-        mpatches.Patch(fc='#cdb3ff',           alpha=0.90, label='Both'),
+        mpatches.Patch(fc=[0.70, 0.70, 0.70], alpha=0.30, ec='#333333', linewidth=0.8, label='Neither'),
+        mpatches.Patch(fc='#ff9500',           alpha=0.80, ec='#333333', linewidth=0.8, label='Grid only'),
+        mpatches.Patch(fc='#0048a6',           alpha=0.80, ec='#333333', linewidth=0.8, label='DR only'),
+        mpatches.Patch(fc='#cdb3ff',           alpha=0.90, ec='#333333', linewidth=0.8, label='Both'),
     ]
-    ax.legend(handles=legend_patches, frameon=False, loc='upper right')
+    ax.legend(handles=legend_patches, frameon=False, loc='upper left')
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)

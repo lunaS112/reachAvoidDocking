@@ -37,19 +37,12 @@ PROJECT_ROOT = os.path.dirname(DEEPREACH_DIR)
 sys.path.insert(0, DEEPREACH_DIR)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'gridBased6DImplementation'))
 
+from scipy.interpolate import interpn
 from utils.controllers import BRATController
+from utils.controllers.grid_based_controller import GridBasedController
 from comparisons.volume_comparison import (
     physical_time_to_index, grid_value_6D, deepreach_value_6D,
 )
-
-# Lazy import for grid-based controller
-_combo_module = None
-def _get_combo_module():
-    global _combo_module
-    if _combo_module is None:
-        import importlib
-        _combo_module = importlib.import_module('ComboControl')
-    return _combo_module
 
 
 # First-principles IC sampling bounds (matches run_controller.py reasoning):
@@ -66,19 +59,6 @@ GRADIENT_IC_BOUNDS = np.array([
     [ -0.50,  0.50],   # omega (rad/s)
 ])
 
-
-# ======================================================================
-#  Shared dynamics (numpy CW equations)
-# ======================================================================
-def _load_dynamics_fn():
-    """Return the numpy CW dynamics f(s, u) from the grid-based utils."""
-    import importlib.util
-    dynamics_path = os.path.join(
-        PROJECT_ROOT, 'gridBased6DImplementation', 'utils', 'dynamics.py')
-    spec = importlib.util.spec_from_file_location('grid_dynamics', dynamics_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.f
 
 
 def _in_goal_set(state, dynamics):
@@ -100,7 +80,7 @@ def _in_goal_set(state, dynamics):
 #  IC selection
 # ======================================================================
 def select_ics(combo, brat_ctrl, grid_times, grid_horizon, n_ics,
-               n_candidates=500_000, seed=42):
+               n_candidates=500_000, seed=1):
     """Sample ICs near the outer edge of the grid BRAT, outside the DeepReach BRAT.
 
     Uses first-principles sampling bounds (GRADIENT_IC_BOUNDS) and selects
@@ -139,12 +119,15 @@ def select_ics(combo, brat_ctrl, grid_times, grid_horizon, n_ics,
 # ======================================================================
 #  Joint simulation (both controllers advance in lockstep)
 # ======================================================================
-def simulate_both(ic, combo, brat_ctrl, dynamics_fn, dt, max_sim_time,
-                  grid_times):
+def simulate_both(ic, grid_ctrl, brat_ctrl, dt, max_sim_time):
     """Simulate both controllers from the same IC using shared dynamics.
 
     Both controllers advance in lockstep. The loop continues until BOTH
     controllers have docked or max_sim_time is reached.
+
+    Uses GridBasedController's cached gradient fields to avoid recomputing
+    the full grid gradient on every step (the main bottleneck of the naive
+    ComboController approach).
 
     Returns (result_grid, result_dr) dicts with keys:
         trajectory, controls, times, values, gradients,
@@ -165,24 +148,13 @@ def simulate_both(ic, combo, brat_ctrl, dynamics_fn, dt, max_sim_time,
 
     states_g[0] = states_d[0] = ic.copy()
 
-    # Reset controllers
-    combo.reset()
     brat_ctrl.reset()
 
-    # Grid value/gradient helpers
-    def grid_value(s, t):
-        brt_time = max(combo.final_time, min(0, combo.final_time + t))
-        tidx = int(np.argmin(np.abs(np.array(combo.times) - brt_time)))
-        v4 = combo.value_at_state_4D(s[:4], tidx)
-        v2 = combo.value_at_state_2D(s[4:], tidx)
-        return max(v4, v2)
-
-    def grid_gradient(s, t):
-        brt_time = max(combo.final_time, min(0, combo.final_time + t))
-        tidx = int(np.argmin(np.abs(np.array(combo.times) - brt_time)))
-        g4 = combo.grad_at_state_4D(s[:4], tidx)
-        g2 = combo.grad_at_state_2D(s[4:], tidx)
-        return np.concatenate([g4, g2])
+    # Gradient field caches: [tidx, cached_fields]
+    # Recomputed only when the min-time index changes (avoids recomputing
+    # the full grid gradient on every step).
+    cache_4d = [None, None]
+    cache_2d = [None, None]
 
     grid_docked = False
     dr_docked = False
@@ -194,19 +166,36 @@ def simulate_both(ic, combo, brat_ctrl, dynamics_fn, dt, max_sim_time,
         t = k * dt
         sim_times[k] = t
 
-        # Grid controller step
-        controls_g[k] = combo.u_fn(states_g[k], t)
-        values_g[k] = grid_value(states_g[k], t)
-        grads_g[k] = grid_gradient(states_g[k], t)
+        # --- Grid controller step (cached gradients) ---
+        s_4d = states_g[k][:4]
+        s_2d = states_g[k][4:]
+        tidx_4d = grid_ctrl._min_time_idx_4d(s_4d)
+        tidx_2d = grid_ctrl._min_time_idx_2d(s_2d)
+        g4 = grid_ctrl._grad_at_point_4d(s_4d, tidx_4d, cache_4d)
+        g2 = grid_ctrl._grad_at_point_2d(s_2d, tidx_2d, cache_2d)
 
-        # DeepReach controller step
+        ux = -grid_ctrl._u_bar_4d if g4[2] > 0 else grid_ctrl._u_bar_4d
+        uy = -grid_ctrl._u_bar_4d if g4[3] > 0 else grid_ctrl._u_bar_4d
+        ut = -grid_ctrl._u_bar_2d if g2[1] > 0 else grid_ctrl._u_bar_2d
+        controls_g[k] = np.array([ux, uy, ut])
+
+        v4 = interpn(grid_ctrl._coords_4d, grid_ctrl._values_4d_terminal,
+                     np.atleast_2d(s_4d), method='linear',
+                     bounds_error=False, fill_value=np.inf).item()
+        v2 = interpn(grid_ctrl._coords_2d, grid_ctrl._values_2d_terminal,
+                     np.atleast_2d(s_2d), method='linear',
+                     bounds_error=False, fill_value=np.inf).item()
+        values_g[k] = max(v4, v2)
+        grads_g[k] = np.array(g4 + g2)
+
+        # --- DeepReach controller step ---
         controls_d[k] = brat_ctrl.u_fn(states_d[k], t)
         values_d[k] = brat_ctrl.get_value(states_d[k], brat_ctrl.tMax)
         grads_d[k] = brat_ctrl.get_gradient(states_d[k], brat_ctrl.tMax)
 
         # Euler integration (independent trajectories, shared dynamics)
-        s_next_g = states_g[k] + dt * dynamics_fn(states_g[k], controls_g[k])
-        s_next_d = states_d[k] + dt * dynamics_fn(states_d[k], controls_d[k])
+        s_next_g = states_g[k] + dt * grid_ctrl._cw_dynamics(states_g[k], controls_g[k])
+        s_next_d = states_d[k] + dt * grid_ctrl._cw_dynamics(states_d[k], controls_d[k])
         s_next_g[4] = (s_next_g[4] + np.pi) % (2 * np.pi) - np.pi
         s_next_d[4] = (s_next_d[4] + np.pi) % (2 * np.pi) - np.pi
         states_g[k + 1] = s_next_g
@@ -403,59 +392,107 @@ def plot_trajectory_overlay(result_grid, result_dr, ic, ic_idx, save_path,
 
 
 def plot_states(result_grid, result_dr, ic_idx, save_path, dynamics=None):
-    """6 states vs time (3x2 subplots) with goal tolerance bands."""
-    labels = ['px (m)', 'py (m)', 'vx (m/s)', 'vy (m/s)', '\u03b8 (rad)', '\u03c9 (rad/s)']
-    fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
-    axes = axes.flatten()
+    """6 states vs time (3x2 subplots, publication quality) with goal tolerance bands."""
+    import matplotlib
+
+    _STYLE = {
+        'font.family': 'serif',
+        'font.serif': ['Times New Roman', 'Palatino Linotype', 'DejaVu Serif'],
+        'font.size': 10,
+        'axes.titlesize': 11,
+        'axes.labelsize': 10,
+        'xtick.labelsize': 8,
+        'ytick.labelsize': 8,
+        'legend.fontsize': 9,
+        'figure.dpi': 300,
+        'savefig.dpi': 300,
+        'savefig.bbox': 'tight',
+        'savefig.pad_inches': 0.05,
+        'axes.spines.top': False,
+        'axes.spines.right': False,
+        'axes.linewidth': 0.8,
+        'lines.linewidth': 1.5,
+        'pdf.fonttype': 42,
+        'ps.fonttype': 42,
+    }
+
+    labels = [
+        'Position x (m)',      'Position y (m)',
+        'Velocity x (m/s)',    'Velocity y (m/s)',
+        r'Attitude $\theta$ (rad)', r'Angular Rate $\omega$ (rad/s)',
+    ]
+
+    COLOR_GRID = '#000000'  # black — grid-based ground truth
+    COLOR_DR   = '#0048a6'  # dark blue — DeepReach baseline
+    COLOR_GOAL = '#2ca02c'  # green — goal tolerance band
 
     tg = result_grid['trajectory']
     td = result_dr['trajectory']
-    dt = result_grid['times'][1] - result_grid['times'][0] if len(result_grid['times']) > 1 else 0.1
-    times_g = np.arange(tg.shape[0]) * dt
-    times_d = np.arange(td.shape[0]) * dt
+    dt_val = (result_grid['times'][1] - result_grid['times'][0]
+              if len(result_grid['times']) > 1 else 0.1)
+    times_g = np.arange(tg.shape[0]) * dt_val
+    times_d = np.arange(td.shape[0]) * dt_val
+    t_max = max(times_g[-1], times_d[-1])
 
-    # Goal targets and tolerance bands per state
     goal_bands = None
     if dynamics is not None:
         goal = dynamics.goal_state.cpu().numpy()
         goal_bands = [
-            (0.0, dynamics.eps_p),                         # px: center=0, half=eps_p
-            (None, None),                                  # py: asymmetric band
-            (0.0, dynamics.eps_v),                         # vx: center=0, half=eps_v
-            (0.0, dynamics.eps_v),                         # vy: center=0, half=eps_v
-            (float(goal[4]), dynamics.eps_theta),           # theta: center=pi/2
-            (float(goal[5]), dynamics.eps_omega),           # omega: center=0
+            (0.0, dynamics.eps_p),        # px
+            (None, None),                 # py: asymmetric — handled separately
+            (0.0, dynamics.eps_v),        # vx
+            (0.0, dynamics.eps_v),        # vy
+            (float(goal[4]), dynamics.eps_theta),
+            (float(goal[5]), dynamics.eps_omega),
         ]
 
-    for i, (ax, lbl) in enumerate(zip(axes, labels)):
-        ax.plot(times_g, tg[:, i], 'b-', lw=1.2, label='Grid')
-        ax.plot(times_d, td[:, i], 'r--', lw=1.2, label='DeepReach')
+    with matplotlib.rc_context(_STYLE):
+        fig, axes = plt.subplots(3, 2, figsize=(7.16, 5.5), sharex=True)
+        axes_flat = axes.flatten()
 
-        # Goal tolerance bands
-        if goal_bands is not None:
-            if i == 1:  # py has asymmetric goal band
-                ax.axhspan(dynamics.goal_y_min, dynamics.goal_y_max,
-                           alpha=0.15, color='green')
-                ax.axhline(dynamics.goal_y_center, color='green', ls=':', alpha=0.5)
-            else:
-                center, half = goal_bands[i]
-                ax.axhspan(center - half, center + half, alpha=0.15, color='green')
-                ax.axhline(center, color='green', ls=':', alpha=0.5)
+        for i, (ax, lbl) in enumerate(zip(axes_flat, labels)):
+            line_g, = ax.plot(times_g, tg[:, i],
+                              color=COLOR_GRID, lw=1.5, ls='-',  label='Grid-Based')
+            line_d, = ax.plot(times_d, td[:, i],
+                              color=COLOR_DR,   lw=1.5, ls='--', label='DeepReach')
 
-        # Docking time markers
-        _add_dock_markers(ax, result_grid, result_dr)
+            # Goal tolerance bands (light green shading + center line)
+            if goal_bands is not None:
+                if i == 1:
+                    ax.axhspan(dynamics.goal_y_min, dynamics.goal_y_max,
+                               alpha=0.15, color=COLOR_GOAL, zorder=0)
+                    ax.axhline(dynamics.goal_y_center,
+                               color=COLOR_GOAL, ls=':', lw=0.8, alpha=0.7)
+                else:
+                    center, half = goal_bands[i]
+                    ax.axhspan(center - half, center + half,
+                               alpha=0.15, color=COLOR_GOAL, zorder=0)
+                    ax.axhline(center, color=COLOR_GOAL, ls=':', lw=0.8, alpha=0.7)
 
-        ax.set_ylabel(lbl)
-        ax.grid(alpha=0.3)
-        if i == 0:
-            ax.legend(fontsize=8)
+            # Docking-time markers (colored to match each controller's line)
+            if result_grid.get('goal_time') is not None:
+                ax.axvline(result_grid['goal_time'],
+                           color=COLOR_GRID, ls=':', lw=0.8, alpha=0.5)
+            if result_dr.get('goal_time') is not None:
+                ax.axvline(result_dr['goal_time'],
+                           color=COLOR_DR, ls=':', lw=0.8, alpha=0.5)
 
-    axes[-1].set_xlabel('Time (s)')
-    axes[-2].set_xlabel('Time (s)')
-    fig.suptitle(f'State Comparison — IC {ic_idx}', fontsize=13)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+            ax.set_ylabel(lbl)
+            ax.set_xlim(0, t_max)
+            ax.grid(True, alpha=0.3, linestyle='--')
+
+        # x-axis label only on the bottom row
+        for ax in axes[2, :]:
+            ax.set_xlabel('Time (s)')
+
+        # Single shared legend in the first subplot
+        axes_flat[0].legend(handles=[line_g, line_d], frameon=False, loc='lower right')
+
+        fig.tight_layout(h_pad=0.5, w_pad=0.8)
+        base = os.path.splitext(save_path)[0]
+        fig.savefig(base + '.pdf')
+        fig.savefig(base + '.png', dpi=300)
+        plt.close(fig)
 
 
 def plot_controls(result_grid, result_dr, ic_idx, save_path):
@@ -612,18 +649,13 @@ def main():
     print('\n' + '=' * 60)
     print('Loading grid-based controller (filter_mode=None for pure optimal) ...')
     t0 = _time.time()
-    ComboController = _get_combo_module().ComboController
-    combo = ComboController(
-        mc=200.0, orbit_alt=400,
-        post_hw_x=0.6, post_length=0.2,
-        w_t=6, h_t=3, w_c=1.0, h_c=1.0,
-        eps_p=0.1, eps_v=0.1, eps_theta=0.04, eps_omega=0.05,
-        u_bar_4D=20.0, u_bar_2D=1.5,
-        d_bar_4D=0.0, d_bar_2D=0.0,
-        final_time=args.grid_final_time,
+    grid_ctrl = GridBasedController(
+        dt=args.dt,
+        max_sim_time=-args.grid_final_time,  # grid_final_time is negative (e.g. -30)
         cache_dir=cache_dir,
         filter_mode=None,
     )
+    combo = grid_ctrl.combo  # raw ComboController for IC selection and BRT contour plots
     grid_times = np.array(combo.times)
     print(f"  Ready in {_time.time() - t0:.1f}s")
 
@@ -634,10 +666,7 @@ def main():
     ics = select_ics(combo, brat_ctrl, grid_times, args.grid_time_horizon,
                      args.n_ics, args.n_candidates, args.seed)
 
-    # ---- 4. Load shared dynamics ----
-    dynamics_fn = _load_dynamics_fn()
-
-    # ---- 5. Run comparisons ----
+    # ---- 4. Run comparisons ----
     print('\n' + '=' * 60)
     print(f'Running {len(ics)} comparison(s) ...')
     all_metrics = []
@@ -647,8 +676,7 @@ def main():
         print(f'\n--- IC {i}: {ic} ---')
 
         result_grid, result_dr = simulate_both(
-            ic, combo, brat_ctrl, dynamics_fn, args.dt, args.max_sim_time,
-            grid_times)
+            ic, grid_ctrl, brat_ctrl, args.dt, args.max_sim_time)
 
         # Gradient metrics (trajectories are same length from joint sim)
         grad_met = compute_gradient_metrics(
