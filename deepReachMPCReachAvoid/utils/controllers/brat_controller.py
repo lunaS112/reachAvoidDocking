@@ -17,7 +17,6 @@ Usage:
 import time as _time
 
 import torch
-import torch.nn as nn
 import numpy as np
 import pickle
 import os

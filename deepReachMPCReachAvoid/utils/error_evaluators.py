@@ -1,7 +1,6 @@
 import torch
 from tqdm import tqdm
 from abc import ABC, abstractmethod
-from utils import MPC
 
 class Validator(ABC):
     @abstractmethod
@@ -341,17 +340,6 @@ def target_fraction(model, dynamics, t, sample_validator, target_validator, num_
         values = torch.zeros(0, )
 
         while len(states) < num_samples:
-            # sample batch
-            # batch_times = torch.full((batch_size, 1), t)
-            # batch_states = torch.zeros(batch_size, dynamics.state_dim)
-            # for dim in range(dynamics.state_dim):
-            #     batch_states[:, dim].uniform_(
-            #         *dynamics.state_test_range()[dim])
-            #     batch_states[:, dim] = batch_states[:, dim]
-            # batch_states = dynamics.equivalent_wrapped_state(batch_states)
-            # batch_coords = torch.cat((batch_times, batch_states), dim=-1)
-
-            
             batch_states = torch.zeros(batch_size, dynamics.state_dim)
             for dim in range(dynamics.state_dim):
                 batch_states[:, dim].uniform_(

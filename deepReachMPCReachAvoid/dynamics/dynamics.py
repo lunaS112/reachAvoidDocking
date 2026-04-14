@@ -4,7 +4,6 @@ from utils import diff_operators, quaternion
 import math
 import torch
 import numpy as np
-from multiprocessing import Pool
 import torch.nn as nn
 import scipy.io as spio
 # during training, states will be sampled uniformly by each state dimension from the model-unit -1 to 1 range (for training stability),
@@ -2925,17 +2924,6 @@ class LessLinearND(Dynamics):
         wrapped_state = torch.clone(state)
         return wrapped_state
 
-    # LessLinear dynamics
-    # \dot xN    = (aN \cdot x) + (no ctrl or dist) + mu * sin(alpha * xN) * xN^2
-    # \dot xi    = (ai \cdot x) + bi * ui + ci * di - gamma * xi * xN^2
-    # i.e.
-    # \dot x = Ax + Bu + Cd + NLterm(x, gamma, mu, alpha)
-    # def dsdt(self, state, control, disturbance):
-    #     dsdt = torch.zeros_like(state)
-    #     nl_term_N = self.mu * torch.sin(self.alpha * state[..., 0]) * state[..., 0] * state[..., 0]
-    #     nl_term_i = torch.multiply(-self.gamma * state[..., 0] * state[..., 0], state[..., 1:])
-    #     dsdt[..., :] = torch.matmul(self.A, state[..., :]) + torch.matmul(self.B, control[..., :]) + torch.cat((nl_term_N, nl_term_i), 0)
-    #     return dsdt
     def dsdt(self, state, control, disturbance):
         x0 = state[..., 0]  # shape: (...)
         x_rest = state[..., 1:]  # shape: (..., n-1)

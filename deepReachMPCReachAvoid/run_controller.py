@@ -17,8 +17,6 @@ import json
 import os
 import pickle
 import sys
-import time
-
 import numpy as np
 import torch
 import matplotlib

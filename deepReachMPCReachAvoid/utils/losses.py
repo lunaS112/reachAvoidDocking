@@ -1,5 +1,4 @@
 import torch
-from utils import diff_operators, quaternion
 
 # uses real units
 
