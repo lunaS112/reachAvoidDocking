@@ -1,12 +1,12 @@
 """
-2-D BRT Slice Animated GIFs for Docking13D
+2-D BRAT Slice Animated GIFs for Docking13D
 
 Produces animated GIFs showing the value-function heat-map on three
 orthogonal position slices (XY, XZ, YZ) as the chaser moves along
 its trajectory.  Each frame shows:
 
   * The value-function heat-map (RdYlBu, saturated at ±1).
-  * Black V=0 contour (BRT boundary).
+  * Black V=0 contour (BRAT boundary).
   * Quiver arrows showing in-plane spatial gradient ∇V.
   * Target body + docking post geometry (2D projection).
   * Gold goal-region overlay.
@@ -17,7 +17,7 @@ its trajectory.  Each frame shows:
 Usage (from run_controller_13d.py, via --viz_gifs flag):
 
     from utils.controllers.slice_gif_13d import SliceGIF13D
-    gif = SliceGIF13D(brt_viz, dynamics)
+    gif = SliceGIF13D(brat_viz, dynamics)
     gif.generate(result, output_dir, max_frames=50, resolution=80)
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-from utils.brt_visualization_13d import BRTVisualizer13D
+from utils.brat_visualization_13d import BRATVisualizer13D
 
 
 # ───────────────────────────────────────────────────────────────────── #
@@ -146,18 +146,18 @@ _IDX_MAP = {  # (in-plane axis a, in-plane axis b, held-out axis)
 
 
 class SliceGIF13D:
-    """Animate 2-D BRT slices along the docking trajectory.
+    """Animate 2-D BRAT slices along the docking trajectory.
 
     Parameters
     ----------
-    brt_viz  : BRTVisualizer13D
+    brat_viz  : BRATVisualizer13D
         Must own the trained model and dynamics.
     dynamics : Docking13D
         Used for target-geometry drawing & reach/avoid evaluation.
     """
 
-    def __init__(self, brt_viz: BRTVisualizer13D, dynamics):
-        self.brt_viz = brt_viz
+    def __init__(self, brat_viz: BRATVisualizer13D, dynamics):
+        self.brat_viz = brat_viz
         self.dynamics = dynamics
 
     # Key-frame / time-query helpers imported from anim_utils
@@ -207,7 +207,7 @@ class SliceGIF13D:
         for count, ki in enumerate(key_idx):
             state = traj[ki]
             t_q = float(t_queries[ki])
-            A, B, V, dVda, dVdb = self.brt_viz.evaluate_brt_grid_2d(
+            A, B, V, dVda, dVdb = self.brat_viz.evaluate_brat_grid_2d(
                 state, t_q, plane=plane,
                 grid_bounds_2d=grid_bounds_2d, resolution=resolution)
             frame_data.append({
@@ -256,7 +256,7 @@ class SliceGIF13D:
             ax.contour(Ag, Bg, V.T, levels=[0.0], colors='black',
                        linewidths=1.5, linestyles='-', zorder=6)
 
-            # Quiver arrows: -∇V (steepest descent, toward BRT interior)
+            # Quiver arrows: -∇V (steepest descent, toward BRAT interior)
             s = quiver_stride
             a_q = A[::s, ::s]
             b_q = B[::s, ::s]
@@ -309,7 +309,7 @@ class SliceGIF13D:
             ax.set_ylim(extent[2], extent[3])
             ax.set_xlabel(xlabel, fontsize=11)
             ax.set_ylabel(ylabel, fontsize=11)
-            ax.set_title(f"BRT Value Slice ({plane.upper()})  —  V(x, t)",
+            ax.set_title(f"BRAT Value Slice ({plane.upper()})  —  V(x, t)",
                          fontsize=13)
             ax.grid(True, alpha=0.15, zorder=0)
 
@@ -350,7 +350,7 @@ class SliceGIF13D:
 
         for plane in planes:
             gif_path = os.path.join(output_dir,
-                                    f'brt_slice_{plane}.gif')
+                                    f'brat_slice_{plane}.gif')
             self._generate_single_gif(
                 result, plane, gif_path,
                 max_frames=max_frames, resolution=resolution, fps=fps)

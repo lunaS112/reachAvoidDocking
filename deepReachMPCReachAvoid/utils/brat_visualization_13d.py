@@ -1,5 +1,5 @@
 """
-3D BRT Visualization for Docking13D
+3D BRAT Visualization for Docking13D
 
 Renders the backward reachable tube as a translucent 3D blob in (x, y, z)
 position space, with the remaining 10 states fixed to user-supplied values
@@ -8,13 +8,13 @@ back-ends:
 
   • **plotly**      – Interactive HTML with rotation/zoom.  Isosurface for
                       the V=0 boundary, optional volume trace for the value
-                      gradient inside the BRT.
+                      gradient inside the BRAT.
   • **matplotlib**  – Static / animated figures consistent with the existing
                       ``trajectory_animation_13D.py``.  Uses marching cubes
                       to extract the V=0 surface and colour-maps it by value.
 
 Both back-ends produce:
-  • Translucent BRT shell (V = 0 surface)
+  • Translucent BRAT shell (V = 0 surface)
   • Internal value gradient visualisation (heat-map colouring)
   • Target spacecraft geometry (box + hemispherical dock cutout)
   • Reach tolerance sphere at the origin
@@ -542,12 +542,12 @@ def state_range_limits(dynamics):
 #  Main class
 # --------------------------------------------------------------------------- #
 
-class BRTVisualizer13D:
-    """Dual-backend 3D BRT blob renderer for Docking13D.
+class BRATVisualizer13D:
+    """Dual-backend 3D BRAT blob renderer for Docking13D.
 
     Parameters
     ----------
-    controller : BRTController13D | MPCTerminalController13D
+    controller : BRATController13D | MPCTerminalController13D
         Must expose ``self.model``, ``self.dynamics``, ``self.device``.
     backend : ``'plotly'`` | ``'matplotlib'``
         Rendering back-end.
@@ -571,14 +571,14 @@ class BRTVisualizer13D:
     #  Value-field evaluation
     # ------------------------------------------------------------------ #
 
-    def evaluate_brt_grid(self, current_state: np.ndarray,
+    def evaluate_brat_grid(self, current_state: np.ndarray,
                           time_query: float,
                           grid_bounds: list | None = None,
                           resolution: int = 50) -> tuple:
         """Evaluate V over a (x, y, z) grid.
 
         Non-spatial states are taken from *current_state* so that the blob
-        reflects the BRT conditioned on the chaser's current velocity,
+        reflects the BRAT conditioned on the chaser's current velocity,
         attitude and angular velocity.
 
         Parameters
@@ -633,7 +633,7 @@ class BRTVisualizer13D:
     #  2D slice evaluation (for val-plot GIFs)
     # ------------------------------------------------------------------ #
 
-    def evaluate_brt_grid_2d(self, current_state: np.ndarray,
+    def evaluate_brat_grid_2d(self, current_state: np.ndarray,
                              time_query: float,
                              plane: str = 'xy',
                              grid_bounds_2d: list | None = None,
@@ -703,7 +703,7 @@ class BRTVisualizer13D:
     #  Generic 2D slice evaluation (arbitrary state indices)
     # ------------------------------------------------------------------ #
 
-    def evaluate_brt_grid_2d_generic(
+    def evaluate_brat_grid_2d_generic(
         self,
         base_state: np.ndarray,
         time_query: float,
@@ -766,7 +766,7 @@ class BRTVisualizer13D:
     #  3D gradient evaluation (for Cone arrows in HTML animation)
     # ------------------------------------------------------------------ #
 
-    def evaluate_brt_gradients_3d(self, current_state: np.ndarray,
+    def evaluate_brat_gradients_3d(self, current_state: np.ndarray,
                                   time_query: float,
                                   grid_bounds: list | None = None,
                                   resolution: int = 12) -> tuple:
@@ -834,13 +834,13 @@ class BRTVisualizer13D:
                       trajectory=None, title: str = '',
                       axis_range: dict | None = None,
                       safety_active=None):
-        """Build a Plotly ``Figure`` with BRT blob + spacecraft geometry.
+        """Build a Plotly ``Figure`` with BRAT blob + spacecraft geometry.
 
         Always emits a **fixed** number and order of traces so that the
         visibility-toggle animation in :class:`ControllerAnimation13D`
         works correctly:
 
-             0. Isosurface  (BRT V=0) — or scatter fallback
+             0. Isosurface  (BRAT V=0) — or scatter fallback
              1. Scatter3d   (value gradient point cloud)
              2. Mesh3d      (target solid body)
              3. Scatter3d   (target wireframe edges)
@@ -856,7 +856,7 @@ class BRTVisualizer13D:
 
         Parameters
         ----------
-        X, Y, Z, V : arrays from :meth:`evaluate_brt_grid`.
+        X, Y, Z, V : arrays from :meth:`evaluate_brat_grid`.
         chaser_state : (13,) current chaser state.
         trajectory   : (T, 13) or *None* — path to draw.
         title        : optional figure title.
@@ -869,10 +869,10 @@ class BRTVisualizer13D:
 
         fig = go.Figure()
 
-        has_brt = bool(V.min() <= 0)
+        has_brat = bool(V.min() <= 0)
 
-        # --- Trace 0: BRT isosurface (V=0) or invisible placeholder --- #
-        if has_brt:
+        # --- Trace 0: BRAT isosurface (V=0) or invisible placeholder --- #
+        if has_brat:
             fig.add_trace(go.Isosurface(
                 x=X.ravel(), y=Y.ravel(), z=Z.ravel(),
                 value=V.ravel(),
@@ -883,16 +883,16 @@ class BRTVisualizer13D:
                             [1, 'rgba(50,120,255,0.35)']],
                 showscale=False,
                 caps=dict(x_show=False, y_show=False, z_show=False),
-                name='BRT (V=0)',
+                name='BRAT (V=0)',
             ))
         else:
-            # No BRT region — emit an invisible placeholder so trace
+            # No BRAT region — emit an invisible placeholder so trace
             # indices stay consistent (trace 1 already shows the gradient).
             fig.add_trace(go.Scatter3d(
                 x=[], y=[], z=[],
                 mode='markers',
                 marker=dict(size=1),
-                name='BRT (V=0)',
+                name='BRAT (V=0)',
                 visible=False,
             ))
 
@@ -1112,7 +1112,7 @@ class BRTVisualizer13D:
                           trajectory=None, title: str = '', ax=None,
                           axis_limits: dict | None = None,
                           safety_active=None):
-        """Render BRT blob with matplotlib 3D.
+        """Render BRAT blob with matplotlib 3D.
 
         Uses marching cubes to extract the V=0 isosurface and colour-maps
         the faces by interpolated value for a gradient visualisation.
@@ -1140,7 +1140,7 @@ class BRTVisualizer13D:
             fig = ax.figure
 
         # --- Extract V=0 isosurface ----------------------------------- #
-        brt_drawn = False
+        brat_drawn = False
         try:
             from skimage.measure import marching_cubes
             verts_mc, faces_mc, _, values_mc = marching_cubes(
@@ -1154,7 +1154,7 @@ class BRTVisualizer13D:
             origin = np.array([X[0,0,0], Y[0,0,0], Z[0,0,0]])
             verts_real = verts_mc * spacing + origin
 
-            # Colour faces by mean vertex value (depth inside BRT)
+            # Colour faces by mean vertex value (depth inside BRAT)
             import matplotlib.cm as cm
             v_normed = np.clip(
                 values_mc / (np.abs(values_mc).max() + 1e-8), -1, 1)
@@ -1166,12 +1166,12 @@ class BRTVisualizer13D:
             mesh.set_facecolor(face_colors)
             mesh.set_edgecolor('steelblue')
             ax.add_collection3d(mesh)
-            brt_drawn = True
+            brat_drawn = True
         except (ImportError, ValueError):
             pass
 
         # Scatter fallback when marching cubes fails
-        if not brt_drawn:
+        if not brat_drawn:
             mask = V.ravel() < 0
             if np.any(mask):
                 import matplotlib.cm as cm
@@ -1182,9 +1182,9 @@ class BRTVisualizer13D:
                 c = cm.RdYlGn_r(
                     np.clip(v_neg / (np.abs(v_neg).min() + 1e-8), -1, 0) * -0.5 + 0.5)
                 ax.scatter(pts_x, pts_y, pts_z, c=c, s=12, alpha=0.35,
-                           label='BRT (V<0)')
+                           label='BRAT (V<0)')
             elif V.min() > 0:
-                print("[BRT Viz] V > 0 everywhere — no BRT region in this grid.")
+                print("[BRAT Viz] V > 0 everywhere — no BRAT region in this grid.")
 
         # --- Target body ---------------------------------------------- #
         self._draw_target_mpl(ax)

@@ -1,22 +1,22 @@
 """
-Vanilla BRT Controller for 13D -- ablation baseline.
+Vanilla BRAT Controller for 13D -- ablation baseline.
 
-Uses the exact same two-phase control framework as BRTController13D but
+Uses the exact same two-phase control framework as BRATController13D but
 loads a value function trained with vanilla DeepReach (no MPC supervision,
 no gradient refinement, no exact boundary alignment).
 
-Comparing this against the full BRT 13D controller isolates the contribution
+Comparing this against the full BRAT 13D controller isolates the contribution
 of training-pipeline improvements.
 """
 
 import torch
 import numpy as np
 
-from utils.controllers.brt_controller_13d import BRTController13D
+from utils.controllers.brat_controller_13d import BRATController13D
 
 
-class VanillaBRTController13D(BRTController13D):
-    """BRTController13D backed by a vanilla-DeepReach value function.
+class VanillaBRATController13D(BRATController13D):
+    """BRATController13D backed by a vanilla-DeepReach value function.
 
     Overrides gradient/value queries to handle the vanilla DeepReach model
     whose ``io_to_dv`` does not add a boundary-function Jacobian term.
@@ -65,16 +65,16 @@ class VanillaBRTController13D(BRTController13D):
 
     def simulate_docking(self, initial_state, max_sim_time, dynamics_fn=None):
         result = super().simulate_docking(initial_state, max_sim_time, dynamics_fn)
-        result['controller_type'] = 'vanilla_brt_13d'
+        result['controller_type'] = 'vanilla_brat_13d'
         return result
 
     def simulate_docking_batch(self, initial_states_np, max_sim_time):
-        """Batch simulation — delegates to BRTController13D and fixes the label.
+        """Batch simulation — delegates to BRATController13D and fixes the label.
 
         The base-class batch methods already use squeeze(-1) throughout, so
         they are correct for the vanilla model even at batch-size 1.
         """
         results = super().simulate_docking_batch(initial_states_np, max_sim_time)
         for r in results:
-            r['controller_type'] = 'vanilla_brt_13d'
+            r['controller_type'] = 'vanilla_brat_13d'
         return results

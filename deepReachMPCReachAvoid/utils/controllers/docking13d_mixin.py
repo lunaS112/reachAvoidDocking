@@ -2,7 +2,7 @@
 Shared utilities for all 13D docking controllers.
 
 Provides docking-check, collision-check, state-wrapping, and bang-bang
-optimal control methods that are common to BRTController13D,
+optimal control methods that are common to BRATController13D,
 MPCController13D, and MPCTerminalController13D.
 
 These are implemented as a mixin class so each controller can inherit

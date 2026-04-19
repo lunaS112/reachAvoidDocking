@@ -14,9 +14,9 @@ import math
 import datetime
 from pathlib import Path
 from dynamics import dynamics
-from utils.controllers.brt_controller_13d import BRTController13D
+from utils.controllers.brat_controller_13d import BRATController13D
 from utils.controllers.safety_filter import SafetyFilter
-from utils.brt_visualization_13d import _indent_box_mesh
+from utils.brat_visualization_13d import _indent_box_mesh
 
 torch.manual_seed(1)
 np.random.seed(1)
@@ -173,7 +173,7 @@ if __name__ == "__main__":
         checkpoint_path=avoid_checkpoint,
         device=device,
     )
-    controller = BRTController13D(
+    controller = BRATController13D(
         checkpoint_path=checkpoint,
         tMax=10.0,
         dt=0.1,

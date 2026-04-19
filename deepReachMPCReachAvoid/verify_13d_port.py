@@ -21,9 +21,9 @@ print("=" * 70)
 print("\n--- V1: Min-time search + Phase 2 logic ---")
 
 import inspect
-from utils.controllers.brt_controller_13d import BRTController13D
+from utils.controllers.brat_controller_13d import BRATController13D
 
-src = inspect.getsource(BRTController13D)
+src = inspect.getsource(BRATController13D)
 
 # 1a. Import check
 from utils.controllers.min_time_search import find_min_brat_time_single, STATUS_HOLD, STATUS_STRICT, STATUS_ARGMIN
@@ -31,27 +31,27 @@ print(f"  [OK] find_min_brat_time_single imported")
 print(f"  [OK] STATUS_HOLD={STATUS_HOLD}, STATUS_STRICT={STATUS_STRICT}, STATUS_ARGMIN={STATUS_ARGMIN}")
 
 # 1b. Old method deleted
-assert '_search_brt_time' not in [m[0] for m in inspect.getmembers(BRTController13D)
+assert '_search_brt_time' not in [m[0] for m in inspect.getmembers(BRATController13D)
                                    if not m[0].startswith('__')], \
     "Old _search_brt_time still exists!"
-assert '_search_brat_time' in [m[0] for m in inspect.getmembers(BRTController13D)
+assert '_search_brat_time' in [m[0] for m in inspect.getmembers(BRATController13D)
                                 if not m[0].startswith('__')]
 print(f"  [OK] Old _search_brt_time deleted, _search_brat_time exists")
 
 # 1c. No None fallback in Phase 2
-assert 'return None' not in inspect.getsource(BRTController13D._search_brat_time), \
+assert 'return None' not in inspect.getsource(BRATController13D._search_brat_time), \
     "_search_brat_time should never return None"
 print(f"  [OK] _search_brat_time never returns None")
 
 # 1d. No t_remaining -= dt
-u_fn_src = inspect.getsource(BRTController13D.u_fn)
+u_fn_src = inspect.getsource(BRATController13D.u_fn)
 assert 't_remaining -= self.dt' not in u_fn_src, "Blind countdown still present!"
 assert 't_remaining -= dt' not in u_fn_src, "Blind countdown still present!"
 print(f"  [OK] No blind t_remaining -= dt countdown in u_fn")
 
 # 1e. Search called every Phase 2 step (not conditional on value > 0)
 assert '_search_brat_time(state)' in u_fn_src or '_search_brat_time(state' in u_fn_src
-# Verify it's unconditional inside the in_brt_phase block
+# Verify it's unconditional inside the in_brat_phase block
 assert 'if value > 0:' not in u_fn_src, "Conditional search on value > 0 still present!"
 print(f"  [OK] Search called unconditionally in Phase 2")
 
@@ -60,15 +60,15 @@ assert 'STATUS_HOLD' in u_fn_src
 print(f"  [OK] STATUS_HOLD used in u_fn")
 
 # 1g. debug_phase2 support
-assert 'debug_phase2' in inspect.getsource(BRTController13D.__init__)
+assert 'debug_phase2' in inspect.getsource(BRATController13D.__init__)
 assert '_record_phase2_debug' in src
-assert 'phase2_debug_log' in inspect.getsource(BRTController13D.reset)
+assert 'phase2_debug_log' in inspect.getsource(BRATController13D.reset)
 print(f"  [OK] debug_phase2 logging present and toggleable")
 
 # --- Verification 2: Phase-based safety filter margins ---
 print("\n--- V2: Phase-based safety filter margins ---")
 
-init_sig = inspect.signature(BRTController13D.__init__)
+init_sig = inspect.signature(BRATController13D.__init__)
 assert 'safety_margin_phase1' in init_sig.parameters
 assert 'safety_margin_phase2' in init_sig.parameters
 assert init_sig.parameters['safety_margin_phase1'].default == 0.1
@@ -76,7 +76,7 @@ assert init_sig.parameters['safety_margin_phase2'].default == 0.02
 print(f"  [OK] Constructor params: safety_margin_phase1=0.1, safety_margin_phase2=0.02")
 
 assert 'set_margin' in u_fn_src
-assert 'safety_margin_phase2 if self.in_brt_phase' in u_fn_src
+assert 'safety_margin_phase2 if self.in_brat_phase' in u_fn_src
 print(f"  [OK] set_margin() called with phase-dependent margin in u_fn")
 
 # --- Verification 3: Gradient fallback ---
@@ -90,19 +90,19 @@ assert 'avoid_proximity_margin' in init_sig.parameters
 assert init_sig.parameters['avoid_proximity_margin'].default == 1.0
 print(f"  [OK] Constructor params: gradient_fallback=True, grad_threshold=0.01, avoid_proximity_margin=1.0")
 
-assert hasattr(BRTController13D, '_compute_l2_virtual_gradient')
-assert hasattr(BRTController13D, '_avoid_proximity_check')
+assert hasattr(BRATController13D, '_compute_l2_virtual_gradient')
+assert hasattr(BRATController13D, '_avoid_proximity_check')
 print(f"  [OK] _compute_l2_virtual_gradient and _avoid_proximity_check exist")
 
 # Check virtual gradient populates correct indices
-vg_src = inspect.getsource(BRTController13D._compute_l2_virtual_gradient)
+vg_src = inspect.getsource(BRATController13D._compute_l2_virtual_gradient)
 assert 'vg[3:6]' in vg_src
 assert 'vg[10:13]' in vg_src
 assert 'np.zeros(self.state_dim)' in vg_src
 print(f"  [OK] Virtual gradient populates [3:6] and [10:13] only")
 
 # Check gains
-init_src = inspect.getsource(BRTController13D.__init__)
+init_src = inspect.getsource(BRATController13D.__init__)
 assert 'fallback_kp_trans = 0.5 * self.dynamics.F_bar' in init_src
 assert 'fallback_kd_trans = 1.0 * self.dynamics.F_bar' in init_src
 assert 'fallback_kp_rot = 0.5 * self.dynamics.tau_bar' in init_src
@@ -115,7 +115,7 @@ assert '_quat_mul_np' in vg_src, "Missing quaternion multiplication"
 print(f"  [OK] Quaternion error: double-cover handling and Hamilton product present")
 
 # Check avoid_proximity_check
-apc_src = inspect.getsource(BRTController13D._avoid_proximity_check)
+apc_src = inspect.getsource(BRATController13D._avoid_proximity_check)
 assert 'self.dynamics.avoid_fn' in apc_src
 assert 'self.avoid_proximity_margin' in apc_src
 print(f"  [OK] _avoid_proximity_check uses dynamics.avoid_fn and avoid_proximity_margin")
@@ -127,8 +127,8 @@ assert '_compute_brt_control_13d(blended, state)' in u_fn_src
 print(f"  [OK] Phase 1 blending: correct indices, weight formula, and control recomputation")
 
 # Check tracking
-assert 'fallback_weight_history' in inspect.getsource(BRTController13D.reset)
-sim_src = inspect.getsource(BRTController13D.simulate_docking)
+assert 'fallback_weight_history' in inspect.getsource(BRATController13D.reset)
+sim_src = inspect.getsource(BRATController13D.simulate_docking)
 assert 'fallback_weights' in sim_src
 assert 'n_fallback_steps' in sim_src
 print(f"  [OK] fallback_weight_history tracked, reset, and in simulation results")
@@ -155,7 +155,7 @@ print("  BEHAVIORAL TESTS")
 print("=" * 70)
 
 # Instantiate controller with all features enabled
-ctrl = BRTController13D(
+ctrl = BRATController13D(
     checkpoint_path=CKPT,
     tMax=TMAX,
     dt=0.1,
@@ -269,10 +269,10 @@ if n_phase2 > 0:
         print(f"  {times[idx]:7.2f} {t_remaining_arr[idx]:9.4f} {values[idx]:9.4f}")
 
     # Check reacquisition tracking
-    print(f"\n  Reacquisition count: {result['brt_reacquisition_count']}")
-    if result['brt_time_adjustments']:
+    print(f"\n  Reacquisition count: {result['brat_reacquisition_count']}")
+    if result['brat_time_adjustments']:
         print(f"  Time adjustments (first 5):")
-        for adj in result['brt_time_adjustments'][:5]:
+        for adj in result['brat_time_adjustments'][:5]:
             print(f"    t={adj['sim_time']:.2f}s  t*={adj['t_star']:.4f}  status={adj['status']}  V={adj['value']:.4f}")
 else:
     print(f"  [WARN] Trajectory never entered Phase 2 — cannot verify min-time search")
@@ -288,9 +288,9 @@ if n_phase1 > 0 and n_phase2 > 0:
     # Check that Phase 1 steps would use margin_phase1 and Phase 2 uses margin_phase2
     # Since safety_filter mode=0, let's just verify the code path exists by checking
     # the margin attribute after simulation (last call was in the last step)
-    expected_margin = ctrl.safety_margin_phase2 if ctrl.in_brt_phase else ctrl.safety_margin_phase1
+    expected_margin = ctrl.safety_margin_phase2 if ctrl.in_brat_phase else ctrl.safety_margin_phase1
     actual_margin = ctrl.safety_filter.margin
-    print(f"  Final phase: {'Phase 2' if ctrl.in_brt_phase else 'Phase 1'}")
+    print(f"  Final phase: {'Phase 2' if ctrl.in_brat_phase else 'Phase 1'}")
     print(f"  Expected margin: {expected_margin},  Actual margin: {actual_margin}")
     assert actual_margin == expected_margin, f"Margin mismatch: {actual_margin} != {expected_margin}"
     print(f"  [OK] Margin correctly set to phase-appropriate value")

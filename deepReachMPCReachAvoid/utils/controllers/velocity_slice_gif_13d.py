@@ -17,7 +17,7 @@ boundary as it evolves over the countdown horizon.
 Usage (from run_controller_13d.py, via --viz_gifs flag):
 
     from utils.controllers.velocity_slice_gif_13d import VelocitySliceGIF13D
-    gif = VelocitySliceGIF13D(brt_viz, dynamics)
+    gif = VelocitySliceGIF13D(brat_viz, dynamics)
     gif.generate(result, output_path, max_frames=50, resolution=80)
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 from utils.controllers.anim_utils import select_key_frames, get_t_queries
-from utils.brt_visualization_13d import BRTVisualizer13D
+from utils.brat_visualization_13d import BRATVisualizer13D
 
 
 # Velocity plane definitions: (idx_a, idx_b, fixed_idx_in_vel_space)
@@ -83,12 +83,12 @@ class VelocitySliceGIF13D:
 
     Parameters
     ----------
-    brt_viz  : BRTVisualizer13D
+    brat_viz  : BRATVisualizer13D
     dynamics : Docking13D
     """
 
-    def __init__(self, brt_viz: BRTVisualizer13D, dynamics):
-        self.brt_viz = brt_viz
+    def __init__(self, brat_viz: BRATVisualizer13D, dynamics):
+        self.brat_viz = brat_viz
         self.dynamics = dynamics
 
     def _build_base_state(self, vy_mid: float) -> np.ndarray:
@@ -237,7 +237,7 @@ class VelocitySliceGIF13D:
                     ps[3] = 0.0       # vx=0
 
                 A, B, V, dVda, dVdb = (
-                    self.brt_viz.evaluate_brt_grid_2d_generic(
+                    self.brat_viz.evaluate_brat_grid_2d_generic(
                         ps, t_q, idx_a, idx_b,
                         vel_bounds[plane], resolution))
                 fd[plane] = {'A': A, 'B': B, 'V': V,

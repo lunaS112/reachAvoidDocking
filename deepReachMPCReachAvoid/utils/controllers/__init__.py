@@ -36,7 +36,7 @@ except ImportError:
     GridBasedController = None
 
 # 13D controllers
-from utils.controllers.brt_controller_13d import BRTController13D
+from utils.controllers.brat_controller_13d import BRATController13D
 from utils.controllers.mpc_controller_13d import MPCController13D
 from utils.controllers.mpc_terminal_controller_13d import MPCTerminalController13D
 
@@ -45,12 +45,12 @@ from utils.controllers.static_plots_13d import (
     plot_trajectory_13d, plot_states_13d, plot_controls_13d,
 )
 
-# 13D trajectory-only animation (MPC without BRT)
+# 13D trajectory-only animation (MPC without BRAT)
 from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation13D
 
 # Vanilla BRAT ablation baseline
 from utils.controllers.vanilla_brat_controller import VanillaBRATController
-from utils.controllers.vanilla_brt_controller_13d import VanillaBRTController13D
+from utils.controllers.vanilla_brat_controller_13d import VanillaBRATController13D
 
 
 # RL controllers

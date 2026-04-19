@@ -1,18 +1,18 @@
 """
-BRT-Based Optimal Controller for Docking13D
+BRAT-Based Optimal Controller for Docking13D
 
 Two-phase control strategy using the learned DeepReach value function
 for the 13-state spacecraft docking problem:
-  - Phase 1 (Convergence): Outside BRT, use V(x, tMax) gradient to steer toward BRT.
-  - Phase 2 (Precision):   Inside BRT, use time-varying V(x, t_remaining) for
+  - Phase 1 (Convergence): Outside BRAT, use V(x, tMax) gradient to steer toward BRAT.
+  - Phase 2 (Precision):   Inside BRAT, use time-varying V(x, t_remaining) for
                             optimal control with countdown timer.
 
 The controller supports reversible phase transitions: if the chaser leaves
-the BRT during Phase 2, an expanding-window time search attempts to find a
-tighter BRT shell.  If that fails, it reverts to Phase 1.
+the BRAT during Phase 2, an expanding-window time search attempts to find a
+tighter BRAT shell.  If that fails, it reverts to Phase 1.
 
 Usage:
-    controller = BRTController13D(
+    controller = BRATController13D(
         checkpoint_path='./runs/Docking13D_RA/training/checkpoints/model_final.pth',
         tMax=14.0,
     )
@@ -43,10 +43,10 @@ from utils.controllers.min_time_search import (find_min_brat_time_single,
                                                 STATUS_HOLD)
 
 
-class BRTController13D(Docking13DControllerMixin):
-    """Two-phase BRT-based optimal controller for 13D docking.
+class BRATController13D(Docking13DControllerMixin):
+    """Two-phase BRAT-based optimal controller for 13D docking.
 
-    Phase 1 (Convergence): V(x, tMax) > 0  — use gradient to approach BRT.
+    Phase 1 (Convergence): V(x, tMax) > 0  — use gradient to approach BRAT.
     Phase 2 (Precision):   V(x, tMax) <= 0 — use V(x, t_remaining) countdown.
     """
 
@@ -60,10 +60,10 @@ class BRTController13D(Docking13DControllerMixin):
         """
         Args:
             checkpoint_path:       Path to the trained model checkpoint.
-            tMax:                  BRT time-horizon cap (seconds).
+            tMax:                  BRAT time-horizon cap (seconds).
             dt:                    Control / integration timestep (seconds).
             device:                Torch device ('cuda' or 'cpu').
-            search_resolution:     Time step for BRT time search (seconds).
+            search_resolution:     Time step for BRAT time search (seconds).
             safety_margin_phase1:  Safety filter margin outside BRAT (Phase 1).
                                    Higher value triggers filter earlier.
             safety_margin_phase2:  Safety filter margin inside BRAT (Phase 2).
@@ -151,12 +151,12 @@ class BRTController13D(Docking13DControllerMixin):
         # Store dynamics parameters used for control
         self.state_dim = self.dynamics.state_dim  # 13
 
-        print(f"BRTController13D loaded | {self.dynamics.name} | "
+        print(f"BRATController13D loaded | {self.dynamics.name} | "
               f"tMax={self.tMax}s  dt={self.dt}s")
 
     def reset(self):
         """Reset controller state for a new simulation."""
-        self.in_brt_phase = False
+        self.in_brat_phase = False
         self.t_remaining = self.tMax
         self.phase_transition_time = None
 
@@ -167,8 +167,8 @@ class BRTController13D(Docking13DControllerMixin):
         self.t_remaining_history = []
         self.sim_time_history = []
 
-        self.brt_reacquisition_count = 0
-        self.brt_time_adjustments = []
+        self.brat_reacquisition_count = 0
+        self.brat_time_adjustments = []
         self.phase2_debug_log = []
 
         # Gradient fallback tracking (Phase 1)
@@ -340,7 +340,7 @@ class BRTController13D(Docking13DControllerMixin):
         control = self._compute_brt_control_13d(dvds, state)
         return control, dvds
 
-    def is_in_brt(self, state):
+    def is_in_brat(self, state):
         """True if V(state, tMax) <= 0."""
         return self.get_value(state, self.tMax) <= 0
 
@@ -562,13 +562,13 @@ class BRTController13D(Docking13DControllerMixin):
     def u_fn(self, state, sim_time):
         """Compute one control step with two-phase logic + history tracking."""
         # Phase transition detection
-        if not self.in_brt_phase:
-            if self.is_in_brt(state):
-                self.in_brt_phase = True
+        if not self.in_brat_phase:
+            if self.is_in_brat(state):
+                self.in_brat_phase = True
                 self.phase_transition_time = sim_time
-                print(f"  [BRT13D] Entered BRAT at t={sim_time:.2f}s -> Phase 2")
+                print(f"  [BRAT13D] Entered BRAT at t={sim_time:.2f}s -> Phase 2")
 
-        if self.in_brt_phase:
+        if self.in_brat_phase:
             # Phase 2: per-step min-time query (always returns a valid t*)
             search_result = self._search_brat_time(state)
             if self.debug_phase2:
@@ -590,8 +590,8 @@ class BRTController13D(Docking13DControllerMixin):
             phase = 2
 
             if status != 'strict':
-                self.brt_reacquisition_count += 1
-                self.brt_time_adjustments.append({
+                self.brat_reacquisition_count += 1
+                self.brat_time_adjustments.append({
                     'sim_time': sim_time,
                     't_star': t_star,
                     'status': status,
@@ -660,7 +660,7 @@ class BRTController13D(Docking13DControllerMixin):
         self.diagnostic_history.append({
             'sim_time': sim_time,
             'phase': phase,
-            'query_time': query_time if self.in_brt_phase or phase == 2 else self.tMax,
+            'query_time': query_time if self.in_brat_phase or phase == 2 else self.tMax,
             'value': value,
             'v_delta': v_delta,
             'grad_magnitude': grad_mag,
@@ -679,11 +679,11 @@ class BRTController13D(Docking13DControllerMixin):
         # Safety filter post-processing (phase-dependent margin)
         raw_control = control.copy()
         self.safety_filter.set_margin(
-            self.safety_margin_phase2 if self.in_brt_phase
+            self.safety_margin_phase2 if self.in_brat_phase
             else self.safety_margin_phase1)
         control = self.safety_filter.apply(state, control)
 
-        if self.in_brt_phase and self.debug_phase2:
+        if self.in_brat_phase and self.debug_phase2:
             self._record_phase2_debug(
                 sim_time, state, search_details, t_star, status,
                 query_time, value, dvds, raw_control, control)
@@ -695,7 +695,7 @@ class BRTController13D(Docking13DControllerMixin):
         self.value_history.append(value)
         self.phase_history.append(phase)
         self.t_remaining_history.append(
-            self.t_remaining if self.in_brt_phase else self.tMax)
+            self.t_remaining if self.in_brat_phase else self.tMax)
         self.sim_time_history.append(sim_time)
 
         return control
@@ -705,7 +705,7 @@ class BRTController13D(Docking13DControllerMixin):
     # ------------------------------------------------------------------
 
     def simulate_docking(self, initial_state, max_sim_time, dynamics_fn=None):
-        """Run full docking simulation with two-phase BRT control.
+        """Run full docking simulation with two-phase BRAT control.
 
         Returns:
             dict with trajectory, controls, values, phases, etc.
@@ -719,7 +719,7 @@ class BRTController13D(Docking13DControllerMixin):
         if dynamics_fn is None:
             dynamics_fn = self._default_dynamics_fn_13d
 
-        print(f"  [BRT13D] Starting  V(x,tMax)={self.get_value(state, self.tMax):.4f}")
+        print(f"  [BRAT13D] Starting  V(x,tMax)={self.get_value(state, self.tMax):.4f}")
 
         docked = False
         collided = False
@@ -733,7 +733,7 @@ class BRTController13D(Docking13DControllerMixin):
             if docked and (sim_time - dock_time) >= post_dock_duration:
                 break
 
-            # Normal control — keep BRT active even after docking so
+            # Normal control — keep BRAT active even after docking so
             # the chaser can converge closer to the goal point.
             control = self.u_fn(state, sim_time)
 
@@ -741,11 +741,11 @@ class BRTController13D(Docking13DControllerMixin):
             if not docked and self._check_docked_13d(state):
                 docked = True
                 dock_time = sim_time
-                print(f"  [BRT13D] Docking at t={sim_time:.2f}s")
+                print(f"  [BRAT13D] Docking at t={sim_time:.2f}s")
 
             if not docked and self._check_collision_13d(state):
                 collided = True
-                print(f"  [BRT13D] Collision at t={sim_time:.2f}s")
+                print(f"  [BRAT13D] Collision at t={sim_time:.2f}s")
                 break
 
             # Euler integration
@@ -772,12 +772,12 @@ class BRTController13D(Docking13DControllerMixin):
             'collision': collided,
             'docked': docked,
             'final_state': state,
-            'controller_type': 'brt_13d',
+            'controller_type': 'brat_13d',
             'control_effort': control_effort,
             'wall_time': wall_time,
             'phase_transition_time': self.phase_transition_time,
-            'brt_reacquisition_count': self.brt_reacquisition_count,
-            'brt_time_adjustments': self.brt_time_adjustments,
+            'brat_reacquisition_count': self.brat_reacquisition_count,
+            'brat_time_adjustments': self.brat_time_adjustments,
             'safety_filter_mode': self.safety_filter.mode,
             'safety_filter_log': self.safety_filter.get_log(),
             'phase2_debug_log': self.phase2_debug_log,
@@ -819,7 +819,7 @@ class BRTController13D(Docking13DControllerMixin):
             }
 
             print("\n" + "-"*60)
-            print("  BRT Diagnostic Summary")
+            print("  BRAT Diagnostic Summary")
             print("-"*60)
             print(f"  Steps         : {summary['total_steps']}")
             print(f"  Out-of-domain : {summary['out_of_domain_steps']} "
@@ -905,11 +905,11 @@ class BRTController13D(Docking13DControllerMixin):
         ic_wall_time  = np.zeros(B, dtype=np.float64)
         ic_terminated = np.zeros(B, dtype=bool)
 
-        print(f"  [BRT13D batch] {B} ICs  "
+        print(f"  [BRAT13D batch] {B} ICs  "
               f"max_sim={max_sim_time}s  dt={self.dt}s  "
               f"device={self.device}")
 
-        pbar = tqdm(range(num_steps), desc="[BRT13D batch]", unit="step",
+        pbar = tqdm(range(num_steps), desc="[BRAT13D batch]", unit="step",
                     leave=True,
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} steps"
                                 " [{elapsed}<{remaining}]  {postfix}")
@@ -1130,7 +1130,7 @@ class BRTController13D(Docking13DControllerMixin):
                 'collision':          bool(collided_np[i]),
                 'docked':             bool(docked_np[i]),
                 'final_state':        final_states_np[i],
-                'controller_type':    'brt_safety_13d',
+                'controller_type':    'brat_safety_13d',
                 'control_effort':     float(ctrl_effort[i]),
                 'wall_time':          float(ic_wall_time[i]),
                 'safety_filter_mode': self.safety_filter.mode,
@@ -1140,7 +1140,7 @@ class BRTController13D(Docking13DControllerMixin):
         n_dock = int(docked_np.sum())
         n_coll = int(collided_np.sum())
         mean_wall = float(np.mean(ic_wall_time))
-        print(f"  [BRT13D batch] done  {n_dock}/{B} docked  "
+        print(f"  [BRAT13D batch] done  {n_dock}/{B} docked  "
               f"{n_coll}/{B} collision  "
               f"total_wall={wall_total:.1f}s  mean_per_ic={mean_wall*1000:.1f}ms")
         return results

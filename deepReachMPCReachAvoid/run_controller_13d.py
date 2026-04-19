@@ -10,8 +10,8 @@ compare  Run N rollouts per controller from shared random ICs and show
 
 Examples
 --------
-  python run_controller_13d.py single  --controller brt_13d --checkpoint_path <CKPT> [opts]
-  python run_controller_13d.py compare --controllers brt_13d mpc_terminal_13d  [opts]
+  python run_controller_13d.py single  --controller brat_13d --checkpoint_path <CKPT> [opts]
+  python run_controller_13d.py compare --controllers brat_13d mpc_terminal_13d  [opts]
 
 See run_controller_13d.sh for ready-made command templates.
 """
@@ -30,10 +30,10 @@ matplotlib.use('Agg')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.controllers import (
-    BRTController13D, MPCController13D, MPCTerminalController13D,
-    SafetyFilter, RLController13D, VanillaBRTController13D,
+    BRATController13D, MPCController13D, MPCTerminalController13D,
+    SafetyFilter, RLController13D, VanillaBRATController13D,
 )
-from utils.brt_visualization_13d import BRTVisualizer13D
+from utils.brat_visualization_13d import BRATVisualizer13D
 from utils.controllers.controller_animation_13d import ControllerAnimation13D
 from utils.controllers.trajectory_only_animation_13d import TrajectoryAnimation13D
 from utils.controllers.slice_gif_13d import SliceGIF13D
@@ -52,19 +52,19 @@ from dynamics import dynamics as dynamics_module
 # ------------------------------------------------------------------ #
 
 CONTROLLER_LABELS = {
-    'brt_13d':          'BRT 13D',
-    'vanilla_brt_13d':  'Vanilla BRT 13D',
-    'brt_safety_13d':   'BRT+Safety 13D',
-    'brt_pd_hybrid':    'BRT+PD Hybrid 13D',
+    'brat_13d':          'BRAT 13D',
+    'vanilla_brat_13d':  'Vanilla BRAT 13D',
+    'brat_safety_13d':   'BRAT+Safety 13D',
+    'brat_pd_hybrid':    'BRAT+PD Hybrid 13D',
     'mpc_13d':          'MPC 13D',
     'mpc_terminal_13d': 'MPC+Terminal 13D',
     'rl_13d':           'RL 13D (DDQN)',
 }
 
 CONTROLLER_COLORS = {
-    'brt_13d':          '#1f77b4',   # blue
-    'vanilla_brt_13d':  '#17becf',   # cyan
-    'brt_safety_13d':   '#2ca02c',   # green
+    'brat_13d':          '#1f77b4',   # blue
+    'vanilla_brat_13d':  '#17becf',   # cyan
+    'brat_safety_13d':   '#2ca02c',   # green
     'mpc_13d':          '#ff7f0e',   # orange
     'mpc_terminal_13d': '#d62728',   # red
     'rl_13d':           '#9467bd',   # purple
@@ -122,23 +122,23 @@ def _build_optional_safety_filter(args, margin_override=None):
 def build_controller(name, args):
     """Instantiate a 13D controller by name string."""
     # Validate checkpoint_path for controllers that require it
-    if name in ('brt_13d', 'brt_safety_13d', 'mpc_13d', 'mpc_terminal_13d'):
+    if name in ('brat_13d', 'brat_safety_13d', 'mpc_13d', 'mpc_terminal_13d'):
         if args.checkpoint_path is None:
             raise ValueError(f"--checkpoint_path is required for {name}")
-    if name == 'vanilla_brt_13d':
+    if name == 'vanilla_brat_13d':
         if not args.vanilla_checkpoint_path or not os.path.exists(args.vanilla_checkpoint_path):
             raise ValueError(
                 f"--vanilla_checkpoint_path is required for {name} "
                 f"(got: {getattr(args, 'vanilla_checkpoint_path', None)})")
 
-    if name == 'brt_13d':
-        return BRTController13D(
+    if name == 'brat_13d':
+        return BRATController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
             device=args.device,
         )
-    elif name == 'brt_safety_13d':
+    elif name == 'brat_safety_13d':
         sf = SafetyFilter(
             mode=args.safety_filter_mode,
             checkpoint_path=args.safety_checkpoint_path,
@@ -147,7 +147,7 @@ def build_controller(name, args):
             gamma=args.safety_filter_gamma,
             device=args.device,
         )
-        return BRTController13D(
+        return BRATController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
@@ -155,7 +155,7 @@ def build_controller(name, args):
             safety_filter=sf,
             pd_torque_proximity=getattr(args, 'pd_torque_proximity', 2.0),
         )
-    elif name == 'brt_pd_hybrid':
+    elif name == 'brat_pd_hybrid':
         sf = SafetyFilter(
             mode=args.safety_filter_mode,
             checkpoint_path=args.safety_checkpoint_path,
@@ -164,7 +164,7 @@ def build_controller(name, args):
             gamma=args.safety_filter_gamma,
             device=args.device,
         )
-        return BRTController13D(
+        return BRATController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
@@ -209,9 +209,9 @@ def build_controller(name, args):
             goal_weight=args.goal_weight,
             safety_filter=sf,
         )
-    elif name == 'vanilla_brt_13d':
+    elif name == 'vanilla_brat_13d':
         sf = _build_optional_safety_filter(args)
-        return VanillaBRTController13D(
+        return VanillaBRATController13D(
             checkpoint_path=args.vanilla_checkpoint_path,
             tMax=args.tMax,
             dt=args.dt,
@@ -313,7 +313,7 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
     attempts = 0
     max_attempts = n_random * 5000 if value_filter_fn is not None else n_random * 500
     n_rejected_geom = 0
-    n_rejected_brt  = 0
+    n_rejected_brat = 0
 
     while len(samples) < n and attempts < max_attempts:
         batch_size = min(n_random * 10, 5000)
@@ -343,9 +343,9 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
             # Apply BRAT filter only to geometrically valid candidates
             geom_batch = batch[geom_valid]
             values = value_filter_fn(geom_batch)
-            brt_valid = values <= 0
-            n_rejected_brt += int((~brt_valid).sum())
-            accepted = geom_batch[brt_valid]
+            brat_valid = values <= 0
+            n_rejected_brat += int((~brat_valid).sum())
+            accepted = geom_batch[brat_valid]
         else:
             accepted = batch[geom_valid]
 
@@ -366,7 +366,7 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
         accept_pct = 100 * n_random_found / max(total, 1)
         print(f"  IC sampling: 1 fixed + {total:,} checked | "
               f"{n_rejected_geom:,} reject(geom) | "
-              f"{n_rejected_brt:,} reject(BRAT) | "
+              f"{n_rejected_brat:,} reject(BRAT) | "
               f"{n_random_found} random accepted ({accept_pct:.2f}%)")
     else:
         print(f"  IC sampling: 1 fixed + {total:,} checked | "
@@ -612,7 +612,7 @@ def plot_metrics_bar(metrics_by_controller, save_path=None, optimality=None):
     n_ctrl = len(names)
 
     label_to_type = {v: k for k, v in CONTROLLER_LABELS.items()}
-    colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brt_13d'), '#1f77b4')
+    colors = [CONTROLLER_COLORS.get(label_to_type.get(n, 'brat_13d'), '#1f77b4')
               for n in names]
 
     fig, axes = plt.subplots(1, 4, figsize=(22, 5.5))
@@ -779,14 +779,14 @@ def run_single(args):
         initial_state = np.array(json.loads(args.initial_state), dtype=np.float64)
         assert len(initial_state) == 13, \
             f"initial_state must be length 13, got {len(initial_state)}"
-    elif sampling == 'brt':
-        ic_source = 'brt'
+    elif sampling == 'brat':
+        ic_source = 'brat'
         print(f"\n  Sampling 1 IC from BRAT  (tMax={args.tMax}s) ...")
         # Use the controller's own checkpoint for value queries
         ckpt = (args.vanilla_checkpoint_path
-                if ctrl_type == 'vanilla_brt_13d'
+                if ctrl_type == 'vanilla_brat_13d'
                 else args.checkpoint_path)
-        query_ctrl = BRTController13D(
+        query_ctrl = BRATController13D(
             checkpoint_path=ckpt,
             tMax=args.tMax,
             device=args.device,
@@ -881,9 +881,9 @@ def run_single(args):
     # ---- Animated visualisation (optional) ----------------------------
     if args.viz_html or args.viz_mp4:
         if hasattr(controller, 'model'):
-            brt_viz = BRTVisualizer13D(controller, backend='plotly')
+            brat_viz = BRATVisualizer13D(controller, backend='plotly')
             anim = ControllerAnimation13D(
-                brt_viz,
+                brat_viz,
                 grid_resolution=args.viz_resolution,
             )
             if args.viz_html:
@@ -908,10 +908,10 @@ def run_single(args):
                     result, mp4_path, fps=args.viz_fps,
                     max_frames=args.viz_max_frames)
 
-    # ---- 2-D BRT slice GIFs (optional) --------------------------------
+    # ---- 2-D BRAT slice GIFs (optional) --------------------------------
     if getattr(args, 'viz_gifs', False) and hasattr(controller, 'model'):
-        brt_viz_for_gif = BRTVisualizer13D(controller, backend='plotly')
-        slice_gif = SliceGIF13D(brt_viz_for_gif, dynamics)
+        brat_viz_for_gif = BRATVisualizer13D(controller, backend='plotly')
+        slice_gif = SliceGIF13D(brat_viz_for_gif, dynamics)
         slice_gif.generate(
             result, args.output_dir,
             max_frames=args.viz_max_frames,
@@ -919,29 +919,29 @@ def run_single(args):
             fps=getattr(args, 'viz_gif_fps', 5),
         )
         # Combined 4-panel GIF (3 slices + 3-D isometric)
-        combined_gif = CombinedGIF13D(brt_viz_for_gif, dynamics)
+        combined_gif = CombinedGIF13D(brat_viz_for_gif, dynamics)
         combined_gif.generate(
             result,
-            os.path.join(args.output_dir, 'brt_combined.gif'),
+            os.path.join(args.output_dir, 'brat_combined.gif'),
             max_frames=args.viz_max_frames,
             resolution=getattr(args, 'viz_gif_resolution', 80),
             resolution_3d=min(30, getattr(args, 'viz_gif_resolution', 80) // 3),
             fps=getattr(args, 'viz_gif_fps', 5),
         )
         # Velocity-space 3-panel GIF
-        vel_gif = VelocitySliceGIF13D(brt_viz_for_gif, dynamics)
+        vel_gif = VelocitySliceGIF13D(brat_viz_for_gif, dynamics)
         vel_gif.generate(
             result,
-            os.path.join(args.output_dir, 'brt_velocity.gif'),
+            os.path.join(args.output_dir, 'brat_velocity.gif'),
             max_frames=args.viz_max_frames,
             resolution=getattr(args, 'viz_gif_resolution', 80),
             fps=getattr(args, 'viz_gif_fps', 5),
         )
         # Attitude & angular-velocity 6-panel GIF
-        att_gif = AttitudeSliceGIF13D(brt_viz_for_gif, dynamics)
+        att_gif = AttitudeSliceGIF13D(brat_viz_for_gif, dynamics)
         att_gif.generate(
             result,
-            os.path.join(args.output_dir, 'brt_attitude.gif'),
+            os.path.join(args.output_dir, 'brat_attitude.gif'),
             max_frames=args.viz_max_frames,
             resolution=getattr(args, 'viz_gif_resolution', 60),
             fps=getattr(args, 'viz_gif_fps', 5),
@@ -965,9 +965,9 @@ def run_compare(args):
 
     # ---- (Optional) BRAT value-function filter ------------------------
     value_filter_fn = None
-    if sampling_label == 'brt':
+    if sampling_label == 'brat':
         print(f"\n  Loading BRAT filter  (tMax={args.tMax}s) ...")
-        query_ctrl = BRTController13D(
+        query_ctrl = BRATController13D(
             checkpoint_path=args.checkpoint_path,
             tMax=args.tMax,
             device=args.device,
@@ -1228,14 +1228,14 @@ def main():
     # --- Shared arguments -------------------------------------------- #
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument('--checkpoint_path', type=str, default=None,
-                        help='Path to model_final.pth (required for brt/mpc controllers)')
+                        help='Path to model_final.pth (required for brat/mpc controllers)')
     parent.add_argument('--tMax', type=float, default=10.0)
     parent.add_argument('--dt', type=float, default=0.1)
     parent.add_argument('--device', type=str, default='cuda')
     parent.add_argument('--max_sim_time', type=float, default=60.0)
     parent.add_argument('--output_dir', type=str, default='./outputs/single_13d')
 
-    # Safety filter arguments (for brt_safety_13d)
+    # Safety filter arguments (for brat_safety_13d)
     parent.add_argument('--safety_filter_mode', type=int, default=1,
                         help='Safety filter mode: 0=off, 1=least-restrictive, 2=CBF-QP')
     parent.add_argument('--safety_checkpoint_path', type=str, default=None,
@@ -1258,7 +1258,7 @@ def main():
     # PD hybrid arguments
     parent.add_argument('--pd_torque_proximity', type=float, default=2.0,
                         help='Proximity multiplier for PD torque activation '
-                             '(brt_pd_hybrid only). Default: 2.0')
+                             '(brat_pd_hybrid only). Default: 2.0')
 
     # MPC arguments 
     parent.add_argument('--planning_horizon', type=float, default=2.0)
@@ -1287,10 +1287,10 @@ def main():
     parent.add_argument('--mpc_terminal_num_restarts', type=int, default=1,
                         help='Override num_restarts for mpc_terminal_13d only')
 
-    # Vanilla BRT arguments
+    # Vanilla BRAT arguments
     parent.add_argument('--vanilla_checkpoint_path', type=str, default=None,
                         help='Path to vanilla DeepReach checkpoint for '
-                             'vanilla_brt_13d controller (no MPC supervision, '
+                             'vanilla_brat_13d controller (no MPC supervision, '
                              'no gradient refinement).')
 
     # RL arguments
@@ -1311,7 +1311,7 @@ def main():
     parent.add_argument('--viz_mp4', action='store_true',
                         help='Generate MP4 animation.')
     parent.add_argument('--viz_gifs', action='store_true',
-                        help='Generate 2-D BRT slice GIFs (XY, XZ, YZ).')
+                        help='Generate 2-D BRAT slice GIFs (XY, XZ, YZ).')
     parent.add_argument('--viz_gif_resolution', type=int, default=80,
                         help='Grid resolution for slice GIFs.')
     parent.add_argument('--viz_gif_fps', type=int, default=5,
@@ -1323,19 +1323,19 @@ def main():
     # --- single ------------------------------------------------------ #
     sp_single = subparsers.add_parser('single', parents=[parent])
     sp_single.add_argument('--controller', type=str, required=True,
-                           choices=['brt_13d', 'vanilla_brt_13d',
-                                    'brt_safety_13d',
-                                    'brt_pd_hybrid',
+                           choices=['brat_13d', 'vanilla_brat_13d',
+                                    'brat_safety_13d',
+                                    'brat_pd_hybrid',
                                     'mpc_13d', 'mpc_terminal_13d',
                                     'rl_13d'])
     sp_single.add_argument('--initial_state', type=str, default=None,
                            help='JSON array of 13 floats, e.g. "[10,0,0,...]"')
     sp_single.add_argument('--sampling_method', type=str, default='default',
-                           choices=['default', 'random', 'brt'],
+                           choices=['default', 'random', 'brat'],
                            help='IC sampling method when --initial_state is '
                                 'not provided: "default" uses a hardcoded IC, '
                                 '"random" samples outside failure set, '
-                                '"brt" ensures V(x,tMax)<=0')
+                                '"brat" ensures V(x,tMax)<=0')
     sp_single.add_argument('--seed', type=int, default=42,
                            help='Random seed for IC sampling')
     sp_single.add_argument('--repeat', action='store_true',
@@ -1345,17 +1345,17 @@ def main():
     # --- compare ----------------------------------------------------- #
     sp_compare = subparsers.add_parser('compare', parents=[parent])
     sp_compare.add_argument('--controllers', nargs='+', required=True,
-                            choices=['brt_13d', 'vanilla_brt_13d',
-                                     'brt_safety_13d',
-                                     'brt_pd_hybrid',
+                            choices=['brat_13d', 'vanilla_brat_13d',
+                                     'brat_safety_13d',
+                                     'brat_pd_hybrid',
                                      'mpc_13d', 'mpc_terminal_13d',
                                      'rl_13d'])
     sp_compare.add_argument('--num_rollouts', type=int, default=20)
     sp_compare.add_argument('--seed', type=int, default=42)
     sp_compare.add_argument('--sampling_method', type=str, default='uniform',
-                            choices=['uniform', 'brt'],
+                            choices=['uniform', 'brat'],
                             help='IC sampling method: "uniform" = geometric '
-                                 'constraints only; "brt" = additionally '
+                                 'constraints only; "brat" = additionally '
                                  'require V(x, tMax) <= 0 (inside learned BRAT)')
 
     args = parser.parse_args()

@@ -27,7 +27,7 @@ import numpy as np
 from utils.controllers.anim_utils import select_key_frames
 import warnings
 
-from utils.brt_visualization_13d import (
+from utils.brat_visualization_13d import (
     add_target_plotly, add_reach_sphere_plotly, add_chaser_plotly,
     add_chaser_wireframe_plotly, add_chaser_axes_plotly,
     add_dock_rim_plotly, add_goal_ghost_plotly,

@@ -19,7 +19,7 @@ boundary as it evolves over the countdown horizon.
 Usage (from run_controller_13d.py, via --viz_gifs flag):
 
     from utils.controllers.attitude_slice_gif_13d import AttitudeSliceGIF13D
-    gif = AttitudeSliceGIF13D(brt_viz, dynamics)
+    gif = AttitudeSliceGIF13D(brat_viz, dynamics)
     gif.generate(result, output_path, max_frames=50, resolution=60)
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 from utils.controllers.anim_utils import select_key_frames, get_t_queries
-from utils.brt_visualization_13d import BRTVisualizer13D
+from utils.brat_visualization_13d import BRATVisualizer13D
 
 
 # -- Plane definitions ---------------------------------------------------- #
@@ -111,12 +111,12 @@ class AttitudeSliceGIF13D:
 
     Parameters
     ----------
-    brt_viz  : BRTVisualizer13D
+    brat_viz  : BRATVisualizer13D
     dynamics : Docking13D
     """
 
-    def __init__(self, brt_viz: BRTVisualizer13D, dynamics):
-        self.brt_viz = brt_viz
+    def __init__(self, brat_viz: BRATVisualizer13D, dynamics):
+        self.brat_viz = brat_viz
         self.dynamics = dynamics
 
     # ------------------------------------------------------------------ #
@@ -324,7 +324,7 @@ class AttitudeSliceGIF13D:
                 # Fixed values are already at goal; no extra overrides needed
 
                 A, B, V, dVda, dVdb = (
-                    self.brt_viz.evaluate_brt_grid_2d_generic(
+                    self.brat_viz.evaluate_brat_grid_2d_generic(
                         ps, t_q, idx_a, idx_b,
                         grid_bounds[plane], resolution))
                 fd[plane] = {'A': A, 'B': B, 'V': V,

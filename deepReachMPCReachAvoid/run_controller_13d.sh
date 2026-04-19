@@ -4,7 +4,7 @@
 # ============================================================================
 #
 #  Quick-start:
-#    ./run_controller_13d.sh                    # BRT single run, default IC
+#    ./run_controller_13d.sh                    # BRAT single run, default IC
 #    ./run_controller_13d.sh --viz              # + HTML animation & slice GIFs
 #    ./run_controller_13d.sh --easy             # easy IC (close, aligned)
 #    ./run_controller_13d.sh --compare          # multi-controller comparison
@@ -32,7 +32,7 @@ EASY_IC="[0,-3.0,0,0,0.05,0,0.7071,0,0,0.7071,0,0,0]"
 # ---------------------------------------------------------------------------
 MODE="single"
 VIZ_FLAGS=""
-CONTROLLER="brt_13d"
+CONTROLLER="brat_13d"
 IC_FLAG=""
 EXTRA_ARGS=""
 
@@ -48,13 +48,13 @@ Options:
   --easy              Use an easy IC (close, aligned, gentle drift)
   --ic "JSON_ARRAY"   Custom 13-element initial state, e.g. "[10,0,0,...]"
   --compare           Run multi-controller comparison instead of single run
-  --controller NAME   Controller: brt_13d | mpc_13d | mpc_terminal_13d
+  --controller NAME   Controller: brat_13d | mpc_13d | mpc_terminal_13d
   --ckpt PATH         Checkpoint path (default: \$CKPT)
   --tmax FLOAT        Time horizon (default: $TMAX)
   --outdir DIR        Output directory (default: $OUTDIR)
 
 Examples:
-  $(basename "$0")                              # default BRT run
+  $(basename "$0")                              # default BRAT run
   $(basename "$0") --easy --viz                 # easy IC with full viz
   $(basename "$0") --ic "[5,-5,2,0,0,0,0.7071,0,0,0.7071,0,0,0]" --viz
   $(basename "$0") --compare --outdir ./outputs/13d_cmp
@@ -92,7 +92,7 @@ fi
 if [[ "$MODE" == "compare" ]]; then
   echo "=== Multi-controller comparison ==="
   eval python3 run_controller_13d.py compare \
-    --controllers brt_13d mpc_terminal_13d \
+    --controllers brat_13d mpc_terminal_13d \
     --checkpoint_path "$CKPT" --tMax "$TMAX" --max_sim_time "$MAX_SIM" \
     --num_rollouts 5 --seed 42 \
     --num_samples 500 --num_refinement 10 \
@@ -109,7 +109,3 @@ else
     --output_dir "$OUTDIR" \
     $EXTRA_ARGS
 fi
-
-# This doesnt work yet, need to figure out why
-cd /home/lcastle01/lcastle01/git/reachAvoidDocking/deepReachMPCReachAvoid && source ../.venv/bin/activate && python3 run_controller_13d.py single   --controller brt_pd_hybrid   --checkpoint_path runs/Docking13D_RA_v8_TightOmega/training/checkpoints/model_horizon_10.00.pth   --tMax 10.0   --dt 0.01   --safety_checkpoint_path runs/Docking13D_Avoid/D
-ocking13D_Avoid/training/checkpoints/model_final.pth   --max_sim_time 180.0   --initial_state '[0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0.5, 0.5]'   --output_dir ./outputs/v8_single_test_hybrid_hard   --viz_html   --viz_gifs

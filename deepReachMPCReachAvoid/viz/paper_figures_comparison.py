@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Paper-quality comparison figures from comparison_results.json.
 
-Figure 1 (controller_comparison_13d): 2×2 bar chart of controller metrics.
+Figure 1 (controller_comparison_6d): 2×2 bar chart of controller metrics.
 Figure 2 (docking_time_histogram):   Overlaid docking-time distributions for
                                       controllers that achieved docking, vs the
                                       grid-based reference.
 
 Run:
-    python comparisons/paper_figures_comparison_13d.py \
-        --results_path outputs/13d_compare_all/comparison_results.json \
+    python viz/paper_figures_comparison.py \
+        --results_path outputs/6_way_comparison_500_uniform_IC_SF-1/comparison_results.json \
         --output_dir figs/
 """
 
@@ -47,23 +47,25 @@ plt.rcParams.update({
 
 # ── Color palette (figureGuide.md) ────────────────────────────────────────────
 CTRL_COLORS = {
-    'BRT+Safety 13D':  '#ff9500',  # orange
-    'MPC+Terminal 13D': '#0d948f',  # teal
-    'MPC 13D':          '#b3b3b3',  # gray
-    'Vanilla BRT 13D':  '#0048a6',  # dark blue
-    'RL 13D (DDQN)':    '#0091ff',  # bright blue
+    'Grid-Based HJ': '#000000',  # black      — grid-based ground truth
+    'BRAT':          '#ff9500',  # orange     — your method (always highlight)
+    'MPC+Terminal':  '#0d948f',  # teal       — secondary novel contribution
+    'MPC':           '#b3b3b3',  # medium gray— obvious baseline
+    'Vanilla BRAT':  '#0048a6',  # dark blue  — base DeepReach baseline
+    'RL (DDQN)':     '#0091ff',  # bright blue— RL reach-avoid baseline
 }
 
 CTRL_DISPLAY = {
-    'BRT+Safety 13D':    'BRAT',
-    'MPC+Terminal 13D':  'T-MPC',
-    'MPC 13D':           'MPC',
-    'Vanilla BRT 13D':  'V-DR',
-    'RL 13D (DDQN)':     'RL',
+    'Grid-Based HJ': 'Grid',
+    'BRAT':          'BRAT',
+    'MPC+Terminal':  'T-MPC',
+    'MPC':           'MPC',
+    'Vanilla BRAT':  'V-DR',
+    'RL (DDQN)':     'RL',
 }
 
-# Fixed ordering:  our method  baselines by performance
-CTRL_ORDER = ['BRT+Safety 13D', 'MPC+Terminal 13D', 'MPC 13D', 'Vanilla BRT 13D', 'RL 13D (DDQN)']
+# Fixed ordering:  our method → ground truth → baselines by performance
+CTRL_ORDER = ['BRAT', 'MPC+Terminal','Grid-Based HJ', 'MPC', 'Vanilla BRAT', 'RL (DDQN)']
 
 
 def load_results(path):
@@ -126,7 +128,7 @@ def plot_metrics_comparison(data, output_dir):
             stds_e.append(0.0)
 
     bars_e = ax_effort.bar(x, means_e, 0.6, yerr=stds_e, color=colors,
-                            capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha=0.7)
+                            capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha = 0.7)
     
     for i, c in enumerate(ctrls):
         if data[c].get('n_docking_effort', 0) == 0:
@@ -147,7 +149,7 @@ def plot_metrics_comparison(data, output_dir):
     stds_w  = [data[c]['std_wall_time']  for c in ctrls]
 
     ax_wall.bar(x, means_w, 0.6, yerr=stds_w, color=colors,
-                capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha=0.7)
+                capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha = 0.7)
     ax_wall.set_xticks(x)
     ax_wall.set_xticklabels(labels, rotation=45, ha='right')
     ax_wall.set_ylabel('Wall Time (s)')
@@ -165,7 +167,7 @@ def plot_metrics_comparison(data, output_dir):
             stds_d.append(0.0)
 
     bars_d = ax_dock.bar(x, means_d, 0.6, yerr=stds_d, color=colors,
-                         capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha=0.7)
+                         capsize=4, error_kw={'linewidth': 0.8}, zorder=3, alpha = 0.7)
     
     for i, c in enumerate(ctrls):
         if data[c].get('n_docking_effort', 0) == 0:
@@ -182,9 +184,92 @@ def plot_metrics_comparison(data, output_dir):
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Make room for legend and x-labels
     os.makedirs(output_dir, exist_ok=True)
-    fig.savefig(os.path.join(output_dir, 'controller_comparison_13D.png'))
+    fig.savefig(os.path.join(output_dir, 'controller_comparison_6d.png'))
     plt.close(fig)
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  Figure 2 — Docking Time Histogram
+# ═════════════════════════════════════════════════════════════════════════════
+
+def plot_docking_time_histogram(data, output_dir):
+    """Single-panel overlaid docking-time distributions.
+
+    Only controllers that achieved at least one docking are shown.
+    Distributions are normalised to probability density so controllers
+    with different sample counts (e.g. Vanilla BRAT n=22 vs Grid n=499)
+    are visually comparable.
+
+    Grid-Based HJ is drawn as a filled reference; all others are step
+    outlines with light fill.
+    """
+    # ── Collect docking times per controller ──────────────────────────────
+    dock_times = {}
+    for c in CTRL_ORDER:
+        if c not in data:
+            continue
+        times = [entry['sim_time'] for entry in data[c].get('docked', [])]
+        if len(times) > 0:
+            dock_times[c] = np.array(times)
+
+    if 'Grid-Based HJ' not in dock_times:
+        print("Grid-Based HJ has no docked entries — skipping histogram.")
+        return
+
+    # Shared bin edges across all controllers for fair comparison
+    all_times = np.concatenate(list(dock_times.values()))
+    bins = np.linspace(all_times.min(), all_times.max(), 30)
+
+    fig, ax = plt.subplots(figsize=(3.5, 3.0))
+
+    # ── Grid-Based HJ — filled reference ──────────────────────────────────
+    grid_t = dock_times['Grid-Based HJ']
+    ax.hist(grid_t, bins=bins, density=True,
+            color='#000000', alpha=0.18,
+            histtype='stepfilled', zorder=2)
+    ax.hist(grid_t, bins=bins, density=True,
+            color='#000000', linewidth=1.8,
+            histtype='step', zorder=5,
+            label=f'Grid-Based HJ  (n={len(grid_t)})')
+    ax.axvline(np.median(grid_t), color='#000000', lw=1.0,
+               linestyle='--', zorder=6)
+
+    # ── Other controllers — step outlines with light fill ──────────────────
+    others = [c for c in CTRL_ORDER if c != 'Grid-Based HJ' and c in dock_times]
+    for c in others:
+        t = dock_times[c]
+        col = CTRL_COLORS[c]
+        ax.hist(t, bins=bins, density=True,
+                color=col, alpha=0.22,
+                histtype='stepfilled', zorder=2)
+        ax.hist(t, bins=bins, density=True,
+                color=col, linewidth=1.5,
+                histtype='step', zorder=4,
+                label=f'{CTRL_DISPLAY[c]}  (n={len(t)})')
+        ax.axvline(np.median(t), color=col, lw=0.9,
+                   linestyle='--', alpha=0.8, zorder=5)
+
+    ax.set_xlabel('Docking Time (s)')
+    ax.set_ylabel('Probability Density')
+    ax.set_xlim(bins[0], bins[-1])
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+
+    # Legend below the plot — 2 columns, outside axes area
+    ax.legend(frameon=False, loc='upper center',
+              bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=7,
+              title='Dashed lines = median', title_fontsize=7)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.32)
+    os.makedirs(output_dir, exist_ok=True)
+    fig.savefig(os.path.join(output_dir, 'docking_time_histogram.pdf'))
+    fig.savefig(os.path.join(output_dir, 'docking_time_histogram.png'))
+    plt.close(fig)
+    print(f"Saved docking_time_histogram.{{pdf,png}} → {output_dir}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Main
+# ═════════════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(
@@ -210,6 +295,9 @@ def main():
 
     print("\nGenerating Figure 1 — Metrics comparison ...")
     plot_metrics_comparison(ctrl_data, args.output_dir)
+
+    print("Generating Figure 2 — Docking time histogram ...")
+    plot_docking_time_histogram(ctrl_data, args.output_dir)
 
     print(f"\nDone. Figures saved to {args.output_dir}")
 

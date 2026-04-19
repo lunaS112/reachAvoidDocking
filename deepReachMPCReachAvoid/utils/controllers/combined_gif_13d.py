@@ -6,7 +6,7 @@ Produces a single animated GIF with four synchronised quadrants:
   Q1 (top-left):     XY value-function slice
   Q2 (top-right):    XZ value-function slice
   Q3 (bottom-left):  YZ value-function slice
-  Q4 (bottom-right): 3-D isometric view (BRT blob + target + chaser)
+  Q4 (bottom-right): 3-D isometric view (BRAT blob + target + chaser)
 
 Each frame corresponds to the same simulation time-step so the panels
 animate in lockstep.
@@ -14,7 +14,7 @@ animate in lockstep.
 Usage (from run_controller_13d.py, via --viz_gifs flag):
 
     from utils.controllers.combined_gif_13d import CombinedGIF13D
-    gif = CombinedGIF13D(brt_viz, dynamics)
+    gif = CombinedGIF13D(brat_viz, dynamics)
     gif.generate(result, output_path, max_frames=50, resolution=80)
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from utils.controllers.anim_utils import select_key_frames, get_t_queries
 from utils.controllers.slice_gif_13d import (
     _draw_target_on_slice, _rotation_text, _IDX_MAP, _AXIS_LABELS,
 )
-from utils.brt_visualization_13d import BRTVisualizer13D
+from utils.brat_visualization_13d import BRATVisualizer13D
 
 
 class CombinedGIF13D:
@@ -40,12 +40,12 @@ class CombinedGIF13D:
 
     Parameters
     ----------
-    brt_viz  : BRTVisualizer13D
+    brat_viz  : BRATVisualizer13D
     dynamics : Docking13D
     """
 
-    def __init__(self, brt_viz: BRTVisualizer13D, dynamics):
-        self.brt_viz = brt_viz
+    def __init__(self, brat_viz: BRATVisualizer13D, dynamics):
+        self.brat_viz = brat_viz
         self.dynamics = dynamics
 
     # ------------------------------------------------------------------ #
@@ -127,8 +127,8 @@ class CombinedGIF13D:
 
     def _draw_3d_panel(self, ax, state, traj_so_far, X3, Y3, Z3, V3,
                        axis_limits):
-        """Render the 3-D BRT + target + chaser on a 3-D axis."""
-        self.brt_viz.render_matplotlib(
+        """Render the 3-D BRAT + target + chaser on a 3-D axis."""
+        self.brat_viz.render_matplotlib(
             X3, Y3, Z3, V3, state,
             ax=ax, trajectory=traj_so_far, title='',
             axis_limits=axis_limits)
@@ -153,7 +153,7 @@ class CombinedGIF13D:
         output_path   : path for the output .gif file.
         max_frames    : maximum number of animation frames.
         resolution    : grid resolution for 2-D slices.
-        resolution_3d : grid resolution for 3-D BRT evaluation.
+        resolution_3d : grid resolution for 3-D BRAT evaluation.
         quiver_stride : stride for quiver arrows in 2-D slices.
         fps           : frames per second.
         """
@@ -202,7 +202,7 @@ class CombinedGIF13D:
             }
             # 2-D slices
             for plane in planes:
-                A, B, V, dVda, dVdb = self.brt_viz.evaluate_brt_grid_2d(
+                A, B, V, dVda, dVdb = self.brat_viz.evaluate_brat_grid_2d(
                     state, t_q, plane=plane,
                     grid_bounds_2d=slice_bounds[plane],
                     resolution=resolution)
@@ -210,7 +210,7 @@ class CombinedGIF13D:
                              'dVda': dVda, 'dVdb': dVdb}
 
             # 3-D grid
-            X3, Y3, Z3, V3 = self.brt_viz.evaluate_brt_grid(
+            X3, Y3, Z3, V3 = self.brat_viz.evaluate_brat_grid(
                 state, t_q, grid_bounds_3d, resolution_3d)
             fd['3d'] = (X3, Y3, Z3, V3)
 

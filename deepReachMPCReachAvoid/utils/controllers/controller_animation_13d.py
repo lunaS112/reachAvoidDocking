@@ -2,19 +2,19 @@
 3D Controller Animation for Docking13D
 
 Generates time-varying visualisations that combine the docking trajectory with
-the evolving BRT blob.  Supports two output modes:
+the evolving BRAT blob.  Supports two output modes:
 
-  • **Interactive HTML** (Plotly) — time-slider for BRT evolution, camera
+  • **Interactive HTML** (Plotly) — time-slider for BRAT evolution, camera
     rotation/zoom in the browser.
   • **MP4 animation** (Matplotlib) — fixed-camera frame-by-frame rendering
     with a data panel showing value, phase, and controls.
 
 Usage:
     from utils.controllers.controller_animation_13d import ControllerAnimation13D
-    from utils.brt_visualization_13d import BRTVisualizer13D
+    from utils.brat_visualization_13d import BRATVisualizer13D
 
-    brt_viz = BRTVisualizer13D(controller, backend='plotly')
-    anim = ControllerAnimation13D(brt_viz)
+    brat_viz = BRATVisualizer13D(controller, backend='plotly')
+    anim = ControllerAnimation13D(brat_viz)
     anim.generate_interactive_html(result, 'output.html')
     anim.generate_mp4(result, 'output.mp4')
 """
@@ -26,27 +26,27 @@ import warnings
 
 from utils.controllers.anim_utils import select_key_frames, get_t_queries
 
-from utils.brt_visualization_13d import compute_scene_limits, state_range_limits, _inject_play_pause_js
+from utils.brat_visualization_13d import compute_scene_limits, state_range_limits, _inject_play_pause_js
 
 
 class ControllerAnimation13D:
-    """Combines simulation result with BRT blob for animated output.
+    """Combines simulation result with BRAT blob for animated output.
 
     Parameters
     ----------
-    brt_viz : BRTVisualizer13D
+    brat_viz : BRATVisualizer13D
         Fully initialised visualiser (owns controller, model, dynamics).
     grid_resolution : int
-        Resolution per axis for BRT grid evaluation during animation.
+        Resolution per axis for BRAT grid evaluation during animation.
         Lower values speed up frame generation at the cost of detail.
     grid_bounds : list | None
         [(xmin,xmax), (ymin,ymax), (zmin,zmax)].  *None* → auto from
         state_test_range.
     """
 
-    def __init__(self, brt_viz, grid_resolution: int = 35,
+    def __init__(self, brat_viz, grid_resolution: int = 35,
                  grid_bounds: list | None = None):
-        self.brt_viz = brt_viz
+        self.brat_viz = brat_viz
         self.resolution = grid_resolution
         self.grid_bounds = grid_bounds
 
@@ -62,7 +62,7 @@ class ControllerAnimation13D:
                               arrow_scale=0.45):
         """Create Plotly Cone trace(s) for **-∇V** (steepest descent).
 
-        Arrows point from high to low value (toward the BRT interior
+        Arrows point from high to low value (toward the BRAT interior
         where V < 0).  Only arrows near the zero level-set (within
         *v_band*) are shown so the visualisation is not cluttered.
 
@@ -72,7 +72,7 @@ class ControllerAnimation13D:
 
         mask = (V >= v_band[0]) & (V <= v_band[1])
         xs = X[mask]; ys = Y[mask]; zs = Z[mask]
-        # Negate: show -∇V so arrows point downhill (into the BRT).
+        # Negate: show -∇V so arrows point downhill (into the BRAT).
         us = -dVdx[mask]; vs = -dVdy[mask]; ws = -dVdz[mask]
 
         if len(xs) == 0:
@@ -150,7 +150,7 @@ class ControllerAnimation13D:
                               (unified_lo[2], unified_hi[2])]
 
         scene_limits = compute_scene_limits(
-            traj, self.brt_viz.dynamics, padding=1.5)
+            traj, self.brat_viz.dynamics, padding=1.5)
 
         # --- Pre-compute all traces for every key frame --------------- #
         grad_resolution = min(10, self.resolution // 3)
@@ -163,10 +163,10 @@ class ControllerAnimation13D:
         for count, idx in enumerate(key_idx):
             state = traj[idx]
             t_q = float(t_queries[idx])
-            X, Y, Z, V = self.brt_viz.evaluate_brt_grid(
+            X, Y, Z, V = self.brat_viz.evaluate_brat_grid(
                 state, t_q, unified_bounds, self.resolution)
 
-            frame_fig = self.brt_viz.render_plotly(
+            frame_fig = self.brat_viz.render_plotly(
                 X, Y, Z, V, state,
                 trajectory=traj[:idx + 1],
                 title='',
@@ -176,7 +176,7 @@ class ControllerAnimation13D:
 
             # --- Gradient arrows (Cone trace) --- #
             Xg, Yg, Zg, Vg, dVdx, dVdy, dVdz = \
-                self.brt_viz.evaluate_brt_gradients_3d(
+                self.brat_viz.evaluate_brat_gradients_3d(
                     state, t_q, unified_bounds, grad_resolution)
             grad_traces = self._build_gradient_cones(
                 Xg, Yg, Zg, Vg, dVdx, dVdy, dVdz)
@@ -252,7 +252,7 @@ class ControllerAnimation13D:
 
     def generate_mp4(self, result: dict, output_path: str,
                      fps: int = 10, max_frames: int = 120):
-        """Write an MP4 animation with BRT blob + data panel.
+        """Write an MP4 animation with BRAT blob + data panel.
 
         Parameters
         ----------
@@ -292,10 +292,10 @@ class ControllerAnimation13D:
                               (unified_lo[1], unified_hi[1]),
                               (unified_lo[2], unified_hi[2])]
 
-        print(f"[Animation] Pre-computing {len(key_idx)} BRT grids for MP4...")
+        print(f"[Animation] Pre-computing {len(key_idx)} BRAT grids for MP4...")
         grids = []
         for count, idx in enumerate(key_idx):
-            X, Y, Z, V = self.brt_viz.evaluate_brt_grid(
+            X, Y, Z, V = self.brat_viz.evaluate_brat_grid(
                 traj[idx], float(t_queries[idx]),
                 unified_bounds, self.resolution)
             grids.append((X, Y, Z, V))
@@ -303,14 +303,14 @@ class ControllerAnimation13D:
                 print(f"  [{count + 1}/{len(key_idx)}]")
 
         # --- Pre-compute full-run data for fixed axis limits ---------- #
-        goal_center = np.array([0.0, self.brt_viz.dynamics.goal_y_center, 0.0])
+        goal_center = np.array([0.0, self.brat_viz.dynamics.goal_y_center, 0.0])
         all_dists = np.linalg.norm(traj[:, :3] - goal_center, axis=1)
         val_pad = max(0.05, (values.max() - values.min()) * 0.10)
         val_lo, val_hi = values.min() - val_pad, values.max() + val_pad
         dist_hi = all_dists.max() * 1.1 + 0.5
 
         # 3D axis limits: use dynamics state_range_ for full training domain
-        scene_limits = state_range_limits(self.brt_viz.dynamics)
+        scene_limits = state_range_limits(self.brat_viz.dynamics)
         x_lo, x_hi = scene_limits['xlim']
         y_lo, y_hi = scene_limits['ylim']
         z_lo, z_hi = scene_limits['zlim']
@@ -344,7 +344,7 @@ class ControllerAnimation13D:
             X, Y, Z, V = grids[frame_num]
 
             ax_3d.clear()
-            self.brt_viz.render_matplotlib(
+            self.brat_viz.render_matplotlib(
                 X, Y, Z, V, state,
                 trajectory=traj[:idx + 1],
                 title=f"t = {sim_times[idx]:.1f}s",

@@ -110,7 +110,7 @@ def _draw_target_3d(ax, dynamics):
     hw, hd = d.w_t / 2, d.d_t / 2
 
     # --- Target body box centred at (0, h_t/2, 0) ---
-    from utils.brt_visualization_13d import _oriented_box_mesh
+    from utils.brat_visualization_13d import _oriented_box_mesh
     _, faces = _oriented_box_mesh(
         [0, d.h_t / 2, 0], (hw, d.h_t / 2, hd))
     mesh = Poly3DCollection(faces, alpha=0.35, linewidths=0.5)
@@ -525,8 +525,8 @@ def plot_states_13d(result, dynamics, save_path=None):
         t_star_line[phase1_mask] = np.nan
         ax.plot(t_plot, t_star_line, 'b-', lw=0.08, label='t* (strict)')
 
-        # Overlay status markers from brt_time_adjustments (non-strict events)
-        adjustments = result.get('brt_time_adjustments', [])
+        # Overlay status markers from brat_time_adjustments (non-strict events)
+        adjustments = result.get('brat_time_adjustments', [])
         argmin_times_list = []
         argmin_tstar_list = []
         hold_times_list = []

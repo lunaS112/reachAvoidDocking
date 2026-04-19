@@ -8,7 +8,7 @@ collision checks, and logging.
 
 Method
 ------
-For BRAT / BRT controllers the per-step function ``u_fn(state, sim_time)``
+For BRAT controllers the per-step function ``u_fn(state, sim_time)``
 is monkey-patched with a timed wrapper; ``simulate_docking`` is then called
 normally so the patched method is invoked at every step.
 
@@ -27,11 +27,11 @@ under-report execution time.
 For RL controllers the same ``u_fn`` patching is used (added to
 ``RLController`` / ``RLController13D`` for interface consistency).
 
-Vanilla BRAT / BRT controllers inherit ``u_fn`` from their parents and
-are timed identically to the full BRAT / BRT variants.
+Vanilla BRAT controllers inherit ``u_fn`` from their parents and
+are timed identically to the full BRAT variants.
 
 6D controllers timed: BRAT, Vanilla BRAT, MPC-terminal, MPC, RL, Grid
-13D controllers timed: BRT, Vanilla BRT, MPC-terminal-13D, MPC-13D, RL
+13D controllers timed: BRAT, Vanilla BRAT, MPC-terminal-13D, MPC-13D, RL
 
 Usage
 -----
@@ -187,7 +187,7 @@ def _gpu_warmup(ctrl, method_name, ic, n_calls=3):
 # ---------------------------------------------------------------------------
 
 def time_brat_like(ctrl, ic, max_steps, n_warmup=2, label='BRAT'):
-    """Time BRAT / BRT controllers by patching ``u_fn``.
+    """Time BRAT controllers by patching ``u_fn``.
 
     Runs ``ctrl.simulate_docking(ic, max_sim_time)`` with the patched method.
 
@@ -331,9 +331,9 @@ def main():
 
     # -- 13D checkpoints --
     parser.add_argument('--learned_13d', default=None,
-                        help='13D BRT checkpoint (enables 13D timing if given)')
+                        help='13D BRAT checkpoint (enables 13D timing if given)')
     parser.add_argument('--vanilla_13d', default=None,
-                        help='Vanilla BRT 13D checkpoint (optional; skipped if not given)')
+                        help='Vanilla BRAT 13D checkpoint (optional; skipped if not given)')
 
     # -- RL checkpoints --
     parser.add_argument('--rl_6d', default=None,
@@ -358,7 +358,7 @@ def main():
 
     # -- Step limits (lower = faster benchmark, fewer samples) --
     parser.add_argument('--steps_brat',      type=int, default=200,
-                        help='Max steps for BRAT/BRT timing (default 200)')
+                        help='Max steps for BRAT timing (default 200)')
     parser.add_argument('--steps_mpc_term',  type=int, default=20,
                         help='Max steps for MPC-terminal timing (default 20)')
     parser.add_argument('--steps_mpc',       type=int, default=10,
@@ -368,9 +368,9 @@ def main():
     parser.add_argument('--steps_rl',        type=int, default=200,
                         help='Max steps for RL timing (default 200)')
 
-    # -- BRATController / BRTController parameters --
+    # -- BRATController parameters --
     parser.add_argument('--tMax',    type=float, default=10.0,
-                        help='tMax for BRAT/BRT controllers (default 10.0)')
+                        help='tMax for BRAT controllers (default 10.0)')
     parser.add_argument('--dt',      type=float, default=0.1,
                         help='Control timestep for all controllers (default 0.1)')
     parser.add_argument('--device',  default='cuda',
@@ -505,33 +505,33 @@ def main():
         print('  13D Controllers')
         print('=' * 65)
 
-        # ---- 13D BRT ----
+        # ---- 13D BRAT ----
         if args.learned_13d:
-            from utils.controllers.brt_controller_13d import BRTController13D
+            from utils.controllers.brat_controller_13d import BRATController13D
             from utils.controllers.mpc_terminal_controller_13d import MPCTerminalController13D
             from utils.controllers.mpc_controller_13d import MPCController13D
 
             ckpt13 = args.learned_13d
 
-            print('\n── 13D BRT ──')
-            brt13 = BRTController13D(checkpoint_path=ckpt13, tMax=args.tMax,
-                                     dt=args.dt, device=args.device)
-            st, _ = time_brat_like(brt13, ic_13d, args.steps_brat,
-                                   label='BRT-13D')
+            print('\n── 13D BRAT ──')
+            brat13 = BRATController13D(checkpoint_path=ckpt13, tMax=args.tMax,
+                                       dt=args.dt, device=args.device)
+            st, _ = time_brat_like(brat13, ic_13d, args.steps_brat,
+                                   label='BRAT-13D')
             all_results[('13D', 'BRAT')] = st
-            del brt13
+            del brat13
 
-        # ---- 13D Vanilla BRT ----
+        # ---- 13D Vanilla BRAT ----
         if args.vanilla_13d:
-            from utils.controllers.vanilla_brt_controller_13d import VanillaBRTController13D
+            from utils.controllers.vanilla_brat_controller_13d import VanillaBRATController13D
 
-            print('\n── 13D Vanilla BRT ──')
-            van13 = VanillaBRTController13D(checkpoint_path=args.vanilla_13d,
-                                            tMax=args.tMax, dt=args.dt,
-                                            device=args.device)
+            print('\n── 13D Vanilla BRAT ──')
+            van13 = VanillaBRATController13D(checkpoint_path=args.vanilla_13d,
+                                             tMax=args.tMax, dt=args.dt,
+                                             device=args.device)
             st, _ = time_brat_like(van13, ic_13d, args.steps_brat,
-                                   label='Vanilla-BRT-13D')
-            all_results[('13D', 'Vanilla BRT')] = st
+                                   label='Vanilla-BRAT-13D')
+            all_results[('13D', 'Vanilla BRAT')] = st
             del van13
 
         # ---- 13D MPC-terminal ----
@@ -609,7 +609,7 @@ def main():
             'steps_grid':      args.steps_grid,
             'steps_rl':        args.steps_rl,
             'timing_method': {
-                'BRAT/BRT':      'patch u_fn + torch.cuda.synchronize()',
+                'BRAT':          'patch u_fn + torch.cuda.synchronize()',
                 'Vanilla':       'patch u_fn (inherited) + torch.cuda.synchronize()',
                 'RL':            'patch u_fn + torch.cuda.synchronize()',
                 'MPC variants':  'patch _mpc_step + torch.cuda.synchronize()',
