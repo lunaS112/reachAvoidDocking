@@ -79,8 +79,8 @@ python viz/paper_figures_comparison_13d.py \
 | Controller block  | `viz/plot_controller_architecture.py`           |
 | 6D comparison     | `viz/paper_figures_comparison.py`               |
 | 13D comparison    | `viz/paper_figures_comparison_13d.py`           |
-| 13D iso-trajectory| `plot_13d_iso_trajectory.py`                    |
-| Target geometry   | `target_geometry_visualization.py`              |
+| 13D iso-trajectory| `viz/plot_13d_iso_trajectory.py`                |
+| Target geometry   | `viz/target_geometry_visualization.py`          |
 
 ## Citation
 
@@ -93,7 +93,3 @@ python viz/paper_figures_comparison_13d.py \
   note   = {Under review}
 }
 ```
-
-## License
-
-MIT. See `LICENSE`.

@@ -7,12 +7,14 @@ Generates three PNG files:
   3. reach_fn_quat.png — Yaw-error vs Roll-error quaternion slice
 
 Usage:
-    python visualize_reach_fn.py [--outdir DIR]
+    python viz/visualize_reach_fn.py [--outdir DIR]
 """
 import argparse
 import math
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import matplotlib
 matplotlib.use('Agg')

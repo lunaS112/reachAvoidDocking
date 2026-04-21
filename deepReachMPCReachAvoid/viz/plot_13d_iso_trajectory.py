@@ -8,11 +8,16 @@ Generates a Plotly interactive HTML showing:
 """
 
 import argparse
+import os
+import sys
 import numpy as np
 import torch
 import math
 import datetime
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dynamics import dynamics
 from utils.controllers.brat_controller_13d import BRATController13D
 from utils.controllers.safety_filter import SafetyFilter
