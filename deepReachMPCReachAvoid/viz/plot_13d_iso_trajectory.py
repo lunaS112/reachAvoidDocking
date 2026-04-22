@@ -164,8 +164,18 @@ if __name__ == "__main__":
     import plotly.graph_objects as go
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['fig1', 'figlast'], default='fig1',
-                        help='fig1 = interactive HTML, figlast = high-res PNG')
+    parser.add_argument('--mode', choices=['fig1', 'figlast', 'anim'], default='fig1',
+                        help='fig1 = interactive HTML, figlast = high-res PNG, anim = MP4 animation')
+    parser.add_argument('--trail', action='store_true',
+                        help='anim only: leave a fading trail of past chaser snapshots behind the moving chaser')
+    parser.add_argument('--fps', type=int, default=20,
+                        help='anim only: output video framerate (default 20)')
+    parser.add_argument('--stride', type=int, default=1,
+                        help='anim only: render every Nth simulation step (default 1)')
+    parser.add_argument('--out-dir', type=str, default=None,
+                        help='anim only: write MP4 into this existing directory instead of a new timestamped one')
+    parser.add_argument('--frame-width', type=int, default=1280)
+    parser.add_argument('--frame-height', type=int, default=960)
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -232,69 +242,10 @@ if __name__ == "__main__":
     print(f"Trajectory: {traj.shape[0]} steps, {result['times'][-1]:.1f}s")
     print(f"Success: {result['success']}, Collision: {result['collision']}")
 
-    # Build Plotly figure
-    fig = go.Figure()
-
-    # 1. Add target spacecraft (pale colors)
-    add_target_styled(fig, dynamics_)
-
-    # 2. Add full trajectory trace (orange = your method)
-    fig.add_trace(go.Scatter3d(
-        x=traj[:, 0], y=traj[:, 1], z=traj[:, 2],
-        mode='lines',
-        line=dict(color=ORANGE, width=4),
-        showlegend=False,
-    ))
-
-    # Add start marker
-    fig.add_trace(go.Scatter3d(
-        x=[traj[0, 0]], y=[traj[0, 1]], z=[traj[0, 2]],
-        mode='markers',
-        marker=dict(size=6, color=GREEN, symbol='circle'),
-        showlegend=False,
-    ))
-
-    # Add end marker
-    fig.add_trace(go.Scatter3d(
-        x=[traj[-1, 0]], y=[traj[-1, 1]], z=[traj[-1, 2]],
-        mode='markers',
-        marker=dict(size=6, color=RED, symbol='diamond'),
-        showlegend=False,
-    ))
-
-    # 3. Add 8 chaser snapshots at evenly spaced points along trajectory
-    n_snapshots = 8
-    n_steps = traj.shape[0]
-    snapshot_indices = np.linspace(0, n_steps - 1, n_snapshots, dtype=int)
-
-    # Snapshot style depends on mode
-    if args.mode == 'figlast':
-        # PNG: uniform opacity, single color
-        alphas = np.full(n_snapshots, 0.75)
-        colors = [ORANGE] * n_snapshots
-    else:
-        # HTML: gradient from light to full
-        alphas = np.linspace(0.35, 0.90, n_snapshots)
-        colors = ['#fff3e0', '#ffe0b2', '#ffcc80', '#ffb74d',
-                  '#ffa726', '#ff9500', '#fb8c00', '#e68600']
-
     chaser_dims = np.array([dynamics_.w_c, dynamics_.h_c, dynamics_.d_c])
+    n_steps = traj.shape[0]
 
-    for i, idx in enumerate(snapshot_indices):
-        state = traj[idx]
-        center = state[:3]
-        quaternion = state[6:10]
-        t_sec = result['times'][idx]
-
-        add_chaser_plotly(
-            fig, center, quaternion, chaser_dims,
-            alpha=float(alphas[i]),
-            color=colors[i],
-            name=f'Chaser t={t_sec:.1f}s',
-            edge_color=colors[i],
-        )
-
-    # 4. Layout - iso view with grid tightly around trajectory + target
+    # Layout ranges (shared across all modes) — iso view with grid tightly around trajectory + target
     all_pts = traj[:, :3]
     margin = 1.0
     # Trajectory extents
@@ -327,7 +278,7 @@ if __name__ == "__main__":
     tick_font = dict(size=13, family='Arial, Helvetica, sans-serif')
     title_font = dict(size=15, family='Arial, Helvetica, sans-serif')
 
-    if args.mode == 'figlast':
+    if args.mode in ('figlast', 'anim'):
         pale_axis = dict(
             tickfont=tick_font,
         )
@@ -340,40 +291,163 @@ if __name__ == "__main__":
             zeroline=True,
         )
 
-    fig.update_layout(
-        title=None,
-        showlegend=False,
-        margin=dict(l=0, r=0, t=0, b=0),
-        scene=dict(
-            xaxis=dict(range=x_range, tickvals=x_ticks,
-                       title=dict(text='x (m)', font=title_font), **pale_axis),
-            yaxis=dict(range=y_range, tickvals=y_ticks,
-                       title=dict(text='y (m)', font=title_font), **pale_axis),
-            zaxis=dict(range=z_range, tickvals=z_ticks,
-                       title=dict(text='z (m)', font=title_font), **pale_axis),
-            aspectmode='cube',
-            camera=dict(
-                eye=dict(x=1.5, y=-1.5, z=1.0),
-                up=dict(x=0, y=0, z=1),
+    def apply_layout(fig, width, height):
+        fig.update_layout(
+            title=None,
+            showlegend=False,
+            margin=dict(l=0, r=0, t=0, b=0),
+            scene=dict(
+                xaxis=dict(range=x_range, tickvals=x_ticks,
+                           title=dict(text='x (m)', font=title_font), **pale_axis),
+                yaxis=dict(range=y_range, tickvals=y_ticks,
+                           title=dict(text='y (m)', font=title_font), **pale_axis),
+                zaxis=dict(range=z_range, tickvals=z_ticks,
+                           title=dict(text='z (m)', font=title_font), **pale_axis),
+                aspectmode='cube',
+                camera=dict(
+                    eye=dict(x=1.5, y=-1.5, z=1.0),
+                    up=dict(x=0, y=0, z=1),
+                ),
             ),
-        ),
-        width=1000,
-        height=800,
-        paper_bgcolor='white',
-        plot_bgcolor='white',
-    )
+            width=width,
+            height=height,
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+        )
 
     # Save
     save_root = Path(__file__).parent
     daytime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    save_dir = save_root / f"data/{daytime}__13D_iso_trajectory_BRAT"
+    if args.mode == 'anim' and args.out_dir is not None:
+        save_dir = Path(args.out_dir)
+    else:
+        save_dir = save_root / f"data/{daytime}__13D_iso_trajectory_BRAT"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.mode == 'fig1':
-        html_path = save_dir / "trajectory_iso_view.html"
-        fig.write_html(str(html_path))
-        print(f"Saved HTML to: {html_path}")
+    if args.mode in ('fig1', 'figlast'):
+        fig = go.Figure()
+        add_target_styled(fig, dynamics_)
+
+        # Full trajectory trace
+        fig.add_trace(go.Scatter3d(
+            x=traj[:, 0], y=traj[:, 1], z=traj[:, 2],
+            mode='lines', line=dict(color=ORANGE, width=4),
+            showlegend=False,
+        ))
+        # Start / end markers
+        fig.add_trace(go.Scatter3d(
+            x=[traj[0, 0]], y=[traj[0, 1]], z=[traj[0, 2]],
+            mode='markers', marker=dict(size=6, color=GREEN, symbol='circle'),
+            showlegend=False,
+        ))
+        fig.add_trace(go.Scatter3d(
+            x=[traj[-1, 0]], y=[traj[-1, 1]], z=[traj[-1, 2]],
+            mode='markers', marker=dict(size=6, color=RED, symbol='diamond'),
+            showlegend=False,
+        ))
+
+        # 8 chaser snapshots
+        n_snapshots = 8
+        snapshot_indices = np.linspace(0, n_steps - 1, n_snapshots, dtype=int)
+        if args.mode == 'figlast':
+            alphas = np.full(n_snapshots, 0.75)
+            colors = [ORANGE] * n_snapshots
+        else:
+            alphas = np.linspace(0.35, 0.90, n_snapshots)
+            colors = ['#fff3e0', '#ffe0b2', '#ffcc80', '#ffb74d',
+                      '#ffa726', '#ff9500', '#fb8c00', '#e68600']
+        for i, idx in enumerate(snapshot_indices):
+            state = traj[idx]
+            add_chaser_plotly(
+                fig, state[:3], state[6:10], chaser_dims,
+                alpha=float(alphas[i]), color=colors[i],
+                name=f'Chaser t={result["times"][idx]:.1f}s',
+                edge_color=colors[i],
+            )
+
+        apply_layout(fig, width=1000, height=800)
+
+        if args.mode == 'fig1':
+            html_path = save_dir / "trajectory_iso_view.html"
+            fig.write_html(str(html_path))
+            print(f"Saved HTML to: {html_path}")
+        else:
+            png_path = save_dir / "trajectory_iso_view.png"
+            fig.write_image(str(png_path), scale=6, width=1600, height=1200)
+            print(f"Saved PNG to: {png_path}")
+
     else:
-        png_path = save_dir / "trajectory_iso_view.png"
-        fig.write_image(str(png_path), scale=6, width=1600, height=1200)
-        print(f"Saved PNG to: {png_path}")
+        # anim mode: render one frame per subsampled step, encode with ffmpeg
+        import shutil, subprocess, tempfile
+
+        frame_indices = list(range(0, n_steps, max(1, args.stride)))
+        if frame_indices[-1] != n_steps - 1:
+            frame_indices.append(n_steps - 1)
+
+        # Trail snapshot cadence — match the 8-snapshot look of the PNG
+        trail_stride = max(1, n_steps // 8)
+
+        frames_dir = Path(tempfile.mkdtemp(prefix="traj_anim_"))
+        print(f"Rendering {len(frame_indices)} frames to {frames_dir} ...")
+
+        try:
+            for fi, idx in enumerate(frame_indices):
+                fig = go.Figure()
+                add_target_styled(fig, dynamics_)
+
+                # Trace up to current step
+                fig.add_trace(go.Scatter3d(
+                    x=traj[:idx + 1, 0], y=traj[:idx + 1, 1], z=traj[:idx + 1, 2],
+                    mode='lines', line=dict(color=ORANGE, width=4),
+                    showlegend=False,
+                ))
+                # Start marker always visible
+                fig.add_trace(go.Scatter3d(
+                    x=[traj[0, 0]], y=[traj[0, 1]], z=[traj[0, 2]],
+                    mode='markers', marker=dict(size=6, color=GREEN, symbol='circle'),
+                    showlegend=False,
+                ))
+
+                if args.trail:
+                    # Fading past snapshots at fixed stride, then current chaser in front
+                    past = [j for j in range(0, idx, trail_stride)]
+                    for rank, j in enumerate(past):
+                        age = (len(past) - rank)  # 1 = most recent past, larger = older
+                        alpha = max(0.15, 0.7 * (0.75 ** (age - 1)))
+                        st = traj[j]
+                        add_chaser_plotly(
+                            fig, st[:3], st[6:10], chaser_dims,
+                            alpha=float(alpha), color=ORANGE,
+                            name=f'trail_{j}', edge_color=ORANGE,
+                        )
+
+                st = traj[idx]
+                add_chaser_plotly(
+                    fig, st[:3], st[6:10], chaser_dims,
+                    alpha=0.9, color=ORANGE,
+                    name='chaser', edge_color='#e68600',
+                )
+
+                apply_layout(fig, width=args.frame_width, height=args.frame_height)
+
+                frame_path = frames_dir / f"frame_{fi:05d}.png"
+                fig.write_image(str(frame_path),
+                                width=args.frame_width, height=args.frame_height, scale=1)
+
+                if (fi + 1) % 25 == 0 or fi == len(frame_indices) - 1:
+                    print(f"  frame {fi + 1}/{len(frame_indices)}")
+
+            mp4_path = save_dir / "trajectory_iso_view.mp4"
+            cmd = [
+                'ffmpeg', '-y', '-framerate', str(args.fps),
+                '-i', str(frames_dir / 'frame_%05d.png'),
+                '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                '-vf', f'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+                '-crf', '18',
+                str(mp4_path),
+            ]
+            print(f"Encoding MP4: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True)
+            print(f"Saved MP4 to: {mp4_path}")
+        finally:
+            shutil.rmtree(frames_dir, ignore_errors=True)
