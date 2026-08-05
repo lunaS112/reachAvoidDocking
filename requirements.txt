@@ -1,0 +1,33 @@
+# MPC Evaluation Framework Requirements
+
+# Core Scientific Computing
+numpy>=1.21.0
+scipy>=1.7.0
+torch>=1.9.0
+torchvision>=0.10.0
+
+# Deep Learning & Neural Networks
+pytorch-lightning>=1.5.0
+
+# Numerical & Array Processing
+jax>=0.3.0
+jaxlib>=0.3.0
+
+# Visualization
+matplotlib>=3.4.0
+Pillow>=8.0.0
+
+# Data Processing
+pandas>=1.3.0
+h5py>=3.0.0
+
+# Utilities
+tqdm>=4.60.0
+pyyaml>=5.4.0
+wandb>=0.12.0  # Optional: for experiment tracking
+
+# Development (optional)
+pytest>=6.2.0
+pytest-cov>=2.12.0
+black>=21.5b0  # Code formatting
+flake8>=3.9.0  # Linting
