@@ -1,0 +1,1985 @@
+
+============================================================
+  13D Comparison  |  2 controllers  |  500 rollouts  |  IC=uniform
+============================================================
+
+  Sampling 500 ICs  (seed=19, method=uniform) ...
+  IC sampling: 1 fixed + 4,990 checked | 103 reject(geom) | 499 random accepted
+  500 valid ICs obtained.
+
+------------------------------------------------------------
+  BRAT+Safety 13D  (500 rollouts)
+------------------------------------------------------------
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=14, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=512, out_features=1, bias=True)
+      )
+    )
+  )
+)
+[SafetyFilter] mode=1  dynamics=Docking13D  checkpoint=model_final.pth  tMax=10  margin=0.1  gamma=0.2
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=14, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=512, out_features=1, bias=True)
+      )
+    )
+  )
+)
+BRATController13D loaded | Docking13D | tMax=10.0s  dt=0.1s
+  [BRAT13D batch] 500 ICs  max_sim=60.0s  dt=0.1s  device=cuda
+[BRAT13D batch]:   0%|          | 0/601 steps [00:00<?]  [BRAT13D batch]:   0%|          | 1/601 steps [00:07<1:10:33]  , active=500, coll=0/500, dock=0/500, t=0.0s[BRAT13D batch]:   1%|          | 5/601 steps [00:07<10:40]  , active=500, coll=0/500, dock=0/500, t=0.4s  [BRAT13D batch]:   1%|▏         | 9/601 steps [00:07<04:56]  , active=500, coll=0/500, dock=0/500, t=0.8s[BRAT13D batch]:   2%|▏         | 13/601 steps [00:07<02:52]  , active=500, coll=0/500, dock=0/500, t=1.2s[BRAT13D batch]:   3%|▎         | 17/601 steps [00:07<01:51]  , active=500, coll=0/500, dock=0/500, t=1.6s[BRAT13D batch]:   3%|▎         | 21/601 steps [00:07<01:17]  , active=500, coll=0/500, dock=0/500, t=2.0s[BRAT13D batch]:   4%|▍         | 25/601 steps [00:07<00:56]  , active=500, coll=0/500, dock=0/500, t=2.4s[BRAT13D batch]:   5%|▍         | 29/601 steps [00:07<00:43]  , active=500, coll=0/500, dock=0/500, t=2.8s[BRAT13D batch]:   5%|▌         | 33/601 steps [00:07<00:34]  , active=500, coll=0/500, dock=0/500, t=3.2s[BRAT13D batch]:   6%|▌         | 37/601 steps [00:08<00:28]  , active=500, coll=0/500, dock=0/500, t=3.6s[BRAT13D batch]:   7%|▋         | 41/601 steps [00:08<00:24]  , active=500, coll=0/500, dock=0/500, t=4.0s[BRAT13D batch]:   7%|▋         | 45/601 steps [00:08<00:21]  , active=500, coll=0/500, dock=0/500, t=4.4s[BRAT13D batch]:   8%|▊         | 49/601 steps [00:08<00:19]  , active=500, coll=0/500, dock=0/500, t=4.8s[BRAT13D batch]:   9%|▉         | 53/601 steps [00:08<00:18]  , active=500, coll=0/500, dock=0/500, t=5.2s[BRAT13D batch]:   9%|▉         | 57/601 steps [00:08<00:17]  , active=500, coll=0/500, dock=0/500, t=5.6s[BRAT13D batch]:  10%|█         | 61/601 steps [00:08<00:17]  , active=500, coll=0/500, dock=0/500, t=6.0s[BRAT13D batch]:  11%|█         | 65/601 steps [00:08<00:17]  , active=500, coll=0/500, dock=0/500, t=6.4s[BRAT13D batch]:  11%|█▏        | 69/601 steps [00:09<00:17]  , active=500, coll=0/500, dock=0/500, t=6.8s[BRAT13D batch]:  12%|█▏        | 73/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=7.2s[BRAT13D batch]:  13%|█▎        | 77/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=7.6s[BRAT13D batch]:  13%|█▎        | 81/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=8.0s[BRAT13D batch]:  14%|█▍        | 85/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=8.4s[BRAT13D batch]:  15%|█▍        | 89/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=8.8s[BRAT13D batch]:  15%|█▌        | 93/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=9.2s[BRAT13D batch]:  16%|█▌        | 97/601 steps [00:09<00:16]  , active=500, coll=0/500, dock=0/500, t=9.6s[BRAT13D batch]:  17%|█▋        | 101/601 steps [00:10<00:16]  , active=500, coll=0/500, dock=0/500, t=10.0s[BRAT13D batch]:  17%|█▋        | 105/601 steps [00:10<00:16]  , active=500, coll=0/500, dock=0/500, t=10.4s[BRAT13D batch]:  18%|█▊        | 109/601 steps [00:10<00:16]  , active=500, coll=0/500, dock=0/500, t=10.8s[BRAT13D batch]:  19%|█▉        | 113/601 steps [00:10<00:16]  , active=499, coll=1/500, dock=0/500, t=11.2s[BRAT13D batch]:  19%|█▉        | 116/601 steps [00:10<00:16]  , active=498, coll=2/500, dock=0/500, t=11.5s[BRAT13D batch]:  20%|█▉        | 119/601 steps [00:10<00:16]  , active=498, coll=2/500, dock=0/500, t=11.8s[BRAT13D batch]:  20%|██        | 122/601 steps [00:10<00:16]  , active=498, coll=2/500, dock=0/500, t=12.1s[BRAT13D batch]:  21%|██        | 125/601 steps [00:10<00:16]  , active=498, coll=2/500, dock=0/500, t=12.4s[BRAT13D batch]:  21%|██▏       | 128/601 steps [00:10<00:15]  , active=498, coll=2/500, dock=0/500, t=12.7s[BRAT13D batch]:  22%|██▏       | 131/601 steps [00:11<00:15]  , active=498, coll=2/500, dock=0/500, t=13.0s[BRAT13D batch]:  22%|██▏       | 134/601 steps [00:11<00:15]  , active=498, coll=2/500, dock=0/500, t=13.3s[BRAT13D batch]:  23%|██▎       | 137/601 steps [00:11<00:15]  , active=498, coll=2/500, dock=0/500, t=13.6s[BRAT13D batch]:  23%|██▎       | 140/601 steps [00:11<00:15]  , active=498, coll=2/500, dock=0/500, t=13.9s[BRAT13D batch]:  24%|██▍       | 143/601 steps [00:11<00:15]  , active=497, coll=3/500, dock=0/500, t=14.2s[BRAT13D batch]:  24%|██▍       | 146/601 steps [00:11<00:15]  , active=497, coll=3/500, dock=0/500, t=14.5s[BRAT13D batch]:  25%|██▍       | 149/601 steps [00:11<00:15]  , active=496, coll=4/500, dock=0/500, t=14.8s[BRAT13D batch]:  25%|██▌       | 152/601 steps [00:11<00:15]  , active=496, coll=4/500, dock=0/500, t=15.1s[BRAT13D batch]:  26%|██▌       | 155/601 steps [00:11<00:15]  , active=496, coll=4/500, dock=1/500, t=15.4s[BRAT13D batch]:  26%|██▋       | 158/601 steps [00:12<00:15]  , active=496, coll=4/500, dock=2/500, t=15.7s[BRAT13D batch]:  27%|██▋       | 161/601 steps [00:12<00:15]  , active=496, coll=4/500, dock=2/500, t=16.0s[BRAT13D batch]:  27%|██▋       | 164/601 steps [00:12<00:15]  , active=495, coll=4/500, dock=3/500, t=16.3s[BRAT13D batch]:  28%|██▊       | 167/601 steps [00:12<00:15]  , active=494, coll=4/500, dock=3/500, t=16.6s[BRAT13D batch]:  28%|██▊       | 170/601 steps [00:12<00:14]  , active=494, coll=4/500, dock=3/500, t=16.9s[BRAT13D batch]:  29%|██▉       | 173/601 steps [00:12<00:14]  , active=493, coll=4/500, dock=4/500, t=17.2s[BRAT13D batch]:  29%|██▉       | 176/601 steps [00:12<00:14]  , active=492, coll=5/500, dock=4/500, t=17.5s[BRAT13D batch]:  30%|██▉       | 179/601 steps [00:12<00:14]  , active=492, coll=5/500, dock=5/500, t=17.8s[BRAT13D batch]:  30%|███       | 182/601 steps [00:12<00:14]  , active=490, coll=7/500, dock=6/500, t=18.1s[BRAT13D batch]:  31%|███       | 185/601 steps [00:12<00:14]  , active=489, coll=7/500, dock=6/500, t=18.4s[BRAT13D batch]:  31%|███▏      | 188/601 steps [00:13<00:14]  , active=488, coll=7/500, dock=6/500, t=18.7s[BRAT13D batch]:  32%|███▏      | 191/601 steps [00:13<00:14]  , active=488, coll=7/500, dock=6/500, t=19.0s[BRAT13D batch]:  32%|███▏      | 194/601 steps [00:13<00:14]  , active=487, coll=7/500, dock=6/500, t=19.3s[BRAT13D batch]:  33%|███▎      | 197/601 steps [00:13<00:14]  , active=487, coll=7/500, dock=7/500, t=19.6s[BRAT13D batch]:  33%|███▎      | 200/601 steps [00:13<00:14]  , active=487, coll=7/500, dock=9/500, t=19.9s[BRAT13D batch]:  34%|███▍      | 203/601 steps [00:13<00:14]  , active=487, coll=7/500, dock=11/500, t=20.2s[BRAT13D batch]:  34%|███▍      | 206/601 steps [00:13<00:13]  , active=485, coll=9/500, dock=12/500, t=20.5s[BRAT13D batch]:  35%|███▍      | 209/601 steps [00:13<00:13]  , active=483, coll=9/500, dock=12/500, t=20.8s[BRAT13D batch]:  35%|███▌      | 212/601 steps [00:13<00:13]  , active=480, coll=9/500, dock=12/500, t=21.1s[BRAT13D batch]:  36%|███▌      | 215/601 steps [00:14<00:13]  , active=479, coll=9/500, dock=15/500, t=21.4s[BRAT13D batch]:  36%|███▋      | 218/601 steps [00:14<00:13]  , active=479, coll=9/500, dock=16/500, t=21.7s[BRAT13D batch]:  37%|███▋      | 221/601 steps [00:14<00:13]  , active=479, coll=9/500, dock=17/500, t=22.0s[BRAT13D batch]:  37%|███▋      | 224/601 steps [00:14<00:13]  , active=479, coll=9/500, dock=19/500, t=22.3s[BRAT13D batch]:  38%|███▊      | 227/601 steps [00:14<00:13]  , active=475, coll=9/500, dock=19/500, t=22.6s[BRAT13D batch]:  38%|███▊      | 230/601 steps [00:14<00:13]  , active=475, coll=9/500, dock=25/500, t=22.9s[BRAT13D batch]:  39%|███▉      | 233/601 steps [00:14<00:12]  , active=472, coll=9/500, dock=25/500, t=23.2s[BRAT13D batch]:  39%|███▉      | 236/601 steps [00:14<00:12]  , active=472, coll=9/500, dock=27/500, t=23.5s[BRAT13D batch]:  40%|███▉      | 239/601 steps [00:14<00:12]  , active=468, coll=9/500, dock=29/500, t=23.8s[BRAT13D batch]:  40%|████      | 242/601 steps [00:14<00:12]  , active=466, coll=9/500, dock=29/500, t=24.1s[BRAT13D batch]:  41%|████      | 245/601 steps [00:15<00:12]  , active=465, coll=9/500, dock=29/500, t=24.4s[BRAT13D batch]:  41%|████▏     | 248/601 steps [00:15<00:12]  , active=462, coll=9/500, dock=30/500, t=24.7s[BRAT13D batch]:  42%|████▏     | 251/601 steps [00:15<00:12]  , active=462, coll=9/500, dock=32/500, t=25.0s[BRAT13D batch]:  42%|████▏     | 254/601 steps [00:15<00:12]  , active=462, coll=9/500, dock=34/500, t=25.3s[BRAT13D batch]:  43%|████▎     | 257/601 steps [00:15<00:12]  , active=462, coll=9/500, dock=38/500, t=25.6s[BRAT13D batch]:  43%|████▎     | 260/601 steps [00:15<00:12]  , active=459, coll=9/500, dock=41/500, t=25.9s[BRAT13D batch]:  44%|████▍     | 263/601 steps [00:15<00:11]  , active=457, coll=9/500, dock=43/500, t=26.2s[BRAT13D batch]:  44%|████▍     | 266/601 steps [00:15<00:11]  , active=455, coll=9/500, dock=44/500, t=26.5s[BRAT13D batch]:  45%|████▍     | 269/601 steps [00:15<00:11]  , active=450, coll=9/500, dock=44/500, t=26.8s[BRAT13D batch]:  45%|████▌     | 272/601 steps [00:16<00:11]  , active=448, coll=9/500, dock=44/500, t=27.1s[BRAT13D batch]:  46%|████▌     | 275/601 steps [00:16<00:11]  , active=447, coll=9/500, dock=44/500, t=27.4s[BRAT13D batch]:  46%|████▋     | 278/601 steps [00:16<00:11]  , active=447, coll=9/500, dock=46/500, t=27.7s[BRAT13D batch]:  47%|████▋     | 281/601 steps [00:16<00:11]  , active=447, coll=9/500, dock=48/500, t=28.0s[BRAT13D batch]:  47%|████▋     | 284/601 steps [00:16<00:11]  , active=447, coll=9/500, dock=48/500, t=28.3s[BRAT13D batch]:  48%|████▊     | 287/601 steps [00:16<00:11]  , active=445, coll=9/500, dock=52/500, t=28.6s[BRAT13D batch]:  48%|████▊     | 290/601 steps [00:16<00:10]  , active=444, coll=9/500, dock=53/500, t=28.9s[BRAT13D batch]:  49%|████▉     | 293/601 steps [00:16<00:10]  , active=443, coll=9/500, dock=55/500, t=29.2s[BRAT13D batch]:  49%|████▉     | 296/601 steps [00:16<00:10]  , active=440, coll=9/500, dock=57/500, t=29.5s[BRAT13D batch]:  50%|████▉     | 299/601 steps [00:16<00:10]  , active=438, coll=9/500, dock=58/500, t=29.8s[BRAT13D batch]:  50%|█████     | 302/601 steps [00:17<00:10]  , active=436, coll=9/500, dock=59/500, t=30.1s[BRAT13D batch]:  51%|█████     | 305/601 steps [00:17<00:10]  , active=434, coll=9/500, dock=62/500, t=30.4s[BRAT13D batch]:  51%|█████     | 308/601 steps [00:17<00:10]  , active=433, coll=9/500, dock=63/500, t=30.7s[BRAT13D batch]:  52%|█████▏    | 311/601 steps [00:17<00:10]  , active=432, coll=9/500, dock=66/500, t=31.0s[BRAT13D batch]:  52%|█████▏    | 314/601 steps [00:17<00:10]  , active=429, coll=9/500, dock=67/500, t=31.3s[BRAT13D batch]:  53%|█████▎    | 317/601 steps [00:17<00:09]  , active=428, coll=9/500, dock=68/500, t=31.6s[BRAT13D batch]:  53%|█████▎    | 320/601 steps [00:17<00:09]  , active=425, coll=9/500, dock=68/500, t=31.9s[BRAT13D batch]:  54%|█████▎    | 323/601 steps [00:17<00:09]  , active=424, coll=9/500, dock=71/500, t=32.2s[BRAT13D batch]:  54%|█████▍    | 326/601 steps [00:17<00:09]  , active=423, coll=9/500, dock=72/500, t=32.5s[BRAT13D batch]:  55%|█████▍    | 329/601 steps [00:18<00:09]  , active=423, coll=9/500, dock=73/500, t=32.8s[BRAT13D batch]:  55%|█████▌    | 332/601 steps [00:18<00:09]  , active=422, coll=9/500, dock=76/500, t=33.1s[BRAT13D batch]:  56%|█████▌    | 335/601 steps [00:18<00:09]  , active=419, coll=9/500, dock=79/500, t=33.4s[BRAT13D batch]:  56%|█████▌    | 338/601 steps [00:18<00:09]  , active=419, coll=9/500, dock=81/500, t=33.7s[BRAT13D batch]:  57%|█████▋    | 341/601 steps [00:18<00:09]  , active=414, coll=10/500, dock=81/500, t=34.0s[BRAT13D batch]:  57%|█████▋    | 344/601 steps [00:18<00:09]  , active=411, coll=10/500, dock=83/500, t=34.3s[BRAT13D batch]:  58%|█████▊    | 347/601 steps [00:18<00:08]  , active=410, coll=10/500, dock=84/500, t=34.6s[BRAT13D batch]:  58%|█████▊    | 350/601 steps [00:18<00:08]  , active=409, coll=10/500, dock=86/500, t=34.9s[BRAT13D batch]:  59%|█████▊    | 353/601 steps [00:18<00:08]  , active=408, coll=10/500, dock=87/500, t=35.2s[BRAT13D batch]:  59%|█████▉    | 356/601 steps [00:18<00:08]  , active=406, coll=10/500, dock=90/500, t=35.5s[BRAT13D batch]:  60%|█████▉    | 359/601 steps [00:19<00:08]  , active=405, coll=10/500, dock=93/500, t=35.8s[BRAT13D batch]:  60%|██████    | 362/601 steps [00:19<00:08]  , active=403, coll=11/500, dock=94/500, t=36.1s[BRAT13D batch]:  61%|██████    | 365/601 steps [00:19<00:08]  , active=401, coll=12/500, dock=95/500, t=36.4s[BRAT13D batch]:  61%|██████    | 368/601 steps [00:19<00:08]  , active=397, coll=12/500, dock=101/500, t=36.7s[BRAT13D batch]:  62%|██████▏   | 371/601 steps [00:19<00:07]  , active=395, coll=12/500, dock=102/500, t=37.0s[BRAT13D batch]:  62%|██████▏   | 374/601 steps [00:19<00:07]  , active=393, coll=13/500, dock=103/500, t=37.3s[BRAT13D batch]:  63%|██████▎   | 377/601 steps [00:19<00:07]  , active=389, coll=13/500, dock=103/500, t=37.6s[BRAT13D batch]:  63%|██████▎   | 380/601 steps [00:19<00:07]  , active=385, coll=13/500, dock=103/500, t=37.9s[BRAT13D batch]:  64%|██████▎   | 383/601 steps [00:19<00:07]  , active=385, coll=13/500, dock=104/500, t=38.2s[BRAT13D batch]:  64%|██████▍   | 386/601 steps [00:20<00:07]  , active=384, coll=13/500, dock=105/500, t=38.5s[BRAT13D batch]:  65%|██████▍   | 389/601 steps [00:20<00:07]  , active=384, coll=13/500, dock=105/500, t=38.8s[BRAT13D batch]:  65%|██████▌   | 392/601 steps [00:20<00:07]  , active=383, coll=13/500, dock=106/500, t=39.1s[BRAT13D batch]:  66%|██████▌   | 395/601 steps [00:20<00:07]  , active=383, coll=13/500, dock=108/500, t=39.4s[BRAT13D batch]:  66%|██████▌   | 398/601 steps [00:20<00:06]  , active=382, coll=13/500, dock=111/500, t=39.7s[BRAT13D batch]:  67%|██████▋   | 401/601 steps [00:20<00:06]  , active=381, coll=13/500, dock=111/500, t=40.0s[BRAT13D batch]:  67%|██████▋   | 404/601 steps [00:20<00:06]  , active=379, coll=13/500, dock=113/500, t=40.3s[BRAT13D batch]:  68%|██████▊   | 407/601 steps [00:20<00:06]  , active=377, coll=13/500, dock=116/500, t=40.6s[BRAT13D batch]:  68%|██████▊   | 410/601 steps [00:20<00:06]  , active=376, coll=13/500, dock=118/500, t=40.9s[BRAT13D batch]:  69%|██████▊   | 413/601 steps [00:20<00:06]  , active=375, coll=13/500, dock=118/500, t=41.2s[BRAT13D batch]:  69%|██████▉   | 416/601 steps [00:21<00:06]  , active=371, coll=13/500, dock=119/500, t=41.5s[BRAT13D batch]:  70%|██████▉   | 419/601 steps [00:21<00:06]  , active=369, coll=13/500, dock=119/500, t=41.8s[BRAT13D batch]:  70%|███████   | 422/601 steps [00:21<00:06]  , active=369, coll=13/500, dock=119/500, t=42.1s[BRAT13D batch]:  71%|███████   | 425/601 steps [00:21<00:05]  , active=368, coll=13/500, dock=120/500, t=42.4s[BRAT13D batch]:  71%|███████   | 428/601 steps [00:21<00:05]  , active=368, coll=13/500, dock=121/500, t=42.7s[BRAT13D batch]:  72%|███████▏  | 431/601 steps [00:21<00:05]  , active=368, coll=13/500, dock=121/500, t=43.0s[BRAT13D batch]:  72%|███████▏  | 434/601 steps [00:21<00:05]  , active=368, coll=13/500, dock=122/500, t=43.3s[BRAT13D batch]:  73%|███████▎  | 437/601 steps [00:21<00:05]  , active=367, coll=13/500, dock=122/500, t=43.6s[BRAT13D batch]:  73%|███████▎  | 440/601 steps [00:21<00:05]  , active=366, coll=13/500, dock=123/500, t=43.9s[BRAT13D batch]:  74%|███████▎  | 443/601 steps [00:21<00:05]  , active=365, coll=13/500, dock=125/500, t=44.2s[BRAT13D batch]:  74%|███████▍  | 446/601 steps [00:22<00:05]  , active=365, coll=13/500, dock=125/500, t=44.5s[BRAT13D batch]:  75%|███████▍  | 449/601 steps [00:22<00:05]  , active=364, coll=13/500, dock=128/500, t=44.8s[BRAT13D batch]:  75%|███████▌  | 452/601 steps [00:22<00:05]  , active=363, coll=13/500, dock=128/500, t=45.1s[BRAT13D batch]:  76%|███████▌  | 455/601 steps [00:22<00:04]  , active=362, coll=13/500, dock=129/500, t=45.4s[BRAT13D batch]:  76%|███████▌  | 458/601 steps [00:22<00:04]  , active=360, coll=13/500, dock=131/500, t=45.7s[BRAT13D batch]:  77%|███████▋  | 461/601 steps [00:22<00:04]  , active=359, coll=13/500, dock=133/500, t=46.0s[BRAT13D batch]:  77%|███████▋  | 464/601 steps [00:22<00:04]  , active=358, coll=13/500, dock=134/500, t=46.3s[BRAT13D batch]:  78%|███████▊  | 467/601 steps [00:22<00:04]  , active=357, coll=13/500, dock=135/500, t=46.6s[BRAT13D batch]:  78%|███████▊  | 470/601 steps [00:22<00:04]  , active=354, coll=13/500, dock=137/500, t=46.9s[BRAT13D batch]:  79%|███████▊  | 473/601 steps [00:22<00:04]  , active=354, coll=13/500, dock=137/500, t=47.2s[BRAT13D batch]:  79%|███████▉  | 476/601 steps [00:23<00:04]  , active=352, coll=13/500, dock=138/500, t=47.5s[BRAT13D batch]:  80%|███████▉  | 479/601 steps [00:23<00:04]  , active=350, coll=13/500, dock=139/500, t=47.8s[BRAT13D batch]:  80%|████████  | 482/601 steps [00:23<00:04]  , active=350, coll=13/500, dock=142/500, t=48.1s[BRAT13D batch]:  81%|████████  | 485/601 steps [00:23<00:03]  , active=349, coll=13/500, dock=142/500, t=48.4s[BRAT13D batch]:  81%|████████  | 488/601 steps [00:23<00:03]  , active=349, coll=13/500, dock=143/500, t=48.7s[BRAT13D batch]:  82%|████████▏ | 491/601 steps [00:23<00:03]  , active=345, coll=13/500, dock=143/500, t=49.0s[BRAT13D batch]:  82%|████████▏ | 494/601 steps [00:23<00:03]  , active=345, coll=13/500, dock=147/500, t=49.3s[BRAT13D batch]:  83%|████████▎ | 497/601 steps [00:23<00:03]  , active=344, coll=13/500, dock=148/500, t=49.6s[BRAT13D batch]:  83%|████████▎ | 500/601 steps [00:23<00:03]  , active=344, coll=13/500, dock=148/500, t=49.9s[BRAT13D batch]:  84%|████████▎ | 503/601 steps [00:23<00:03]  , active=341, coll=13/500, dock=151/500, t=50.2s[BRAT13D batch]:  84%|████████▍ | 506/601 steps [00:24<00:03]  , active=339, coll=13/500, dock=152/500, t=50.5s[BRAT13D batch]:  85%|████████▍ | 510/601 steps [00:24<00:03]  , active=339, coll=13/500, dock=153/500, t=50.9s[BRAT13D batch]:  85%|████████▌ | 513/601 steps [00:24<00:02]  , active=336, coll=13/500, dock=155/500, t=51.2s[BRAT13D batch]:  86%|████████▌ | 517/601 steps [00:24<00:02]  , active=335, coll=13/500, dock=155/500, t=51.6s[BRAT13D batch]:  87%|████████▋ | 520/601 steps [00:24<00:02]  , active=334, coll=13/500, dock=157/500, t=51.9s[BRAT13D batch]:  87%|████████▋ | 523/601 steps [00:24<00:02]  , active=332, coll=13/500, dock=158/500, t=52.2s[BRAT13D batch]:  88%|████████▊ | 526/601 steps [00:24<00:02]  , active=332, coll=13/500, dock=159/500, t=52.5s[BRAT13D batch]:  88%|████████▊ | 529/601 steps [00:24<00:02]  , active=331, coll=13/500, dock=159/500, t=52.8s[BRAT13D batch]:  89%|████████▊ | 533/601 steps [00:24<00:02]  , active=329, coll=13/500, dock=163/500, t=53.2s[BRAT13D batch]:  89%|████████▉ | 537/601 steps [00:25<00:02]  , active=328, coll=13/500, dock=165/500, t=53.6s[BRAT13D batch]:  90%|████████▉ | 540/601 steps [00:25<00:02]  , active=328, coll=13/500, dock=166/500, t=53.9s[BRAT13D batch]:  91%|█████████ | 544/601 steps [00:25<00:01]  , active=324, coll=13/500, dock=167/500, t=54.3s[BRAT13D batch]:  91%|█████████ | 547/601 steps [00:25<00:01]  , active=322, coll=13/500, dock=167/500, t=54.6s[BRAT13D batch]:  92%|█████████▏| 550/601 steps [00:25<00:01]  , active=321, coll=13/500, dock=169/500, t=54.9s[BRAT13D batch]:  92%|█████████▏| 554/601 steps [00:25<00:01]  , active=320, coll=13/500, dock=169/500, t=55.3s[BRAT13D batch]:  93%|█████████▎| 558/601 steps [00:25<00:01]  , active=319, coll=13/500, dock=169/500, t=55.7s[BRAT13D batch]:  94%|█████████▎| 562/601 steps [00:25<00:01]  , active=318, coll=13/500, dock=171/500, t=56.1s[BRAT13D batch]:  94%|█████████▍| 566/601 steps [00:26<00:01]  , active=318, coll=13/500, dock=171/500, t=56.5s[BRAT13D batch]:  95%|█████████▍| 570/601 steps [00:26<00:01]  , active=318, coll=13/500, dock=171/500, t=56.9s[BRAT13D batch]:  96%|█████████▌| 574/601 steps [00:26<00:00]  , active=316, coll=13/500, dock=172/500, t=57.3s[BRAT13D batch]:  96%|█████████▌| 578/601 steps [00:26<00:00]  , active=316, coll=13/500, dock=174/500, t=57.7s[BRAT13D batch]:  97%|█████████▋| 582/601 steps [00:26<00:00]  , active=315, coll=13/500, dock=176/500, t=58.1s[BRAT13D batch]:  98%|█████████▊| 586/601 steps [00:26<00:00]  , active=315, coll=13/500, dock=177/500, t=58.5s[BRAT13D batch]:  98%|█████████▊| 590/601 steps [00:26<00:00]  , active=313, coll=13/500, dock=178/500, t=58.9s[BRAT13D batch]:  99%|█████████▉| 594/601 steps [00:27<00:00]  , active=311, coll=13/500, dock=179/500, t=59.3s[BRAT13D batch]: 100%|█████████▉| 598/601 steps [00:27<00:00]  , active=310, coll=13/500, dock=179/500, t=59.7s[BRAT13D batch]: 100%|██████████| 601/601 steps [00:27<00:00]  , active=309, coll=13/500, dock=181/500, t=60.0s
+  [BRAT13D batch] done  181/500 docked  13/500 collision  total_wall=27.3s  mean_per_ic=24149.5ms
+  [  1/500] DOCK  t= 40.1s  effort=1396.5
+  [  2/500] TOUT  t= 60.0s  effort=2087.8
+  [  3/500] DOCK  t= 46.6s  effort=1622.3
+  [  4/500] TOUT  t= 60.0s  effort=2087.8
+  [  5/500] TOUT  t= 60.0s  effort=2087.8
+  [  6/500] TOUT  t= 60.0s  effort=2087.8
+  [  7/500] TOUT  t= 60.0s  effort=2087.8
+  [  8/500] TOUT  t= 60.0s  effort=2087.8
+  [  9/500] TOUT  t= 60.0s  effort=2087.8
+  [ 10/500] COLL  t= 14.1s  effort=493.3
+  [ 11/500] TOUT  t= 60.0s  effort=2087.8
+  [ 12/500] TOUT  t= 60.0s  effort=2087.8
+  [ 13/500] TOUT  t= 60.0s  effort=2087.8
+  [ 14/500] TOUT  t= 60.0s  effort=2087.8
+  [ 15/500] DOCK  t= 47.7s  effort=1660.5
+  [ 16/500] TOUT  t= 60.0s  effort=2087.8
+  [ 17/500] TOUT  t= 60.0s  effort=2087.8
+  [ 18/500] TOUT  t= 60.0s  effort=2087.8
+  [ 19/500] DOCK  t= 23.7s  effort=826.8
+  [ 20/500] TOUT  t= 60.0s  effort=2087.8
+  [ 21/500] DOCK  t= 45.1s  effort=1570.2
+  [ 22/500] TOUT  t= 60.0s  effort=2087.8
+  [ 23/500] TOUT  t= 60.0s  effort=2087.8
+  [ 24/500] TOUT  t= 60.0s  effort=2087.8
+  [ 25/500] DOCK  t= 30.6s  effort=1066.5
+  [ 26/500] TOUT  t= 60.0s  effort=2087.8
+  [ 27/500] TOUT  t= 60.0s  effort=2087.8
+  [ 28/500] DOCK  t= 54.1s  effort=1882.8
+  [ 29/500] DOCK  t= 57.0s  effort=1983.6
+  [ 30/500] DOCK  t= 30.9s  effort=1076.9
+  [ 31/500] TOUT  t= 60.0s  effort=2087.8
+  [ 32/500] DOCK  t= 45.5s  effort=1584.1
+  [ 33/500] DOCK  t= 53.9s  effort=1875.9
+  [ 34/500] COLL  t= 17.9s  effort=625.3
+  [ 35/500] TOUT  t= 60.0s  effort=2087.8
+  [ 36/500] TOUT  t= 60.0s  effort=2087.8
+  [ 37/500] TOUT  t= 60.0s  effort=2087.8
+  [ 38/500] TOUT  t= 60.0s  effort=2087.8
+  [ 39/500] DOCK  t= 29.9s  effort=1042.1
+  [ 40/500] TOUT  t= 60.0s  effort=2087.8
+  [ 41/500] TOUT  t= 60.0s  effort=2087.8
+  [ 42/500] DOCK  t= 26.9s  effort=937.9
+  [ 43/500] TOUT  t= 60.0s  effort=2087.8
+  [ 44/500] TOUT  t= 60.0s  effort=2087.8
+  [ 45/500] TOUT  t= 60.0s  effort=2087.8
+  [ 46/500] TOUT  t= 60.0s  effort=2087.8
+  [ 47/500] DOCK  t= 59.0s  effort=2053.0
+  [ 48/500] DOCK  t= 50.2s  effort=1747.3
+  [ 49/500] DOCK  t= 48.8s  effort=1698.7
+  [ 50/500] TOUT  t= 60.0s  effort=2087.8
+  [ 51/500] TOUT  t= 60.0s  effort=2087.8
+  [ 52/500] TOUT  t= 60.0s  effort=2087.8
+  [ 53/500] TOUT  t= 60.0s  effort=2087.8
+  [ 54/500] TOUT  t= 60.0s  effort=2087.8
+  [ 55/500] DOCK  t= 52.7s  effort=1834.2
+  [ 56/500] TOUT  t= 60.0s  effort=2087.8
+  [ 57/500] TOUT  t= 60.0s  effort=2087.8
+  [ 58/500] TOUT  t= 60.0s  effort=2087.8
+  [ 59/500] TOUT  t= 60.0s  effort=2087.8
+  [ 60/500] DOCK  t= 16.4s  effort=573.2
+  [ 61/500] DOCK  t= 33.0s  effort=1149.8
+  [ 62/500] TOUT  t= 60.0s  effort=2087.8
+  [ 63/500] COLL  t= 20.5s  effort=715.6
+  [ 64/500] DOCK  t= 33.7s  effort=1174.2
+  [ 65/500] TOUT  t= 60.0s  effort=2087.8
+  [ 66/500] DOCK  t= 37.6s  effort=1309.6
+  [ 67/500] TOUT  t= 60.0s  effort=2087.8
+  [ 68/500] TOUT  t= 60.0s  effort=2087.8
+  [ 69/500] TOUT  t= 60.0s  effort=2087.8
+  [ 70/500] TOUT  t= 60.0s  effort=2087.8
+  [ 71/500] TOUT  t= 60.0s  effort=2087.8
+  [ 72/500] DOCK  t= 25.7s  effort=896.2
+  [ 73/500] TOUT  t= 60.0s  effort=2087.8
+  [ 74/500] DOCK  t= 52.1s  effort=1813.3
+  [ 75/500] DOCK  t= 23.1s  effort=805.9
+  [ 76/500] TOUT  t= 60.0s  effort=2087.8
+  [ 77/500] DOCK  t= 43.3s  effort=1507.6
+  [ 78/500] TOUT  t= 60.0s  effort=2087.8
+  [ 79/500] DOCK  t= 59.8s  effort=2080.8
+  [ 80/500] TOUT  t= 60.0s  effort=2087.8
+  [ 81/500] TOUT  t= 60.0s  effort=2087.8
+  [ 82/500] TOUT  t= 60.0s  effort=2087.8
+  [ 83/500] TOUT  t= 60.0s  effort=2087.8
+  [ 84/500] TOUT  t= 60.0s  effort=2087.8
+  [ 85/500] DOCK  t= 17.1s  effort=597.5
+  [ 86/500] DOCK  t= 24.5s  effort=854.6
+  [ 87/500] TOUT  t= 60.0s  effort=2087.8
+  [ 88/500] TOUT  t= 60.0s  effort=2087.8
+  [ 89/500] TOUT  t= 60.0s  effort=2087.8
+  [ 90/500] DOCK  t= 20.7s  effort=722.6
+  [ 91/500] COLL  t= 11.3s  effort=396.0
+  [ 92/500] TOUT  t= 60.0s  effort=2087.8
+  [ 93/500] DOCK  t= 53.2s  effort=1851.6
+  [ 94/500] TOUT  t= 60.0s  effort=2087.8
+  [ 95/500] DOCK  t= 36.1s  effort=1257.5
+  [ 96/500] TOUT  t= 60.0s  effort=2087.8
+  [ 97/500] TOUT  t= 60.0s  effort=2087.8
+  [ 98/500] TOUT  t= 60.0s  effort=2087.8
+  [ 99/500] TOUT  t= 60.0s  effort=2087.8
+  [100/500] DOCK  t= 31.1s  effort=1083.8
+  [101/500] DOCK  t= 47.2s  effort=1643.1
+  [102/500] DOCK  t= 41.2s  effort=1434.7
+  [103/500] DOCK  t= 52.1s  effort=1813.3
+  [104/500] DOCK  t= 26.5s  effort=924.0
+  [105/500] TOUT  t= 60.0s  effort=2087.8
+  [106/500] TOUT  t= 60.0s  effort=2087.8
+  [107/500] DOCK  t= 34.5s  effort=1201.9
+  [108/500] TOUT  t= 60.0s  effort=2087.8
+  [109/500] TOUT  t= 60.0s  effort=2087.8
+  [110/500] TOUT  t= 60.0s  effort=2087.8
+  [111/500] TOUT  t= 60.0s  effort=2087.8
+  [112/500] DOCK  t= 23.0s  effort=802.5
+  [113/500] TOUT  t= 60.0s  effort=2087.8
+  [114/500] DOCK  t= 50.0s  effort=1740.4
+  [115/500] DOCK  t= 45.7s  effort=1591.0
+  [116/500] TOUT  t= 60.0s  effort=2087.8
+  [117/500] COLL  t= 14.6s  effort=510.7
+  [118/500] TOUT  t= 60.0s  effort=2087.8
+  [119/500] TOUT  t= 60.0s  effort=2087.8
+  [120/500] DOCK  t= 50.1s  effort=1743.9
+  [121/500] COLL  t= 33.9s  effort=1181.1
+  [122/500] TOUT  t= 60.0s  effort=2087.8
+  [123/500] DOCK  t= 36.4s  effort=1267.9
+  [124/500] TOUT  t= 60.0s  effort=2087.8
+  [125/500] COLL  t= 17.5s  effort=611.4
+  [126/500] DOCK  t= 52.8s  effort=1837.7
+  [127/500] TOUT  t= 60.0s  effort=2087.8
+  [128/500] TOUT  t= 60.0s  effort=2087.8
+  [129/500] DOCK  t= 41.4s  effort=1441.6
+  [130/500] DOCK  t= 58.6s  effort=2039.1
+  [131/500] DOCK  t= 35.2s  effort=1226.3
+  [132/500] TOUT  t= 60.0s  effort=2087.8
+  [133/500] TOUT  t= 60.0s  effort=2087.8
+  [134/500] DOCK  t= 26.6s  effort=927.5
+  [135/500] TOUT  t= 60.0s  effort=2087.8
+  [136/500] DOCK  t= 26.7s  effort=931.0
+  [137/500] TOUT  t= 60.0s  effort=2087.8
+  [138/500] TOUT  t= 60.0s  effort=2087.8
+  [139/500] DOCK  t= 41.6s  effort=1448.6
+  [140/500] TOUT  t= 60.0s  effort=2087.8
+  [141/500] TOUT  t= 60.0s  effort=2087.8
+  [142/500] TOUT  t= 60.0s  effort=2087.8
+  [143/500] TOUT  t= 60.0s  effort=2087.8
+  [144/500] TOUT  t= 60.0s  effort=2087.8
+  [145/500] TOUT  t= 60.0s  effort=2087.8
+  [146/500] TOUT  t= 60.0s  effort=2087.8
+  [147/500] TOUT  t= 60.0s  effort=2087.8
+  [148/500] DOCK  t= 57.0s  effort=1983.6
+  [149/500] TOUT  t= 60.0s  effort=2087.8
+  [150/500] TOUT  t= 60.0s  effort=2087.8
+  [151/500] DOCK  t= 29.4s  effort=1024.8
+  [152/500] TOUT  t= 60.0s  effort=2087.8
+  [153/500] DOCK  t= 39.9s  effort=1389.5
+  [154/500] DOCK  t= 47.3s  effort=1646.6
+  [155/500] TOUT  t= 60.0s  effort=2087.8
+  [156/500] DOCK  t= 44.0s  effort=1532.0
+  [157/500] TOUT  t= 60.0s  effort=2087.8
+  [158/500] TOUT  t= 60.0s  effort=2087.8
+  [159/500] TOUT  t= 60.0s  effort=2087.8
+  [160/500] DOCK  t= 21.2s  effort=739.9
+  [161/500] DOCK  t= 44.6s  effort=1552.8
+  [162/500] TOUT  t= 60.0s  effort=2087.8
+  [163/500] DOCK  t= 54.9s  effort=1910.6
+  [164/500] TOUT  t= 60.0s  effort=2087.8
+  [165/500] TOUT  t= 60.0s  effort=2087.8
+  [166/500] DOCK  t= 36.6s  effort=1274.9
+  [167/500] DOCK  t= 37.5s  effort=1306.2
+  [168/500] TOUT  t= 60.0s  effort=2087.8
+  [169/500] TOUT  t= 60.0s  effort=2087.8
+  [170/500] DOCK  t= 35.6s  effort=1240.2
+  [171/500] TOUT  t= 60.0s  effort=2087.8
+  [172/500] TOUT  t= 60.0s  effort=2087.8
+  [173/500] TOUT  t= 60.0s  effort=2087.8
+  [174/500] TOUT  t= 60.0s  effort=2087.8
+  [175/500] TOUT  t= 60.0s  effort=2087.8
+  [176/500] TOUT  t= 60.0s  effort=2087.8
+  [177/500] DOCK  t= 46.5s  effort=1618.8
+  [178/500] TOUT  t= 60.0s  effort=2087.8
+  [179/500] DOCK  t= 28.9s  effort=1007.4
+  [180/500] TOUT  t= 60.0s  effort=2087.8
+  [181/500] DOCK  t= 22.3s  effort=778.1
+  [182/500] TOUT  t= 60.0s  effort=2087.8
+  [183/500] TOUT  t= 60.0s  effort=2087.8
+  [184/500] TOUT  t= 60.0s  effort=2087.8
+  [185/500] DOCK  t= 23.6s  effort=823.3
+  [186/500] TOUT  t= 60.0s  effort=2087.8
+  [187/500] DOCK  t= 51.0s  effort=1775.1
+  [188/500] TOUT  t= 60.0s  effort=2087.8
+  [189/500] COLL  t= 36.1s  effort=1257.5
+  [190/500] DOCK  t= 26.5s  effort=924.0
+  [191/500] DOCK  t= 34.1s  effort=1188.1
+  [192/500] TOUT  t= 60.0s  effort=2087.8
+  [193/500] TOUT  t= 60.0s  effort=2087.8
+  [194/500] TOUT  t= 60.0s  effort=2087.8
+  [195/500] TOUT  t= 60.0s  effort=2087.8
+  [196/500] TOUT  t= 60.0s  effort=2087.8
+  [197/500] DOCK  t= 53.9s  effort=1875.9
+  [198/500] DOCK  t= 22.4s  effort=781.6
+  [199/500] TOUT  t= 60.0s  effort=2087.8
+  [200/500] DOCK  t= 23.6s  effort=823.3
+  [201/500] TOUT  t= 60.0s  effort=2087.8
+  [202/500] DOCK  t= 30.3s  effort=1056.0
+  [203/500] DOCK  t= 25.6s  effort=892.8
+  [204/500] DOCK  t= 26.1s  effort=910.1
+  [205/500] DOCK  t= 35.8s  effort=1247.1
+  [206/500] TOUT  t= 60.0s  effort=2087.8
+  [207/500] DOCK  t= 36.4s  effort=1267.9
+  [208/500] DOCK  t= 35.4s  effort=1233.2
+  [209/500] TOUT  t= 60.0s  effort=2087.8
+  [210/500] TOUT  t= 60.0s  effort=2087.8
+  [211/500] DOCK  t= 37.3s  effort=1299.2
+  [212/500] TOUT  t= 60.0s  effort=2087.8
+  [213/500] TOUT  t= 60.0s  effort=2087.8
+  [214/500] DOCK  t= 37.4s  effort=1302.7
+  [215/500] DOCK  t= 41.4s  effort=1441.6
+  [216/500] TOUT  t= 60.0s  effort=2087.8
+  [217/500] TOUT  t= 60.0s  effort=2087.8
+  [218/500] DOCK  t= 36.4s  effort=1267.9
+  [219/500] TOUT  t= 60.0s  effort=2087.8
+  [220/500] TOUT  t= 60.0s  effort=2087.8
+  [221/500] TOUT  t= 60.0s  effort=2087.8
+  [222/500] DOCK  t= 37.8s  effort=1316.6
+  [223/500] DOCK  t= 29.7s  effort=1035.2
+  [224/500] DOCK  t= 22.9s  effort=799.0
+  [225/500] TOUT  t= 60.0s  effort=2087.8
+  [226/500] DOCK  t= 39.4s  effort=1372.2
+  [227/500] DOCK  t= 51.7s  effort=1799.4
+  [228/500] TOUT  t= 60.0s  effort=2087.8
+  [229/500] TOUT  t= 60.0s  effort=2087.8
+  [230/500] TOUT  t= 60.0s  effort=2087.8
+  [231/500] TOUT  t= 60.0s  effort=2087.8
+  [232/500] TOUT  t= 60.0s  effort=2087.8
+  [233/500] TOUT  t= 60.0s  effort=2087.8
+  [234/500] TOUT  t= 60.0s  effort=2087.8
+  [235/500] DOCK  t= 29.4s  effort=1024.8
+  [236/500] TOUT  t= 60.0s  effort=2087.8
+  [237/500] TOUT  t= 60.0s  effort=2087.8
+  [238/500] TOUT  t= 60.0s  effort=2087.8
+  [239/500] TOUT  t= 60.0s  effort=2087.8
+  [240/500] TOUT  t= 60.0s  effort=2087.8
+  [241/500] TOUT  t= 60.0s  effort=2087.8
+  [242/500] TOUT  t= 60.0s  effort=2087.8
+  [243/500] TOUT  t= 60.0s  effort=2087.8
+  [244/500] TOUT  t= 60.0s  effort=2087.8
+  [245/500] DOCK  t= 49.4s  effort=1719.5
+  [246/500] DOCK  t= 22.3s  effort=778.1
+  [247/500] DOCK  t= 59.3s  effort=2063.5
+  [248/500] DOCK  t= 33.9s  effort=1181.1
+  [249/500] DOCK  t= 50.4s  effort=1754.3
+  [250/500] TOUT  t= 60.0s  effort=2087.8
+  [251/500] DOCK  t= 31.7s  effort=1104.7
+  [252/500] TOUT  t= 60.0s  effort=2087.8
+  [253/500] TOUT  t= 60.0s  effort=2087.8
+  [254/500] DOCK  t= 18.5s  effort=646.1
+  [255/500] DOCK  t= 28.8s  effort=1003.9
+  [256/500] DOCK  t= 48.7s  effort=1695.2
+  [257/500] TOUT  t= 60.0s  effort=2087.8
+  [258/500] TOUT  t= 60.0s  effort=2087.8
+  [259/500] TOUT  t= 60.0s  effort=2087.8
+  [260/500] DOCK  t= 57.9s  effort=2014.8
+  [261/500] TOUT  t= 60.0s  effort=2087.8
+  [262/500] TOUT  t= 60.0s  effort=2087.8
+  [263/500] TOUT  t= 60.0s  effort=2087.8
+  [264/500] TOUT  t= 60.0s  effort=2087.8
+  [265/500] TOUT  t= 60.0s  effort=2087.8
+  [266/500] TOUT  t= 60.0s  effort=2087.8
+  [267/500] TOUT  t= 60.0s  effort=2087.8
+  [268/500] TOUT  t= 60.0s  effort=2087.8
+  [269/500] TOUT  t= 60.0s  effort=2087.8
+  [270/500] TOUT  t= 60.0s  effort=2087.8
+  [271/500] TOUT  t= 60.0s  effort=2087.8
+  [272/500] TOUT  t= 60.0s  effort=2087.8
+  [273/500] TOUT  t= 60.0s  effort=2087.8
+  [274/500] DOCK  t= 30.3s  effort=1056.0
+  [275/500] TOUT  t= 60.0s  effort=2087.8
+  [276/500] TOUT  t= 60.0s  effort=2087.8
+  [277/500] TOUT  t= 60.0s  effort=2087.8
+  [278/500] TOUT  t= 60.0s  effort=2087.8
+  [279/500] DOCK  t= 41.7s  effort=1452.1
+  [280/500] DOCK  t= 21.0s  effort=733.0
+  [281/500] DOCK  t= 26.7s  effort=931.0
+  [282/500] TOUT  t= 60.0s  effort=2087.8
+  [283/500] TOUT  t= 60.0s  effort=2087.8
+  [284/500] TOUT  t= 60.0s  effort=2087.8
+  [285/500] DOCK  t= 32.1s  effort=1118.6
+  [286/500] DOCK  t= 32.4s  effort=1129.0
+  [287/500] TOUT  t= 60.0s  effort=2087.8
+  [288/500] TOUT  t= 60.0s  effort=2087.8
+  [289/500] TOUT  t= 60.0s  effort=2087.8
+  [290/500] TOUT  t= 60.0s  effort=2087.8
+  [291/500] DOCK  t= 39.0s  effort=1358.3
+  [292/500] DOCK  t= 58.9s  effort=2049.6
+  [293/500] DOCK  t= 33.2s  effort=1156.8
+  [294/500] TOUT  t= 60.0s  effort=2087.8
+  [295/500] TOUT  t= 60.0s  effort=2087.8
+  [296/500] DOCK  t= 37.6s  effort=1309.6
+  [297/500] TOUT  t= 60.0s  effort=2087.8
+  [298/500] DOCK  t= 45.0s  effort=1566.7
+  [299/500] DOCK  t= 36.7s  effort=1278.4
+  [300/500] DOCK  t= 26.3s  effort=917.1
+  [301/500] TOUT  t= 60.0s  effort=2087.8
+  [302/500] TOUT  t= 60.0s  effort=2087.8
+  [303/500] TOUT  t= 60.0s  effort=2087.8
+  [304/500] TOUT  t= 60.0s  effort=2087.8
+  [305/500] DOCK  t= 19.0s  effort=663.5
+  [306/500] TOUT  t= 60.0s  effort=2087.8
+  [307/500] DOCK  t= 31.1s  effort=1083.8
+  [308/500] TOUT  t= 60.0s  effort=2087.8
+  [309/500] TOUT  t= 60.0s  effort=2087.8
+  [310/500] DOCK  t= 37.0s  effort=1288.8
+  [311/500] TOUT  t= 60.0s  effort=2087.8
+  [312/500] DOCK  t= 33.8s  effort=1177.6
+  [313/500] TOUT  t= 60.0s  effort=2087.8
+  [314/500] DOCK  t= 28.5s  effort=993.5
+  [315/500] DOCK  t= 33.1s  effort=1153.3
+  [316/500] TOUT  t= 60.0s  effort=2087.8
+  [317/500] TOUT  t= 60.0s  effort=2087.8
+  [318/500] DOCK  t= 47.7s  effort=1660.5
+  [319/500] DOCK  t= 54.1s  effort=1882.8
+  [320/500] DOCK  t= 22.3s  effort=778.1
+  [321/500] TOUT  t= 60.0s  effort=2087.8
+  [322/500] DOCK  t= 31.8s  effort=1108.2
+  [323/500] TOUT  t= 60.0s  effort=2087.8
+  [324/500] DOCK  t= 51.0s  effort=1775.1
+  [325/500] TOUT  t= 60.0s  effort=2087.8
+  [326/500] TOUT  t= 60.0s  effort=2087.8
+  [327/500] TOUT  t= 60.0s  effort=2087.8
+  [328/500] TOUT  t= 60.0s  effort=2087.8
+  [329/500] TOUT  t= 60.0s  effort=2087.8
+  [330/500] DOCK  t= 40.6s  effort=1413.8
+  [331/500] DOCK  t= 16.2s  effort=566.2
+  [332/500] TOUT  t= 60.0s  effort=2087.8
+  [333/500] DOCK  t= 26.1s  effort=910.1
+  [334/500] TOUT  t= 60.0s  effort=2087.8
+  [335/500] DOCK  t= 46.7s  effort=1625.8
+  [336/500] TOUT  t= 60.0s  effort=2087.8
+  [337/500] DOCK  t= 54.3s  effort=1889.8
+  [338/500] TOUT  t= 60.0s  effort=2087.8
+  [339/500] TOUT  t= 60.0s  effort=2087.8
+  [340/500] DOCK  t= 27.2s  effort=948.4
+  [341/500] TOUT  t= 60.0s  effort=2087.8
+  [342/500] DOCK  t= 55.7s  effort=1938.4
+  [343/500] TOUT  t= 60.0s  effort=2087.8
+  [344/500] TOUT  t= 60.0s  effort=2087.8
+  [345/500] TOUT  t= 60.0s  effort=2087.8
+  [346/500] DOCK  t= 24.5s  effort=854.6
+  [347/500] TOUT  t= 60.0s  effort=2087.8
+  [348/500] TOUT  t= 60.0s  effort=2087.8
+  [349/500] TOUT  t= 60.0s  effort=2087.8
+  [350/500] TOUT  t= 60.0s  effort=2087.8
+  [351/500] TOUT  t= 60.0s  effort=2087.8
+  [352/500] TOUT  t= 60.0s  effort=2087.8
+  [353/500] TOUT  t= 60.0s  effort=2087.8
+  [354/500] DOCK  t= 46.7s  effort=1625.8
+  [355/500] TOUT  t= 60.0s  effort=2087.8
+  [356/500] DOCK  t= 36.7s  effort=1278.4
+  [357/500] TOUT  t= 60.0s  effort=2087.8
+  [358/500] TOUT  t= 60.0s  effort=2087.8
+  [359/500] TOUT  t= 60.0s  effort=2087.8
+  [360/500] DOCK  t= 35.0s  effort=1219.3
+  [361/500] COLL  t= 20.5s  effort=715.6
+  [362/500] DOCK  t= 24.4s  effort=851.1
+  [363/500] DOCK  t= 24.3s  effort=847.6
+  [364/500] DOCK  t= 50.9s  effort=1771.7
+  [365/500] DOCK  t= 18.1s  effort=632.2
+  [366/500] TOUT  t= 60.0s  effort=2087.8
+  [367/500] TOUT  t= 60.0s  effort=2087.8
+  [368/500] TOUT  t= 60.0s  effort=2087.8
+  [369/500] TOUT  t= 60.0s  effort=2087.8
+  [370/500] TOUT  t= 60.0s  effort=2087.8
+  [371/500] TOUT  t= 60.0s  effort=2087.8
+  [372/500] TOUT  t= 60.0s  effort=2087.8
+  [373/500] TOUT  t= 60.0s  effort=2087.8
+  [374/500] COLL  t= 17.9s  effort=625.3
+  [375/500] TOUT  t= 60.0s  effort=2087.8
+  [376/500] TOUT  t= 60.0s  effort=2087.8
+  [377/500] DOCK  t= 40.5s  effort=1410.4
+  [378/500] DOCK  t= 45.5s  effort=1584.1
+  [379/500] DOCK  t= 41.1s  effort=1431.2
+  [380/500] DOCK  t= 41.3s  effort=1438.2
+  [381/500] TOUT  t= 60.0s  effort=2087.8
+  [382/500] DOCK  t= 46.1s  effort=1604.9
+  [383/500] TOUT  t= 60.0s  effort=2087.8
+  [384/500] TOUT  t= 60.0s  effort=2087.8
+  [385/500] DOCK  t= 23.7s  effort=826.8
+  [386/500] TOUT  t= 60.0s  effort=2087.8
+  [387/500] TOUT  t= 60.0s  effort=2087.8
+  [388/500] TOUT  t= 60.0s  effort=2087.8
+  [389/500] TOUT  t= 60.0s  effort=2087.8
+  [390/500] TOUT  t= 60.0s  effort=2087.8
+  [391/500] TOUT  t= 60.0s  effort=2087.8
+  [392/500] TOUT  t= 60.0s  effort=2087.8
+  [393/500] TOUT  t= 60.0s  effort=2087.8
+  [394/500] TOUT  t= 60.0s  effort=2087.8
+  [395/500] TOUT  t= 60.0s  effort=2087.8
+  [396/500] TOUT  t= 60.0s  effort=2087.8
+  [397/500] TOUT  t= 60.0s  effort=2087.8
+  [398/500] TOUT  t= 60.0s  effort=2087.8
+  [399/500] DOCK  t= 48.8s  effort=1698.7
+  [400/500] DOCK  t= 58.6s  effort=2039.1
+  [401/500] DOCK  t= 28.4s  effort=990.0
+  [402/500] TOUT  t= 60.0s  effort=2087.8
+  [403/500] TOUT  t= 60.0s  effort=2087.8
+  [404/500] DOCK  t= 25.8s  effort=899.7
+  [405/500] COLL  t= 11.2s  effort=392.5
+  [406/500] TOUT  t= 60.0s  effort=2087.8
+  [407/500] TOUT  t= 60.0s  effort=2087.8
+  [408/500] TOUT  t= 60.0s  effort=2087.8
+  [409/500] TOUT  t= 60.0s  effort=2087.8
+  [410/500] DOCK  t= 27.0s  effort=941.4
+  [411/500] TOUT  t= 60.0s  effort=2087.8
+  [412/500] DOCK  t= 23.8s  effort=830.2
+  [413/500] DOCK  t= 34.6s  effort=1205.4
+  [414/500] TOUT  t= 60.0s  effort=2087.8
+  [415/500] TOUT  t= 60.0s  effort=2087.8
+  [416/500] DOCK  t= 31.4s  effort=1094.3
+  [417/500] TOUT  t= 60.0s  effort=2087.8
+  [418/500] TOUT  t= 60.0s  effort=2087.8
+  [419/500] DOCK  t= 37.4s  effort=1302.7
+  [420/500] TOUT  t= 60.0s  effort=2087.8
+  [421/500] TOUT  t= 60.0s  effort=2087.8
+  [422/500] TOUT  t= 60.0s  effort=2087.8
+  [423/500] DOCK  t= 34.1s  effort=1188.1
+  [424/500] TOUT  t= 60.0s  effort=2087.8
+  [425/500] TOUT  t= 60.0s  effort=2087.8
+  [426/500] TOUT  t= 60.0s  effort=2087.8
+  [427/500] DOCK  t= 20.5s  effort=715.6
+  [428/500] TOUT  t= 60.0s  effort=2087.8
+  [429/500] TOUT  t= 60.0s  effort=2087.8
+  [430/500] TOUT  t= 60.0s  effort=2087.8
+  [431/500] TOUT  t= 60.0s  effort=2087.8
+  [432/500] TOUT  t= 60.0s  effort=2087.8
+  [433/500] DOCK  t= 48.3s  effort=1681.3
+  [434/500] TOUT  t= 60.0s  effort=2087.8
+  [435/500] COLL  t= 37.1s  effort=1292.3
+  [436/500] DOCK  t= 60.0s  effort=2087.8
+  [437/500] TOUT  t= 60.0s  effort=2087.8
+  [438/500] TOUT  t= 60.0s  effort=2087.8
+  [439/500] DOCK  t= 42.3s  effort=1472.9
+  [440/500] TOUT  t= 60.0s  effort=2087.8
+  [441/500] DOCK  t= 23.8s  effort=830.2
+  [442/500] TOUT  t= 60.0s  effort=2087.8
+  [443/500] TOUT  t= 60.0s  effort=2087.8
+  [444/500] TOUT  t= 60.0s  effort=2087.8
+  [445/500] TOUT  t= 60.0s  effort=2087.8
+  [446/500] DOCK  t= 40.2s  effort=1400.0
+  [447/500] DOCK  t= 34.2s  effort=1191.5
+  [448/500] DOCK  t= 51.4s  effort=1789.0
+  [449/500] TOUT  t= 60.0s  effort=2087.8
+  [450/500] TOUT  t= 60.0s  effort=2087.8
+  [451/500] DOCK  t= 30.0s  effort=1045.6
+  [452/500] DOCK  t= 20.9s  effort=729.5
+  [453/500] DOCK  t= 54.5s  effort=1896.7
+  [454/500] DOCK  t= 29.4s  effort=1024.8
+  [455/500] DOCK  t= 52.9s  effort=1841.1
+  [456/500] TOUT  t= 60.0s  effort=2087.8
+  [457/500] TOUT  t= 60.0s  effort=2087.8
+  [458/500] TOUT  t= 60.0s  effort=2087.8
+  [459/500] DOCK  t= 38.2s  effort=1330.5
+  [460/500] TOUT  t= 60.0s  effort=2087.8
+  [461/500] TOUT  t= 60.0s  effort=2087.8
+  [462/500] TOUT  t= 60.0s  effort=2087.8
+  [463/500] DOCK  t= 60.0s  effort=2087.8
+  [464/500] TOUT  t= 60.0s  effort=2087.8
+  [465/500] TOUT  t= 60.0s  effort=2087.8
+  [466/500] TOUT  t= 60.0s  effort=2087.8
+  [467/500] TOUT  t= 60.0s  effort=2087.8
+  [468/500] TOUT  t= 60.0s  effort=2087.8
+  [469/500] TOUT  t= 60.0s  effort=2087.8
+  [470/500] TOUT  t= 60.0s  effort=2087.8
+  [471/500] DOCK  t= 55.6s  effort=1934.9
+  [472/500] TOUT  t= 60.0s  effort=2087.8
+  [473/500] DOCK  t= 43.6s  effort=1518.1
+  [474/500] DOCK  t= 60.0s  effort=2087.8
+  [475/500] TOUT  t= 60.0s  effort=2087.8
+  [476/500] DOCK  t= 33.8s  effort=1177.6
+  [477/500] TOUT  t= 60.0s  effort=2087.8
+  [478/500] DOCK  t= 31.2s  effort=1087.3
+  [479/500] TOUT  t= 60.0s  effort=2087.8
+  [480/500] DOCK  t= 37.6s  effort=1309.6
+  [481/500] TOUT  t= 60.0s  effort=2087.8
+  [482/500] TOUT  t= 60.0s  effort=2087.8
+  [483/500] TOUT  t= 60.0s  effort=2087.8
+  [484/500] TOUT  t= 60.0s  effort=2087.8
+  [485/500] TOUT  t= 60.0s  effort=2087.8
+  [486/500] TOUT  t= 60.0s  effort=2087.8
+  [487/500] DOCK  t= 20.8s  effort=726.0
+  [488/500] TOUT  t= 60.0s  effort=2087.8
+  [489/500] DOCK  t= 48.9s  effort=1702.2
+  [490/500] DOCK  t= 26.3s  effort=917.1
+  [491/500] DOCK  t= 29.5s  effort=1028.3
+  [492/500] DOCK  t= 54.8s  effort=1907.1
+  [493/500] COLL  t= 36.4s  effort=1267.9
+  [494/500] TOUT  t= 60.0s  effort=2087.8
+  [495/500] DOCK  t= 50.1s  effort=1743.9
+  [496/500] TOUT  t= 60.0s  effort=2087.8
+  [497/500] TOUT  t= 60.0s  effort=2087.8
+  [498/500] DOCK  t= 33.1s  effort=1153.3
+  [499/500] DOCK  t= 31.8s  effort=1108.2
+  [500/500] DOCK  t= 40.5s  effort=1410.4
+
+BRAT+Safety 13D: dock=36.2%  fail=2.6%  timeout=61.2%  effort=1317.1  time=24.15s
+
+------------------------------------------------------------
+  Vanilla BRAT 13D  (500 rollouts)
+------------------------------------------------------------
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=14, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=512, out_features=1, bias=True)
+      )
+    )
+  )
+)
+[SafetyFilter] mode=1  dynamics=Docking13D  checkpoint=model_final.pth  tMax=10  margin=0.1  gamma=0.2
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=14, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=512, out_features=512, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=512, out_features=1, bias=True)
+      )
+    )
+  )
+)
+BRATController13D loaded | Docking13D | tMax=10.0s  dt=0.1s
+  [BRAT13D batch] 500 ICs  max_sim=60.0s  dt=0.1s  device=cuda
+[BRAT13D batch]:   0%|          | 0/601 steps [00:00<?]  [BRAT13D batch]:   1%|▏         | 9/601 steps [00:00<00:07]  , active=500, coll=0/500, dock=0/500, t=0.8s[BRAT13D batch]:   3%|▎         | 18/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=1.7s[BRAT13D batch]:   5%|▍         | 28/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=2.7s[BRAT13D batch]:   6%|▌         | 37/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=3.6s[BRAT13D batch]:   8%|▊         | 46/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=4.5s[BRAT13D batch]:   9%|▉         | 55/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=5.4s[BRAT13D batch]:  11%|█         | 64/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=6.3s[BRAT13D batch]:  12%|█▏        | 73/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=7.2s[BRAT13D batch]:  14%|█▎        | 82/601 steps [00:00<00:06]  , active=500, coll=0/500, dock=0/500, t=8.1s[BRAT13D batch]:  15%|█▌        | 91/601 steps [00:01<00:06]  , active=500, coll=0/500, dock=0/500, t=9.0s[BRAT13D batch]:  17%|█▋        | 100/601 steps [00:01<00:05]  , active=500, coll=0/500, dock=0/500, t=9.9s[BRAT13D batch]:  18%|█▊        | 109/601 steps [00:01<00:05]  , active=500, coll=0/500, dock=0/500, t=10.8s[BRAT13D batch]:  20%|█▉        | 118/601 steps [00:01<00:05]  , active=500, coll=0/500, dock=0/500, t=11.7s[BRAT13D batch]:  21%|██        | 127/601 steps [00:01<00:05]  , active=500, coll=0/500, dock=0/500, t=12.6s[BRAT13D batch]:  23%|██▎       | 136/601 steps [00:01<00:06]  , active=500, coll=0/500, dock=0/500, t=13.5s[BRAT13D batch]:  24%|██▍       | 144/601 steps [00:01<00:06]  , active=500, coll=0/500, dock=0/500, t=14.3s[BRAT13D batch]:  25%|██▌       | 152/601 steps [00:01<00:06]  , active=500, coll=0/500, dock=0/500, t=15.1s[BRAT13D batch]:  27%|██▋       | 160/601 steps [00:02<00:06]  , active=500, coll=0/500, dock=0/500, t=15.9s[BRAT13D batch]:  28%|██▊       | 167/601 steps [00:02<00:06]  , active=499, coll=1/500, dock=0/500, t=16.6s[BRAT13D batch]:  29%|██▉       | 174/601 steps [00:02<00:06]  , active=499, coll=1/500, dock=0/500, t=17.3s[BRAT13D batch]:  30%|███       | 181/601 steps [00:02<00:06]  , active=498, coll=2/500, dock=0/500, t=18.0s[BRAT13D batch]:  31%|███▏      | 188/601 steps [00:02<00:06]  , active=498, coll=2/500, dock=0/500, t=18.7s[BRAT13D batch]:  32%|███▏      | 195/601 steps [00:02<00:06]  , active=498, coll=2/500, dock=0/500, t=19.4s[BRAT13D batch]:  34%|███▎      | 202/601 steps [00:02<00:06]  , active=497, coll=3/500, dock=0/500, t=20.1s[BRAT13D batch]:  35%|███▍      | 209/601 steps [00:02<00:06]  , active=497, coll=3/500, dock=0/500, t=20.8s[BRAT13D batch]:  36%|███▌      | 216/601 steps [00:02<00:05]  , active=497, coll=3/500, dock=0/500, t=21.5s[BRAT13D batch]:  37%|███▋      | 223/601 steps [00:02<00:05]  , active=497, coll=3/500, dock=0/500, t=22.2s[BRAT13D batch]:  38%|███▊      | 230/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=22.9s[BRAT13D batch]:  39%|███▉      | 237/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=23.6s[BRAT13D batch]:  41%|████      | 244/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=24.3s[BRAT13D batch]:  42%|████▏     | 251/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=25.0s[BRAT13D batch]:  43%|████▎     | 258/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=25.7s[BRAT13D batch]:  44%|████▍     | 265/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=26.4s[BRAT13D batch]:  45%|████▌     | 272/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=27.1s[BRAT13D batch]:  46%|████▋     | 279/601 steps [00:03<00:05]  , active=497, coll=3/500, dock=0/500, t=27.8s[BRAT13D batch]:  48%|████▊     | 286/601 steps [00:03<00:04]  , active=497, coll=3/500, dock=0/500, t=28.5s[BRAT13D batch]:  49%|████▉     | 293/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=29.2s[BRAT13D batch]:  50%|████▉     | 300/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=29.9s[BRAT13D batch]:  51%|█████     | 307/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=30.6s[BRAT13D batch]:  52%|█████▏    | 314/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=31.3s[BRAT13D batch]:  53%|█████▎    | 321/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=32.0s[BRAT13D batch]:  55%|█████▍    | 328/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=32.7s[BRAT13D batch]:  56%|█████▌    | 335/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=33.4s[BRAT13D batch]:  57%|█████▋    | 342/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=34.1s[BRAT13D batch]:  58%|█████▊    | 349/601 steps [00:04<00:04]  , active=497, coll=3/500, dock=0/500, t=34.8s[BRAT13D batch]:  59%|█████▉    | 356/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=35.5s[BRAT13D batch]:  60%|██████    | 363/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=36.2s[BRAT13D batch]:  62%|██████▏   | 370/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=36.9s[BRAT13D batch]:  63%|██████▎   | 377/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=37.6s[BRAT13D batch]:  64%|██████▍   | 384/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=38.3s[BRAT13D batch]:  65%|██████▌   | 391/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=39.0s[BRAT13D batch]:  66%|██████▌   | 398/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=39.7s[BRAT13D batch]:  67%|██████▋   | 405/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=40.4s[BRAT13D batch]:  69%|██████▊   | 412/601 steps [00:05<00:03]  , active=497, coll=3/500, dock=0/500, t=41.1s[BRAT13D batch]:  70%|██████▉   | 419/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=41.8s[BRAT13D batch]:  71%|███████   | 426/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=42.5s[BRAT13D batch]:  72%|███████▏  | 433/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=43.2s[BRAT13D batch]:  73%|███████▎  | 440/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=43.9s[BRAT13D batch]:  74%|███████▍  | 447/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=44.6s[BRAT13D batch]:  76%|███████▌  | 454/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=45.3s[BRAT13D batch]:  77%|███████▋  | 461/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=46.0s[BRAT13D batch]:  78%|███████▊  | 468/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=46.7s[BRAT13D batch]:  79%|███████▉  | 475/601 steps [00:06<00:02]  , active=497, coll=3/500, dock=0/500, t=47.4s[BRAT13D batch]:  80%|████████  | 482/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=48.1s[BRAT13D batch]:  81%|████████▏ | 489/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=48.8s[BRAT13D batch]:  83%|████████▎ | 496/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=49.5s[BRAT13D batch]:  84%|████████▎ | 503/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=50.2s[BRAT13D batch]:  85%|████████▍ | 510/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=50.9s[BRAT13D batch]:  86%|████████▌ | 517/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=51.6s[BRAT13D batch]:  87%|████████▋ | 524/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=52.3s[BRAT13D batch]:  88%|████████▊ | 531/601 steps [00:07<00:01]  , active=497, coll=3/500, dock=0/500, t=53.0s[BRAT13D batch]:  90%|████████▉ | 538/601 steps [00:08<00:01]  , active=497, coll=3/500, dock=0/500, t=53.7s[BRAT13D batch]:  91%|█████████ | 545/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=54.4s[BRAT13D batch]:  92%|█████████▏| 552/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=55.1s[BRAT13D batch]:  93%|█████████▎| 559/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=55.8s[BRAT13D batch]:  94%|█████████▍| 566/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=56.5s[BRAT13D batch]:  95%|█████████▌| 573/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=57.2s[BRAT13D batch]:  97%|█████████▋| 580/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=57.9s[BRAT13D batch]:  98%|█████████▊| 587/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=58.6s[BRAT13D batch]:  99%|█████████▉| 594/601 steps [00:08<00:00]  , active=497, coll=3/500, dock=0/500, t=59.3s[BRAT13D batch]: 100%|██████████| 601/601 steps [00:09<00:00]  , active=497, coll=3/500, dock=0/500, t=60.0s[BRAT13D batch]: 100%|██████████| 601/601 steps [00:09<00:00]  , active=497, coll=3/500, dock=0/500, t=60.0s
+  [BRAT13D batch] done  0/500 docked  3/500 collision  total_wall=9.0s  mean_per_ic=8997.1ms
+  [  1/500] TOUT  t= 60.0s  effort=2087.8
+  [  2/500] TOUT  t= 60.0s  effort=2087.8
+  [  3/500] TOUT  t= 60.0s  effort=2087.8
+  [  4/500] TOUT  t= 60.0s  effort=2087.8
+  [  5/500] TOUT  t= 60.0s  effort=2087.8
+  [  6/500] TOUT  t= 60.0s  effort=2087.8
+  [  7/500] TOUT  t= 60.0s  effort=2087.8
+  [  8/500] TOUT  t= 60.0s  effort=2087.8
+  [  9/500] TOUT  t= 60.0s  effort=2087.8
+  [ 10/500] TOUT  t= 60.0s  effort=2087.8
+  [ 11/500] TOUT  t= 60.0s  effort=2087.8
+  [ 12/500] TOUT  t= 60.0s  effort=2087.8
+  [ 13/500] TOUT  t= 60.0s  effort=2087.8
+  [ 14/500] TOUT  t= 60.0s  effort=2087.8
+  [ 15/500] TOUT  t= 60.0s  effort=2087.8
+  [ 16/500] TOUT  t= 60.0s  effort=2087.8
+  [ 17/500] TOUT  t= 60.0s  effort=2087.8
+  [ 18/500] TOUT  t= 60.0s  effort=2087.8
+  [ 19/500] TOUT  t= 60.0s  effort=2087.8
+  [ 20/500] TOUT  t= 60.0s  effort=2087.8
+  [ 21/500] TOUT  t= 60.0s  effort=2087.8
+  [ 22/500] TOUT  t= 60.0s  effort=2087.8
+  [ 23/500] TOUT  t= 60.0s  effort=2087.8
+  [ 24/500] TOUT  t= 60.0s  effort=2087.8
+  [ 25/500] TOUT  t= 60.0s  effort=2087.8
+  [ 26/500] TOUT  t= 60.0s  effort=2087.8
+  [ 27/500] TOUT  t= 60.0s  effort=2087.8
+  [ 28/500] TOUT  t= 60.0s  effort=2087.8
+  [ 29/500] TOUT  t= 60.0s  effort=2087.8
+  [ 30/500] TOUT  t= 60.0s  effort=2087.8
+  [ 31/500] TOUT  t= 60.0s  effort=2087.8
+  [ 32/500] TOUT  t= 60.0s  effort=2087.8
+  [ 33/500] TOUT  t= 60.0s  effort=2087.8
+  [ 34/500] TOUT  t= 60.0s  effort=2087.8
+  [ 35/500] TOUT  t= 60.0s  effort=2087.8
+  [ 36/500] TOUT  t= 60.0s  effort=2087.8
+  [ 37/500] TOUT  t= 60.0s  effort=2087.8
+  [ 38/500] TOUT  t= 60.0s  effort=2087.8
+  [ 39/500] TOUT  t= 60.0s  effort=2087.8
+  [ 40/500] TOUT  t= 60.0s  effort=2087.8
+  [ 41/500] TOUT  t= 60.0s  effort=2087.8
+  [ 42/500] TOUT  t= 60.0s  effort=2087.8
+  [ 43/500] TOUT  t= 60.0s  effort=2087.8
+  [ 44/500] TOUT  t= 60.0s  effort=2087.8
+  [ 45/500] TOUT  t= 60.0s  effort=2087.8
+  [ 46/500] TOUT  t= 60.0s  effort=2087.8
+  [ 47/500] TOUT  t= 60.0s  effort=2087.8
+  [ 48/500] TOUT  t= 60.0s  effort=2087.8
+  [ 49/500] TOUT  t= 60.0s  effort=2087.8
+  [ 50/500] TOUT  t= 60.0s  effort=2087.8
+  [ 51/500] TOUT  t= 60.0s  effort=2087.8
+  [ 52/500] TOUT  t= 60.0s  effort=2087.8
+  [ 53/500] TOUT  t= 60.0s  effort=2087.8
+  [ 54/500] TOUT  t= 60.0s  effort=2087.8
+  [ 55/500] TOUT  t= 60.0s  effort=2087.8
+  [ 56/500] TOUT  t= 60.0s  effort=2087.8
+  [ 57/500] TOUT  t= 60.0s  effort=2087.8
+  [ 58/500] TOUT  t= 60.0s  effort=2087.8
+  [ 59/500] TOUT  t= 60.0s  effort=2087.8
+  [ 60/500] TOUT  t= 60.0s  effort=2087.8
+  [ 61/500] TOUT  t= 60.0s  effort=2087.8
+  [ 62/500] TOUT  t= 60.0s  effort=2087.8
+  [ 63/500] TOUT  t= 60.0s  effort=2087.8
+  [ 64/500] TOUT  t= 60.0s  effort=2087.8
+  [ 65/500] TOUT  t= 60.0s  effort=2087.8
+  [ 66/500] TOUT  t= 60.0s  effort=2087.8
+  [ 67/500] TOUT  t= 60.0s  effort=2087.8
+  [ 68/500] TOUT  t= 60.0s  effort=2087.8
+  [ 69/500] TOUT  t= 60.0s  effort=2087.8
+  [ 70/500] TOUT  t= 60.0s  effort=2087.8
+  [ 71/500] TOUT  t= 60.0s  effort=2087.8
+  [ 72/500] TOUT  t= 60.0s  effort=2087.8
+  [ 73/500] TOUT  t= 60.0s  effort=2087.8
+  [ 74/500] TOUT  t= 60.0s  effort=2087.8
+  [ 75/500] TOUT  t= 60.0s  effort=2087.8
+  [ 76/500] TOUT  t= 60.0s  effort=2087.8
+  [ 77/500] TOUT  t= 60.0s  effort=2087.8
+  [ 78/500] TOUT  t= 60.0s  effort=2087.8
+  [ 79/500] TOUT  t= 60.0s  effort=2087.8
+  [ 80/500] TOUT  t= 60.0s  effort=2087.8
+  [ 81/500] TOUT  t= 60.0s  effort=2087.8
+  [ 82/500] TOUT  t= 60.0s  effort=2087.8
+  [ 83/500] TOUT  t= 60.0s  effort=2087.8
+  [ 84/500] TOUT  t= 60.0s  effort=2087.8
+  [ 85/500] TOUT  t= 60.0s  effort=2087.8
+  [ 86/500] TOUT  t= 60.0s  effort=2087.8
+  [ 87/500] TOUT  t= 60.0s  effort=2087.8
+  [ 88/500] TOUT  t= 60.0s  effort=2087.8
+  [ 89/500] TOUT  t= 60.0s  effort=2087.8
+  [ 90/500] TOUT  t= 60.0s  effort=2087.8
+  [ 91/500] TOUT  t= 60.0s  effort=2087.8
+  [ 92/500] TOUT  t= 60.0s  effort=2087.8
+  [ 93/500] TOUT  t= 60.0s  effort=2087.8
+  [ 94/500] TOUT  t= 60.0s  effort=2087.8
+  [ 95/500] TOUT  t= 60.0s  effort=2087.8
+  [ 96/500] TOUT  t= 60.0s  effort=2087.8
+  [ 97/500] TOUT  t= 60.0s  effort=2087.8
+  [ 98/500] TOUT  t= 60.0s  effort=2087.8
+  [ 99/500] TOUT  t= 60.0s  effort=2087.8
+  [100/500] TOUT  t= 60.0s  effort=2087.8
+  [101/500] TOUT  t= 60.0s  effort=2087.8
+  [102/500] TOUT  t= 60.0s  effort=2087.8
+  [103/500] TOUT  t= 60.0s  effort=2087.8
+  [104/500] TOUT  t= 60.0s  effort=2087.8
+  [105/500] TOUT  t= 60.0s  effort=2087.8
+  [106/500] TOUT  t= 60.0s  effort=2087.8
+  [107/500] TOUT  t= 60.0s  effort=2087.8
+  [108/500] TOUT  t= 60.0s  effort=2087.8
+  [109/500] TOUT  t= 60.0s  effort=2087.8
+  [110/500] TOUT  t= 60.0s  effort=2087.8
+  [111/500] TOUT  t= 60.0s  effort=2087.8
+  [112/500] TOUT  t= 60.0s  effort=2087.8
+  [113/500] TOUT  t= 60.0s  effort=2087.8
+  [114/500] TOUT  t= 60.0s  effort=2087.8
+  [115/500] TOUT  t= 60.0s  effort=2087.8
+  [116/500] TOUT  t= 60.0s  effort=2087.8
+  [117/500] TOUT  t= 60.0s  effort=2087.8
+  [118/500] TOUT  t= 60.0s  effort=2087.8
+  [119/500] TOUT  t= 60.0s  effort=2087.8
+  [120/500] TOUT  t= 60.0s  effort=2087.8
+  [121/500] TOUT  t= 60.0s  effort=2087.8
+  [122/500] TOUT  t= 60.0s  effort=2087.8
+  [123/500] TOUT  t= 60.0s  effort=2087.8
+  [124/500] TOUT  t= 60.0s  effort=2087.8
+  [125/500] TOUT  t= 60.0s  effort=2087.8
+  [126/500] TOUT  t= 60.0s  effort=2087.8
+  [127/500] TOUT  t= 60.0s  effort=2087.8
+  [128/500] TOUT  t= 60.0s  effort=2087.8
+  [129/500] TOUT  t= 60.0s  effort=2087.8
+  [130/500] TOUT  t= 60.0s  effort=2087.8
+  [131/500] TOUT  t= 60.0s  effort=2087.8
+  [132/500] TOUT  t= 60.0s  effort=2087.8
+  [133/500] TOUT  t= 60.0s  effort=2087.8
+  [134/500] TOUT  t= 60.0s  effort=2087.8
+  [135/500] TOUT  t= 60.0s  effort=2087.8
+  [136/500] TOUT  t= 60.0s  effort=2087.8
+  [137/500] TOUT  t= 60.0s  effort=2087.8
+  [138/500] TOUT  t= 60.0s  effort=2087.8
+  [139/500] TOUT  t= 60.0s  effort=2087.8
+  [140/500] TOUT  t= 60.0s  effort=2087.8
+  [141/500] TOUT  t= 60.0s  effort=2087.8
+  [142/500] TOUT  t= 60.0s  effort=2087.8
+  [143/500] TOUT  t= 60.0s  effort=2087.8
+  [144/500] TOUT  t= 60.0s  effort=2087.8
+  [145/500] TOUT  t= 60.0s  effort=2087.8
+  [146/500] TOUT  t= 60.0s  effort=2087.8
+  [147/500] TOUT  t= 60.0s  effort=2087.8
+  [148/500] TOUT  t= 60.0s  effort=2087.8
+  [149/500] TOUT  t= 60.0s  effort=2087.8
+  [150/500] TOUT  t= 60.0s  effort=2087.8
+  [151/500] TOUT  t= 60.0s  effort=2087.8
+  [152/500] TOUT  t= 60.0s  effort=2087.8
+  [153/500] TOUT  t= 60.0s  effort=2087.8
+  [154/500] TOUT  t= 60.0s  effort=2087.8
+  [155/500] TOUT  t= 60.0s  effort=2087.8
+  [156/500] TOUT  t= 60.0s  effort=2087.8
+  [157/500] TOUT  t= 60.0s  effort=2087.8
+  [158/500] TOUT  t= 60.0s  effort=2087.8
+  [159/500] TOUT  t= 60.0s  effort=2087.8
+  [160/500] TOUT  t= 60.0s  effort=2087.8
+  [161/500] TOUT  t= 60.0s  effort=2087.8
+  [162/500] TOUT  t= 60.0s  effort=2087.8
+  [163/500] TOUT  t= 60.0s  effort=2087.8
+  [164/500] TOUT  t= 60.0s  effort=2087.8
+  [165/500] COLL  t= 19.7s  effort=687.8
+  [166/500] TOUT  t= 60.0s  effort=2087.8
+  [167/500] TOUT  t= 60.0s  effort=2087.8
+  [168/500] TOUT  t= 60.0s  effort=2087.8
+  [169/500] TOUT  t= 60.0s  effort=2087.8
+  [170/500] TOUT  t= 60.0s  effort=2087.8
+  [171/500] TOUT  t= 60.0s  effort=2087.8
+  [172/500] TOUT  t= 60.0s  effort=2087.8
+  [173/500] TOUT  t= 60.0s  effort=2087.8
+  [174/500] TOUT  t= 60.0s  effort=2087.8
+  [175/500] TOUT  t= 60.0s  effort=2087.8
+  [176/500] TOUT  t= 60.0s  effort=2087.8
+  [177/500] TOUT  t= 60.0s  effort=2087.8
+  [178/500] TOUT  t= 60.0s  effort=2087.8
+  [179/500] TOUT  t= 60.0s  effort=2087.8
+  [180/500] TOUT  t= 60.0s  effort=2087.8
+  [181/500] TOUT  t= 60.0s  effort=2087.8
+  [182/500] TOUT  t= 60.0s  effort=2087.8
+  [183/500] TOUT  t= 60.0s  effort=2087.8
+  [184/500] TOUT  t= 60.0s  effort=2087.8
+  [185/500] TOUT  t= 60.0s  effort=2087.8
+  [186/500] TOUT  t= 60.0s  effort=2087.8
+  [187/500] COLL  t= 16.4s  effort=573.2
+  [188/500] TOUT  t= 60.0s  effort=2087.8
+  [189/500] TOUT  t= 60.0s  effort=2087.8
+  [190/500] TOUT  t= 60.0s  effort=2087.8
+  [191/500] TOUT  t= 60.0s  effort=2087.8
+  [192/500] TOUT  t= 60.0s  effort=2087.8
+  [193/500] TOUT  t= 60.0s  effort=2087.8
+  [194/500] TOUT  t= 60.0s  effort=2087.8
+  [195/500] TOUT  t= 60.0s  effort=2087.8
+  [196/500] TOUT  t= 60.0s  effort=2087.8
+  [197/500] TOUT  t= 60.0s  effort=2087.8
+  [198/500] TOUT  t= 60.0s  effort=2087.8
+  [199/500] TOUT  t= 60.0s  effort=2087.8
+  [200/500] TOUT  t= 60.0s  effort=2087.8
+  [201/500] TOUT  t= 60.0s  effort=2087.8
+  [202/500] TOUT  t= 60.0s  effort=2087.8
+  [203/500] TOUT  t= 60.0s  effort=2087.8
+  [204/500] TOUT  t= 60.0s  effort=2087.8
+  [205/500] TOUT  t= 60.0s  effort=2087.8
+  [206/500] TOUT  t= 60.0s  effort=2087.8
+  [207/500] TOUT  t= 60.0s  effort=2087.8
+  [208/500] TOUT  t= 60.0s  effort=2087.8
+  [209/500] TOUT  t= 60.0s  effort=2087.8
+  [210/500] TOUT  t= 60.0s  effort=2087.8
+  [211/500] TOUT  t= 60.0s  effort=2087.8
+  [212/500] TOUT  t= 60.0s  effort=2087.8
+  [213/500] TOUT  t= 60.0s  effort=2087.8
+  [214/500] TOUT  t= 60.0s  effort=2087.8
+  [215/500] TOUT  t= 60.0s  effort=2087.8
+  [216/500] TOUT  t= 60.0s  effort=2087.8
+  [217/500] TOUT  t= 60.0s  effort=2087.8
+  [218/500] TOUT  t= 60.0s  effort=2087.8
+  [219/500] TOUT  t= 60.0s  effort=2087.8
+  [220/500] TOUT  t= 60.0s  effort=2087.8
+  [221/500] TOUT  t= 60.0s  effort=2087.8
+  [222/500] TOUT  t= 60.0s  effort=2087.8
+  [223/500] TOUT  t= 60.0s  effort=2087.8
+  [224/500] TOUT  t= 60.0s  effort=2087.8
+  [225/500] TOUT  t= 60.0s  effort=2087.8
+  [226/500] TOUT  t= 60.0s  effort=2087.8
+  [227/500] TOUT  t= 60.0s  effort=2087.8
+  [228/500] TOUT  t= 60.0s  effort=2087.8
+  [229/500] TOUT  t= 60.0s  effort=2087.8
+  [230/500] TOUT  t= 60.0s  effort=2087.8
+  [231/500] TOUT  t= 60.0s  effort=2087.8
+  [232/500] TOUT  t= 60.0s  effort=2087.8
+  [233/500] TOUT  t= 60.0s  effort=2087.8
+  [234/500] TOUT  t= 60.0s  effort=2087.8
+  [235/500] TOUT  t= 60.0s  effort=2087.8
+  [236/500] TOUT  t= 60.0s  effort=2087.8
+  [237/500] TOUT  t= 60.0s  effort=2087.8
+  [238/500] TOUT  t= 60.0s  effort=2087.8
+  [239/500] TOUT  t= 60.0s  effort=2087.8
+  [240/500] TOUT  t= 60.0s  effort=2087.8
+  [241/500] TOUT  t= 60.0s  effort=2087.8
+  [242/500] COLL  t= 17.4s  effort=607.9
+  [243/500] TOUT  t= 60.0s  effort=2087.8
+  [244/500] TOUT  t= 60.0s  effort=2087.8
+  [245/500] TOUT  t= 60.0s  effort=2087.8
+  [246/500] TOUT  t= 60.0s  effort=2087.8
+  [247/500] TOUT  t= 60.0s  effort=2087.8
+  [248/500] TOUT  t= 60.0s  effort=2087.8
+  [249/500] TOUT  t= 60.0s  effort=2087.8
+  [250/500] TOUT  t= 60.0s  effort=2087.8
+  [251/500] TOUT  t= 60.0s  effort=2087.8
+  [252/500] TOUT  t= 60.0s  effort=2087.8
+  [253/500] TOUT  t= 60.0s  effort=2087.8
+  [254/500] TOUT  t= 60.0s  effort=2087.8
+  [255/500] TOUT  t= 60.0s  effort=2087.8
+  [256/500] TOUT  t= 60.0s  effort=2087.8
+  [257/500] TOUT  t= 60.0s  effort=2087.8
+  [258/500] TOUT  t= 60.0s  effort=2087.8
+  [259/500] TOUT  t= 60.0s  effort=2087.8
+  [260/500] TOUT  t= 60.0s  effort=2087.8
+  [261/500] TOUT  t= 60.0s  effort=2087.8
+  [262/500] TOUT  t= 60.0s  effort=2087.8
+  [263/500] TOUT  t= 60.0s  effort=2087.8
+  [264/500] TOUT  t= 60.0s  effort=2087.8
+  [265/500] TOUT  t= 60.0s  effort=2087.8
+  [266/500] TOUT  t= 60.0s  effort=2087.8
+  [267/500] TOUT  t= 60.0s  effort=2087.8
+  [268/500] TOUT  t= 60.0s  effort=2087.8
+  [269/500] TOUT  t= 60.0s  effort=2087.8
+  [270/500] TOUT  t= 60.0s  effort=2087.8
+  [271/500] TOUT  t= 60.0s  effort=2087.8
+  [272/500] TOUT  t= 60.0s  effort=2087.8
+  [273/500] TOUT  t= 60.0s  effort=2087.8
+  [274/500] TOUT  t= 60.0s  effort=2087.8
+  [275/500] TOUT  t= 60.0s  effort=2087.8
+  [276/500] TOUT  t= 60.0s  effort=2087.8
+  [277/500] TOUT  t= 60.0s  effort=2087.8
+  [278/500] TOUT  t= 60.0s  effort=2087.8
+  [279/500] TOUT  t= 60.0s  effort=2087.8
+  [280/500] TOUT  t= 60.0s  effort=2087.8
+  [281/500] TOUT  t= 60.0s  effort=2087.8
+  [282/500] TOUT  t= 60.0s  effort=2087.8
+  [283/500] TOUT  t= 60.0s  effort=2087.8
+  [284/500] TOUT  t= 60.0s  effort=2087.8
+  [285/500] TOUT  t= 60.0s  effort=2087.8
+  [286/500] TOUT  t= 60.0s  effort=2087.8
+  [287/500] TOUT  t= 60.0s  effort=2087.8
+  [288/500] TOUT  t= 60.0s  effort=2087.8
+  [289/500] TOUT  t= 60.0s  effort=2087.8
+  [290/500] TOUT  t= 60.0s  effort=2087.8
+  [291/500] TOUT  t= 60.0s  effort=2087.8
+  [292/500] TOUT  t= 60.0s  effort=2087.8
+  [293/500] TOUT  t= 60.0s  effort=2087.8
+  [294/500] TOUT  t= 60.0s  effort=2087.8
+  [295/500] TOUT  t= 60.0s  effort=2087.8
+  [296/500] TOUT  t= 60.0s  effort=2087.8
+  [297/500] TOUT  t= 60.0s  effort=2087.8
+  [298/500] TOUT  t= 60.0s  effort=2087.8
+  [299/500] TOUT  t= 60.0s  effort=2087.8
+  [300/500] TOUT  t= 60.0s  effort=2087.8
+  [301/500] TOUT  t= 60.0s  effort=2087.8
+  [302/500] TOUT  t= 60.0s  effort=2087.8
+  [303/500] TOUT  t= 60.0s  effort=2087.8
+  [304/500] TOUT  t= 60.0s  effort=2087.8
+  [305/500] TOUT  t= 60.0s  effort=2087.8
+  [306/500] TOUT  t= 60.0s  effort=2087.8
+  [307/500] TOUT  t= 60.0s  effort=2087.8
+  [308/500] TOUT  t= 60.0s  effort=2087.8
+  [309/500] TOUT  t= 60.0s  effort=2087.8
+  [310/500] TOUT  t= 60.0s  effort=2087.8
+  [311/500] TOUT  t= 60.0s  effort=2087.8
+  [312/500] TOUT  t= 60.0s  effort=2087.8
+  [313/500] TOUT  t= 60.0s  effort=2087.8
+  [314/500] TOUT  t= 60.0s  effort=2087.8
+  [315/500] TOUT  t= 60.0s  effort=2087.8
+  [316/500] TOUT  t= 60.0s  effort=2087.8
+  [317/500] TOUT  t= 60.0s  effort=2087.8
+  [318/500] TOUT  t= 60.0s  effort=2087.8
+  [319/500] TOUT  t= 60.0s  effort=2087.8
+  [320/500] TOUT  t= 60.0s  effort=2087.8
+  [321/500] TOUT  t= 60.0s  effort=2087.8
+  [322/500] TOUT  t= 60.0s  effort=2087.8
+  [323/500] TOUT  t= 60.0s  effort=2087.8
+  [324/500] TOUT  t= 60.0s  effort=2087.8
+  [325/500] TOUT  t= 60.0s  effort=2087.8
+  [326/500] TOUT  t= 60.0s  effort=2087.8
+  [327/500] TOUT  t= 60.0s  effort=2087.8
+  [328/500] TOUT  t= 60.0s  effort=2087.8
+  [329/500] TOUT  t= 60.0s  effort=2087.8
+  [330/500] TOUT  t= 60.0s  effort=2087.8
+  [331/500] TOUT  t= 60.0s  effort=2087.8
+  [332/500] TOUT  t= 60.0s  effort=2087.8
+  [333/500] TOUT  t= 60.0s  effort=2087.8
+  [334/500] TOUT  t= 60.0s  effort=2087.8
+  [335/500] TOUT  t= 60.0s  effort=2087.8
+  [336/500] TOUT  t= 60.0s  effort=2087.8
+  [337/500] TOUT  t= 60.0s  effort=2087.8
+  [338/500] TOUT  t= 60.0s  effort=2087.8
+  [339/500] TOUT  t= 60.0s  effort=2087.8
+  [340/500] TOUT  t= 60.0s  effort=2087.8
+  [341/500] TOUT  t= 60.0s  effort=2087.8
+  [342/500] TOUT  t= 60.0s  effort=2087.8
+  [343/500] TOUT  t= 60.0s  effort=2087.8
+  [344/500] TOUT  t= 60.0s  effort=2087.8
+  [345/500] TOUT  t= 60.0s  effort=2087.8
+  [346/500] TOUT  t= 60.0s  effort=2087.8
+  [347/500] TOUT  t= 60.0s  effort=2087.8
+  [348/500] TOUT  t= 60.0s  effort=2087.8
+  [349/500] TOUT  t= 60.0s  effort=2087.8
+  [350/500] TOUT  t= 60.0s  effort=2087.8
+  [351/500] TOUT  t= 60.0s  effort=2087.8
+  [352/500] TOUT  t= 60.0s  effort=2087.8
+  [353/500] TOUT  t= 60.0s  effort=2087.8
+  [354/500] TOUT  t= 60.0s  effort=2087.8
+  [355/500] TOUT  t= 60.0s  effort=2087.8
+  [356/500] TOUT  t= 60.0s  effort=2087.8
+  [357/500] TOUT  t= 60.0s  effort=2087.8
+  [358/500] TOUT  t= 60.0s  effort=2087.8
+  [359/500] TOUT  t= 60.0s  effort=2087.8
+  [360/500] TOUT  t= 60.0s  effort=2087.8
+  [361/500] TOUT  t= 60.0s  effort=2087.8
+  [362/500] TOUT  t= 60.0s  effort=2087.8
+  [363/500] TOUT  t= 60.0s  effort=2087.8
+  [364/500] TOUT  t= 60.0s  effort=2087.8
+  [365/500] TOUT  t= 60.0s  effort=2087.8
+  [366/500] TOUT  t= 60.0s  effort=2087.8
+  [367/500] TOUT  t= 60.0s  effort=2087.8
+  [368/500] TOUT  t= 60.0s  effort=2087.8
+  [369/500] TOUT  t= 60.0s  effort=2087.8
+  [370/500] TOUT  t= 60.0s  effort=2087.8
+  [371/500] TOUT  t= 60.0s  effort=2087.8
+  [372/500] TOUT  t= 60.0s  effort=2087.8
+  [373/500] TOUT  t= 60.0s  effort=2087.8
+  [374/500] TOUT  t= 60.0s  effort=2087.8
+  [375/500] TOUT  t= 60.0s  effort=2087.8
+  [376/500] TOUT  t= 60.0s  effort=2087.8
+  [377/500] TOUT  t= 60.0s  effort=2087.8
+  [378/500] TOUT  t= 60.0s  effort=2087.8
+  [379/500] TOUT  t= 60.0s  effort=2087.8
+  [380/500] TOUT  t= 60.0s  effort=2087.8
+  [381/500] TOUT  t= 60.0s  effort=2087.8
+  [382/500] TOUT  t= 60.0s  effort=2087.8
+  [383/500] TOUT  t= 60.0s  effort=2087.8
+  [384/500] TOUT  t= 60.0s  effort=2087.8
+  [385/500] TOUT  t= 60.0s  effort=2087.8
+  [386/500] TOUT  t= 60.0s  effort=2087.8
+  [387/500] TOUT  t= 60.0s  effort=2087.8
+  [388/500] TOUT  t= 60.0s  effort=2087.8
+  [389/500] TOUT  t= 60.0s  effort=2087.8
+  [390/500] TOUT  t= 60.0s  effort=2087.8
+  [391/500] TOUT  t= 60.0s  effort=2087.8
+  [392/500] TOUT  t= 60.0s  effort=2087.8
+  [393/500] TOUT  t= 60.0s  effort=2087.8
+  [394/500] TOUT  t= 60.0s  effort=2087.8
+  [395/500] TOUT  t= 60.0s  effort=2087.8
+  [396/500] TOUT  t= 60.0s  effort=2087.8
+  [397/500] TOUT  t= 60.0s  effort=2087.8
+  [398/500] TOUT  t= 60.0s  effort=2087.8
+  [399/500] TOUT  t= 60.0s  effort=2087.8
+  [400/500] TOUT  t= 60.0s  effort=2087.8
+  [401/500] TOUT  t= 60.0s  effort=2087.8
+  [402/500] TOUT  t= 60.0s  effort=2087.8
+  [403/500] TOUT  t= 60.0s  effort=2087.8
+  [404/500] TOUT  t= 60.0s  effort=2087.8
+  [405/500] TOUT  t= 60.0s  effort=2087.8
+  [406/500] TOUT  t= 60.0s  effort=2087.8
+  [407/500] TOUT  t= 60.0s  effort=2087.8
+  [408/500] TOUT  t= 60.0s  effort=2087.8
+  [409/500] TOUT  t= 60.0s  effort=2087.8
+  [410/500] TOUT  t= 60.0s  effort=2087.8
+  [411/500] TOUT  t= 60.0s  effort=2087.8
+  [412/500] TOUT  t= 60.0s  effort=2087.8
+  [413/500] TOUT  t= 60.0s  effort=2087.8
+  [414/500] TOUT  t= 60.0s  effort=2087.8
+  [415/500] TOUT  t= 60.0s  effort=2087.8
+  [416/500] TOUT  t= 60.0s  effort=2087.8
+  [417/500] TOUT  t= 60.0s  effort=2087.8
+  [418/500] TOUT  t= 60.0s  effort=2087.8
+  [419/500] TOUT  t= 60.0s  effort=2087.8
+  [420/500] TOUT  t= 60.0s  effort=2087.8
+  [421/500] TOUT  t= 60.0s  effort=2087.8
+  [422/500] TOUT  t= 60.0s  effort=2087.8
+  [423/500] TOUT  t= 60.0s  effort=2087.8
+  [424/500] TOUT  t= 60.0s  effort=2087.8
+  [425/500] TOUT  t= 60.0s  effort=2087.8
+  [426/500] TOUT  t= 60.0s  effort=2087.8
+  [427/500] TOUT  t= 60.0s  effort=2087.8
+  [428/500] TOUT  t= 60.0s  effort=2087.8
+  [429/500] TOUT  t= 60.0s  effort=2087.8
+  [430/500] TOUT  t= 60.0s  effort=2087.8
+  [431/500] TOUT  t= 60.0s  effort=2087.8
+  [432/500] TOUT  t= 60.0s  effort=2087.8
+  [433/500] TOUT  t= 60.0s  effort=2087.8
+  [434/500] TOUT  t= 60.0s  effort=2087.8
+  [435/500] TOUT  t= 60.0s  effort=2087.8
+  [436/500] TOUT  t= 60.0s  effort=2087.8
+  [437/500] TOUT  t= 60.0s  effort=2087.8
+  [438/500] TOUT  t= 60.0s  effort=2087.8
+  [439/500] TOUT  t= 60.0s  effort=2087.8
+  [440/500] TOUT  t= 60.0s  effort=2087.8
+  [441/500] TOUT  t= 60.0s  effort=2087.8
+  [442/500] TOUT  t= 60.0s  effort=2087.8
+  [443/500] TOUT  t= 60.0s  effort=2087.8
+  [444/500] TOUT  t= 60.0s  effort=2087.8
+  [445/500] TOUT  t= 60.0s  effort=2087.8
+  [446/500] TOUT  t= 60.0s  effort=2087.8
+  [447/500] TOUT  t= 60.0s  effort=2087.8
+  [448/500] TOUT  t= 60.0s  effort=2087.8
+  [449/500] TOUT  t= 60.0s  effort=2087.8
+  [450/500] TOUT  t= 60.0s  effort=2087.8
+  [451/500] TOUT  t= 60.0s  effort=2087.8
+  [452/500] TOUT  t= 60.0s  effort=2087.8
+  [453/500] TOUT  t= 60.0s  effort=2087.8
+  [454/500] TOUT  t= 60.0s  effort=2087.8
+  [455/500] TOUT  t= 60.0s  effort=2087.8
+  [456/500] TOUT  t= 60.0s  effort=2087.8
+  [457/500] TOUT  t= 60.0s  effort=2087.8
+  [458/500] TOUT  t= 60.0s  effort=2087.8
+  [459/500] TOUT  t= 60.0s  effort=2087.8
+  [460/500] TOUT  t= 60.0s  effort=2087.8
+  [461/500] TOUT  t= 60.0s  effort=2087.8
+  [462/500] TOUT  t= 60.0s  effort=2087.8
+  [463/500] TOUT  t= 60.0s  effort=2087.8
+  [464/500] TOUT  t= 60.0s  effort=2087.8
+  [465/500] TOUT  t= 60.0s  effort=2087.8
+  [466/500] TOUT  t= 60.0s  effort=2087.8
+  [467/500] TOUT  t= 60.0s  effort=2087.8
+  [468/500] TOUT  t= 60.0s  effort=2087.8
+  [469/500] TOUT  t= 60.0s  effort=2087.8
+  [470/500] TOUT  t= 60.0s  effort=2087.8
+  [471/500] TOUT  t= 60.0s  effort=2087.8
+  [472/500] TOUT  t= 60.0s  effort=2087.8
+  [473/500] TOUT  t= 60.0s  effort=2087.8
+  [474/500] TOUT  t= 60.0s  effort=2087.8
+  [475/500] TOUT  t= 60.0s  effort=2087.8
+  [476/500] TOUT  t= 60.0s  effort=2087.8
+  [477/500] TOUT  t= 60.0s  effort=2087.8
+  [478/500] TOUT  t= 60.0s  effort=2087.8
+  [479/500] TOUT  t= 60.0s  effort=2087.8
+  [480/500] TOUT  t= 60.0s  effort=2087.8
+  [481/500] TOUT  t= 60.0s  effort=2087.8
+  [482/500] TOUT  t= 60.0s  effort=2087.8
+  [483/500] TOUT  t= 60.0s  effort=2087.8
+  [484/500] TOUT  t= 60.0s  effort=2087.8
+  [485/500] TOUT  t= 60.0s  effort=2087.8
+  [486/500] TOUT  t= 60.0s  effort=2087.8
+  [487/500] TOUT  t= 60.0s  effort=2087.8
+  [488/500] TOUT  t= 60.0s  effort=2087.8
+  [489/500] TOUT  t= 60.0s  effort=2087.8
+  [490/500] TOUT  t= 60.0s  effort=2087.8
+  [491/500] TOUT  t= 60.0s  effort=2087.8
+  [492/500] TOUT  t= 60.0s  effort=2087.8
+  [493/500] TOUT  t= 60.0s  effort=2087.8
+  [494/500] TOUT  t= 60.0s  effort=2087.8
+  [495/500] TOUT  t= 60.0s  effort=2087.8
+  [496/500] TOUT  t= 60.0s  effort=2087.8
+  [497/500] TOUT  t= 60.0s  effort=2087.8
+  [498/500] TOUT  t= 60.0s  effort=2087.8
+  [499/500] TOUT  t= 60.0s  effort=2087.8
+  [500/500] TOUT  t= 60.0s  effort=2087.8
+
+Vanilla BRAT 13D: dock=0.0%  fail=0.6%  timeout=99.4%  effort=0.0  time=9.00s
+
+--------------------------------------------------------------------------------------------------------------------------
+CONTROLLER COMPARISON
+--------------------------------------------------------------------------------------------------------------------------
+Controller               Dock%   Fail%   Time%      Dock Time (s)      Effort (dock)       Wall (s)  Clip(tot)  Clip(runs)
+--------------------------------------------------------------------------------------------------------------------------
+BRAT+Safety 13D          36.2%    2.6%   61.2% 37.8 +/- 11.6 (181) 1317.1 +/- 404.0 (181) 24.15 +/- 4.76          0           0
+Vanilla BRAT 13D          0.0%    0.6%   99.4%            N/A (0)            N/A (0)  9.00 +/- 0.52          0           0
+--------------------------------------------------------------------------------------------------------------------------
+
+
+No common-success ICs across all controllers; skipping docking-time optimality comparison.
+  BRAT+Safety 13D: 13 collision IC(s) saved to ./outputs/13d_comparison_safety/collision_ics_brat_safety_13d.npy
+  Vanilla BRAT 13D: 3 collision IC(s) saved to ./outputs/13d_comparison_safety/collision_ics_vanilla_brat_13d.npy
+  BRAT+Safety 13D: 306 timeout IC(s) saved to ./outputs/13d_comparison_safety/timeout_ics_brat_safety_13d.npy
+  Vanilla BRAT 13D: 497 timeout IC(s) saved to ./outputs/13d_comparison_safety/timeout_ics_vanilla_brat_13d.npy
+
+------------------------------------------------------------
+  FAILURE SUMMARY
+------------------------------------------------------------
+
+  BRAT+Safety 13D  (13 collision(s)):
+    rollout   9  pos=(+9.67,+9.18,+3.40)  t_coll=14.1s
+    rollout  33  pos=(+5.28,-9.02,+1.61)  t_coll=17.9s
+    rollout  62  pos=(+8.80,-7.90,+2.49)  t_coll=20.5s
+    rollout  90  pos=(+7.96,+1.19,-3.65)  t_coll=11.3s
+    rollout 116  pos=(+3.96,+8.24,-7.84)  t_coll=14.6s
+    rollout 120  pos=(+8.48,+8.11,-9.34)  t_coll=33.9s
+    rollout 124  pos=(+6.56,-6.65,+5.56)  t_coll=17.5s
+    rollout 188  pos=(-9.02,+9.13,-6.92)  t_coll=36.1s
+    rollout 360  pos=(+3.33,-8.72,+7.07)  t_coll=20.5s
+    rollout 373  pos=(+4.61,-7.51,-5.95)  t_coll=17.9s
+    rollout 404  pos=(-6.42,+6.44,+4.11)  t_coll=11.2s
+    rollout 434  pos=(+8.72,+6.46,-0.96)  t_coll=37.1s
+    rollout 492  pos=(+8.33,+4.44,-8.66)  t_coll=36.4s
+
+  BRAT+Safety 13D  (306 timeout(s)):
+    rollout   1  pos=(-8.05,+5.22,-5.06)  dist=0.579m  q_err=18.7°
+    rollout   3  pos=(-4.63,+5.00,-4.26)  dist=0.139m  q_err=9.4°
+    rollout   4  pos=(+4.22,-9.12,-8.47)  dist=0.511m  q_err=7.0°
+    rollout   5  pos=(+8.42,+8.71,+8.73)  dist=3.048m  q_err=154.4°
+    rollout   6  pos=(+6.69,+1.81,-2.77)  dist=0.627m  q_err=13.7°
+    rollout   7  pos=(+8.99,-2.00,+3.05)  dist=0.088m  q_err=6.0°
+    rollout   8  pos=(+9.48,-1.56,-8.73)  dist=0.523m  q_err=2.1°
+    rollout  10  pos=(+7.15,+4.24,+7.13)  dist=0.420m  q_err=11.6°
+    rollout  11  pos=(-3.93,-3.37,-8.87)  dist=0.083m  q_err=2.0°
+    rollout  12  pos=(-8.60,+1.95,-3.76)  dist=0.075m  q_err=6.9°
+    rollout  13  pos=(-6.33,-0.27,-8.79)  dist=0.140m  q_err=2.9°
+    rollout  15  pos=(+5.69,+7.29,-2.70)  dist=0.285m  q_err=9.4°
+    rollout  16  pos=(-8.35,-5.68,+5.15)  dist=0.074m  q_err=7.3°
+    rollout  17  pos=(-6.92,+7.05,+3.28)  dist=0.152m  q_err=6.5°
+    rollout  19  pos=(+2.04,+1.17,-3.14)  dist=0.316m  q_err=4.9°
+    rollout  21  pos=(-9.88,-5.24,-6.60)  dist=0.018m  q_err=7.0°
+    rollout  22  pos=(-7.73,+0.10,+2.05)  dist=0.397m  q_err=12.4°
+    rollout  23  pos=(-6.24,+5.89,-7.59)  dist=0.094m  q_err=4.2°
+    rollout  25  pos=(-6.81,+8.59,+2.54)  dist=0.199m  q_err=5.2°
+    rollout  26  pos=(+0.14,-9.87,-3.58)  dist=0.679m  q_err=8.2°
+    rollout  30  pos=(-1.25,+2.78,+7.67)  dist=0.164m  q_err=9.0°
+    rollout  34  pos=(-2.98,+8.90,-8.21)  dist=0.892m  q_err=77.1°
+    rollout  35  pos=(+6.38,+2.23,+5.35)  dist=0.379m  q_err=9.6°
+    rollout  36  pos=(-6.10,-0.80,-6.00)  dist=0.172m  q_err=4.0°
+    rollout  37  pos=(+5.53,+5.92,-1.47)  dist=0.084m  q_err=3.0°
+    rollout  39  pos=(-4.52,+8.05,-0.90)  dist=0.173m  q_err=10.0°
+    rollout  40  pos=(-6.47,+6.70,-1.84)  dist=0.263m  q_err=17.0°
+    rollout  42  pos=(-1.57,-3.32,-0.17)  dist=0.485m  q_err=19.7°
+    rollout  43  pos=(-9.30,+0.85,-3.71)  dist=0.186m  q_err=11.0°
+    rollout  44  pos=(+7.62,+0.59,-2.58)  dist=0.230m  q_err=14.6°
+    rollout  45  pos=(-3.85,-3.99,+1.16)  dist=0.119m  q_err=1.8°
+    rollout  49  pos=(-9.38,-2.26,-2.62)  dist=0.089m  q_err=5.5°
+    rollout  50  pos=(-8.18,+2.79,+2.80)  dist=0.409m  q_err=8.9°
+    rollout  51  pos=(+5.26,+0.44,-6.86)  dist=0.262m  q_err=9.2°
+    rollout  52  pos=(-5.55,+2.06,+4.21)  dist=0.368m  q_err=6.0°
+    rollout  53  pos=(+4.06,+9.65,-4.41)  dist=0.445m  q_err=8.0°
+    rollout  55  pos=(-4.04,+8.69,+4.05)  dist=0.089m  q_err=4.8°
+    rollout  56  pos=(-4.06,+4.73,+0.06)  dist=0.572m  q_err=17.0°
+    rollout  57  pos=(-6.39,+4.93,-4.16)  dist=0.108m  q_err=2.6°
+    rollout  58  pos=(+2.30,+5.55,+6.47)  dist=0.104m  q_err=7.5°
+    rollout  61  pos=(+1.47,-5.74,-8.32)  dist=0.133m  q_err=9.3°
+    rollout  64  pos=(-0.54,+9.12,+3.10)  dist=1.952m  q_err=111.0°
+    rollout  66  pos=(-8.64,+3.06,-5.81)  dist=0.175m  q_err=2.2°
+    rollout  67  pos=(-0.49,-8.52,+7.05)  dist=0.611m  q_err=16.2°
+    rollout  68  pos=(+7.53,-5.13,-4.29)  dist=0.085m  q_err=1.4°
+    rollout  69  pos=(+7.74,-9.41,-7.45)  dist=0.083m  q_err=3.2°
+    rollout  70  pos=(+4.45,-7.46,-0.68)  dist=0.082m  q_err=2.5°
+    rollout  72  pos=(+7.71,+4.34,-3.60)  dist=0.543m  q_err=20.3°
+    rollout  75  pos=(+9.84,+5.52,-7.98)  dist=0.120m  q_err=2.6°
+    rollout  77  pos=(+0.79,-2.26,+1.57)  dist=0.062m  q_err=5.8°
+    rollout  79  pos=(-0.67,+5.52,+6.87)  dist=0.056m  q_err=4.2°
+    rollout  80  pos=(-4.90,+0.26,+7.70)  dist=0.244m  q_err=3.0°
+    rollout  81  pos=(-5.47,-2.58,+4.28)  dist=0.171m  q_err=12.5°
+    rollout  82  pos=(+3.77,+4.47,-9.66)  dist=0.084m  q_err=1.2°
+    rollout  83  pos=(-3.19,-7.91,+9.88)  dist=0.190m  q_err=1.6°
+    rollout  86  pos=(-9.81,+1.91,+2.96)  dist=0.522m  q_err=3.0°
+    rollout  87  pos=(-2.45,+9.70,-7.65)  dist=0.231m  q_err=4.9°
+    rollout  88  pos=(-5.41,-9.75,+0.20)  dist=0.588m  q_err=10.4°
+    rollout  91  pos=(+0.27,+5.91,+8.46)  dist=0.087m  q_err=5.8°
+    rollout  93  pos=(+3.82,-8.65,+4.23)  dist=0.183m  q_err=11.6°
+    rollout  95  pos=(+5.25,+7.40,+7.69)  dist=0.188m  q_err=2.5°
+    rollout  96  pos=(-9.28,-2.85,-0.33)  dist=0.351m  q_err=1.8°
+    rollout  97  pos=(-1.92,-3.30,-0.56)  dist=0.068m  q_err=6.4°
+    rollout  98  pos=(+2.54,-3.66,+2.99)  dist=0.367m  q_err=3.7°
+    rollout 104  pos=(+7.10,-5.59,+9.73)  dist=0.089m  q_err=6.1°
+    rollout 105  pos=(+0.85,-9.72,-2.15)  dist=0.641m  q_err=7.7°
+    rollout 107  pos=(+1.04,-1.35,-6.43)  dist=0.051m  q_err=4.4°
+    rollout 108  pos=(+9.40,+9.37,+9.78)  dist=0.302m  q_err=4.6°
+    rollout 109  pos=(+9.50,-5.36,-1.43)  dist=0.029m  q_err=1.4°
+    rollout 110  pos=(-0.18,-6.84,-4.01)  dist=0.162m  q_err=2.6°
+    rollout 112  pos=(+0.81,-8.36,+3.32)  dist=0.190m  q_err=4.8°
+    rollout 115  pos=(-2.34,-2.35,-3.92)  dist=0.022m  q_err=5.8°
+    rollout 117  pos=(-6.28,+7.40,+5.59)  dist=0.645m  q_err=2.8°
+    rollout 118  pos=(-7.03,-4.33,-5.78)  dist=0.510m  q_err=7.0°
+    rollout 121  pos=(+2.03,+1.32,+7.11)  dist=0.148m  q_err=3.7°
+    rollout 123  pos=(-6.15,+9.92,+1.16)  dist=0.704m  q_err=22.7°
+    rollout 126  pos=(+5.38,+1.27,-4.28)  dist=0.052m  q_err=3.0°
+    rollout 127  pos=(+3.57,-3.47,-6.45)  dist=0.120m  q_err=5.1°
+    rollout 131  pos=(-8.16,-1.04,-3.66)  dist=0.201m  q_err=13.5°
+    rollout 132  pos=(+4.06,+9.81,-4.22)  dist=0.295m  q_err=17.3°
+    rollout 134  pos=(-2.12,-8.62,-6.55)  dist=0.254m  q_err=2.8°
+    rollout 136  pos=(-8.26,-1.13,-8.18)  dist=0.090m  q_err=3.3°
+    rollout 137  pos=(-4.60,+9.41,+3.15)  dist=0.188m  q_err=5.3°
+    rollout 139  pos=(-8.09,-6.41,+6.84)  dist=0.059m  q_err=5.9°
+    rollout 140  pos=(+5.88,-8.33,-3.95)  dist=0.395m  q_err=13.7°
+    rollout 141  pos=(+9.02,+2.58,+5.48)  dist=0.084m  q_err=4.0°
+    rollout 142  pos=(-2.93,-0.10,+6.81)  dist=0.465m  q_err=3.9°
+    rollout 143  pos=(-4.56,+9.16,+0.50)  dist=0.164m  q_err=2.6°
+    rollout 144  pos=(+2.04,-6.33,+4.41)  dist=0.219m  q_err=4.1°
+    rollout 145  pos=(+4.60,-2.75,+0.38)  dist=0.148m  q_err=5.4°
+    rollout 146  pos=(-5.05,-4.66,-7.45)  dist=0.564m  q_err=17.0°
+    rollout 148  pos=(-0.64,+7.84,+1.49)  dist=0.267m  q_err=6.8°
+    rollout 149  pos=(-2.51,+6.45,-0.28)  dist=0.092m  q_err=2.9°
+    rollout 151  pos=(-3.37,-2.46,-7.98)  dist=0.153m  q_err=4.5°
+    rollout 154  pos=(-4.09,+5.03,-8.18)  dist=0.142m  q_err=8.0°
+    rollout 156  pos=(+8.35,-6.98,-8.32)  dist=0.114m  q_err=2.5°
+    rollout 157  pos=(-4.77,+0.97,+2.43)  dist=0.197m  q_err=10.4°
+    rollout 158  pos=(+2.99,-5.22,-2.03)  dist=0.559m  q_err=9.7°
+    rollout 161  pos=(+2.71,-4.97,+5.10)  dist=0.138m  q_err=8.5°
+    rollout 163  pos=(-8.98,-0.79,+8.13)  dist=0.099m  q_err=6.0°
+    rollout 164  pos=(+4.29,-8.77,-0.47)  dist=0.210m  q_err=5.1°
+    rollout 167  pos=(-4.51,+3.91,-4.58)  dist=0.124m  q_err=6.2°
+    rollout 168  pos=(+0.25,-1.55,-4.64)  dist=0.107m  q_err=2.7°
+    rollout 170  pos=(+0.30,+3.46,+6.12)  dist=0.123m  q_err=7.9°
+    rollout 171  pos=(+6.29,+5.04,-5.32)  dist=0.171m  q_err=2.1°
+    rollout 172  pos=(+2.84,-1.83,+2.45)  dist=0.117m  q_err=7.3°
+    rollout 173  pos=(-3.27,+9.73,-0.73)  dist=0.216m  q_err=13.3°
+    rollout 174  pos=(-8.93,-2.06,+1.51)  dist=0.088m  q_err=4.3°
+    rollout 175  pos=(+6.72,+5.62,-9.38)  dist=0.129m  q_err=2.6°
+    rollout 177  pos=(-9.61,+6.49,-8.82)  dist=0.135m  q_err=4.6°
+    rollout 179  pos=(-5.99,-1.24,+9.31)  dist=0.048m  q_err=5.8°
+    rollout 181  pos=(-4.66,+6.51,-4.65)  dist=0.076m  q_err=9.3°
+    rollout 182  pos=(+1.75,+1.52,-4.89)  dist=0.089m  q_err=3.9°
+    rollout 183  pos=(-8.46,-5.77,+5.39)  dist=0.159m  q_err=0.3°
+    rollout 185  pos=(-2.22,+1.93,-7.60)  dist=0.187m  q_err=10.6°
+    rollout 187  pos=(-0.90,+7.02,+7.47)  dist=0.076m  q_err=6.0°
+    rollout 191  pos=(-1.99,-3.95,+8.55)  dist=0.068m  q_err=4.3°
+    rollout 192  pos=(-3.20,+8.63,-2.75)  dist=0.297m  q_err=7.2°
+    rollout 193  pos=(+6.60,+7.66,-4.48)  dist=0.313m  q_err=3.9°
+    rollout 194  pos=(-6.48,-9.69,+4.43)  dist=0.242m  q_err=7.0°
+    rollout 195  pos=(-1.83,+8.11,-7.31)  dist=0.513m  q_err=6.5°
+    rollout 198  pos=(-4.39,+6.39,-2.19)  dist=5.597m  q_err=58.9°
+    rollout 200  pos=(-7.75,-6.96,-2.80)  dist=0.073m  q_err=3.4°
+    rollout 205  pos=(-6.40,+1.00,-5.81)  dist=0.087m  q_err=5.2°
+    rollout 208  pos=(+9.34,-0.72,-3.56)  dist=0.088m  q_err=2.5°
+    rollout 209  pos=(-0.29,+8.19,-3.99)  dist=0.191m  q_err=3.0°
+    rollout 211  pos=(-1.76,-3.87,+6.06)  dist=0.209m  q_err=11.4°
+    rollout 212  pos=(-0.03,-5.52,-1.24)  dist=0.652m  q_err=5.4°
+    rollout 215  pos=(-4.16,-1.88,+5.82)  dist=0.101m  q_err=4.2°
+    rollout 216  pos=(-2.02,+0.34,+3.39)  dist=0.115m  q_err=4.7°
+    rollout 218  pos=(+5.54,-4.26,+1.73)  dist=0.188m  q_err=11.5°
+    rollout 219  pos=(-9.60,+8.34,+0.62)  dist=0.527m  q_err=4.0°
+    rollout 220  pos=(-4.80,-1.31,+0.58)  dist=0.519m  q_err=14.1°
+    rollout 224  pos=(+0.23,-7.62,-0.96)  dist=0.197m  q_err=4.0°
+    rollout 227  pos=(+5.70,+8.19,-3.48)  dist=0.633m  q_err=10.8°
+    rollout 228  pos=(-4.57,+9.51,+3.11)  dist=0.368m  q_err=11.7°
+    rollout 229  pos=(-3.31,+7.12,-0.41)  dist=0.192m  q_err=11.5°
+    rollout 230  pos=(+2.67,-1.66,-8.78)  dist=0.075m  q_err=5.6°
+    rollout 231  pos=(-2.23,+1.47,-7.44)  dist=0.266m  q_err=9.4°
+    rollout 232  pos=(+6.03,+2.21,-0.61)  dist=0.074m  q_err=10.9°
+    rollout 233  pos=(+7.12,+2.57,+5.94)  dist=0.089m  q_err=3.3°
+    rollout 235  pos=(+8.13,+4.45,-6.80)  dist=0.166m  q_err=9.8°
+    rollout 236  pos=(+5.12,-5.66,+4.63)  dist=0.102m  q_err=4.3°
+    rollout 237  pos=(+4.71,+8.86,+6.97)  dist=0.551m  q_err=7.3°
+    rollout 238  pos=(+6.86,-9.39,-2.22)  dist=0.249m  q_err=4.6°
+    rollout 239  pos=(+8.33,-5.42,+6.46)  dist=0.191m  q_err=6.3°
+    rollout 240  pos=(-2.66,+8.60,+6.28)  dist=0.061m  q_err=11.3°
+    rollout 241  pos=(+2.96,-8.38,+3.36)  dist=0.439m  q_err=53.8°
+    rollout 242  pos=(-5.35,-4.03,-1.85)  dist=0.152m  q_err=8.0°
+    rollout 243  pos=(-8.62,+9.83,+2.65)  dist=4.463m  q_err=78.6°
+    rollout 249  pos=(+1.43,-8.39,+6.22)  dist=0.340m  q_err=4.7°
+    rollout 251  pos=(+2.39,-2.97,+6.37)  dist=0.640m  q_err=6.4°
+    rollout 252  pos=(+4.66,-4.52,-2.84)  dist=0.622m  q_err=16.1°
+    rollout 256  pos=(+1.56,+1.12,+8.13)  dist=0.175m  q_err=10.0°
+    rollout 257  pos=(+3.39,+0.54,-4.65)  dist=0.644m  q_err=9.4°
+    rollout 258  pos=(+4.07,-6.83,+5.21)  dist=0.105m  q_err=4.8°
+    rollout 260  pos=(+8.53,-3.67,-9.06)  dist=0.489m  q_err=12.7°
+    rollout 261  pos=(+0.97,+6.36,+5.84)  dist=0.123m  q_err=4.1°
+    rollout 262  pos=(+0.42,+9.30,+0.61)  dist=0.628m  q_err=6.0°
+    rollout 263  pos=(-2.93,-5.85,+1.82)  dist=0.263m  q_err=3.6°
+    rollout 264  pos=(+2.59,-9.34,-4.77)  dist=0.218m  q_err=10.0°
+    rollout 265  pos=(+5.12,+4.31,+2.68)  dist=0.926m  q_err=38.7°
+    rollout 266  pos=(+9.40,+7.61,+2.94)  dist=0.132m  q_err=7.6°
+    rollout 267  pos=(-9.02,+7.63,+5.04)  dist=74.586m  q_err=85.0°
+    rollout 268  pos=(-9.45,-3.69,-8.30)  dist=0.242m  q_err=3.7°
+    rollout 269  pos=(-1.40,-6.49,-1.78)  dist=0.106m  q_err=3.5°
+    rollout 270  pos=(+7.86,+7.01,-2.87)  dist=0.181m  q_err=14.1°
+    rollout 271  pos=(+2.23,-4.47,-1.52)  dist=0.041m  q_err=5.3°
+    rollout 272  pos=(+5.50,-8.29,+6.62)  dist=0.104m  q_err=9.5°
+    rollout 274  pos=(+2.76,+9.73,+2.68)  dist=0.221m  q_err=2.7°
+    rollout 275  pos=(-2.30,+8.93,+7.89)  dist=0.145m  q_err=1.8°
+    rollout 276  pos=(-3.79,+7.70,-6.30)  dist=0.237m  q_err=12.4°
+    rollout 277  pos=(-0.99,+7.77,-3.31)  dist=0.137m  q_err=16.6°
+    rollout 281  pos=(+2.26,-3.93,+9.88)  dist=0.093m  q_err=13.9°
+    rollout 282  pos=(+9.68,+2.86,-6.30)  dist=0.701m  q_err=60.0°
+    rollout 283  pos=(+3.92,-2.20,+8.38)  dist=0.527m  q_err=7.6°
+    rollout 286  pos=(-7.20,-6.27,+8.08)  dist=0.264m  q_err=13.7°
+    rollout 287  pos=(+1.27,+4.28,+6.92)  dist=0.582m  q_err=16.7°
+    rollout 288  pos=(-3.54,+2.44,-8.31)  dist=0.133m  q_err=9.4°
+    rollout 289  pos=(-5.40,+9.09,-0.99)  dist=1.738m  q_err=38.5°
+    rollout 293  pos=(-7.56,+9.06,-8.96)  dist=0.117m  q_err=9.7°
+    rollout 294  pos=(-4.94,-7.21,-1.44)  dist=0.200m  q_err=6.6°
+    rollout 296  pos=(-6.25,-0.75,-3.80)  dist=0.736m  q_err=5.7°
+    rollout 300  pos=(+1.63,+4.10,-4.46)  dist=0.253m  q_err=9.1°
+    rollout 301  pos=(+0.33,-1.81,+3.16)  dist=0.145m  q_err=5.0°
+    rollout 302  pos=(+6.14,+1.14,+9.39)  dist=0.200m  q_err=10.5°
+    rollout 303  pos=(+8.67,+1.01,+6.11)  dist=0.317m  q_err=7.5°
+    rollout 305  pos=(-8.73,-0.79,+5.56)  dist=0.182m  q_err=7.6°
+    rollout 307  pos=(+3.52,-3.56,+6.16)  dist=0.604m  q_err=8.4°
+    rollout 308  pos=(-4.49,+2.36,-6.82)  dist=0.468m  q_err=3.8°
+    rollout 310  pos=(-0.10,+6.05,+1.08)  dist=0.162m  q_err=2.2°
+    rollout 312  pos=(-5.04,-5.50,-5.55)  dist=0.358m  q_err=10.1°
+    rollout 315  pos=(-3.14,-9.22,-2.28)  dist=3.168m  q_err=132.8°
+    rollout 316  pos=(-6.56,-5.48,+8.26)  dist=0.089m  q_err=9.1°
+    rollout 320  pos=(+4.51,+4.28,-6.97)  dist=0.126m  q_err=1.0°
+    rollout 322  pos=(+1.01,+8.51,+0.97)  dist=0.106m  q_err=3.3°
+    rollout 324  pos=(-2.57,-7.66,+1.11)  dist=0.604m  q_err=17.9°
+    rollout 325  pos=(+4.81,-9.38,-2.44)  dist=0.397m  q_err=3.5°
+    rollout 326  pos=(-0.90,+4.64,+6.10)  dist=14.050m  q_err=136.9°
+    rollout 327  pos=(-8.66,-6.15,+9.54)  dist=0.038m  q_err=3.0°
+    rollout 328  pos=(-6.62,-0.39,+1.65)  dist=0.195m  q_err=4.3°
+    rollout 331  pos=(-0.31,+5.63,-2.04)  dist=0.302m  q_err=7.0°
+    rollout 333  pos=(+3.63,-3.64,+5.76)  dist=0.506m  q_err=2.9°
+    rollout 335  pos=(-7.73,-4.27,-4.86)  dist=0.099m  q_err=5.3°
+    rollout 337  pos=(-9.67,+5.88,+9.27)  dist=0.446m  q_err=6.8°
+    rollout 338  pos=(+5.55,+3.88,-5.23)  dist=0.114m  q_err=4.4°
+    rollout 340  pos=(-5.41,+2.46,+7.10)  dist=0.166m  q_err=12.0°
+    rollout 342  pos=(+6.86,-8.13,-9.90)  dist=0.215m  q_err=5.6°
+    rollout 343  pos=(-5.66,-6.52,-7.53)  dist=0.198m  q_err=1.2°
+    rollout 344  pos=(-6.34,+5.58,-8.47)  dist=0.098m  q_err=6.6°
+    rollout 346  pos=(+9.86,-0.90,-3.93)  dist=0.517m  q_err=11.9°
+    rollout 347  pos=(-4.95,-4.48,+8.25)  dist=0.218m  q_err=4.6°
+    rollout 348  pos=(-0.42,+5.84,+5.94)  dist=0.226m  q_err=2.1°
+    rollout 349  pos=(-2.19,-1.98,-7.46)  dist=0.601m  q_err=10.1°
+    rollout 350  pos=(+2.63,+7.77,+8.90)  dist=0.464m  q_err=7.1°
+    rollout 351  pos=(-4.49,+4.17,+6.12)  dist=0.149m  q_err=6.9°
+    rollout 352  pos=(-4.00,+1.70,+0.13)  dist=0.387m  q_err=2.3°
+    rollout 354  pos=(-3.54,+5.94,+3.35)  dist=0.375m  q_err=1.6°
+    rollout 356  pos=(-8.44,-4.60,-5.47)  dist=0.384m  q_err=2.6°
+    rollout 357  pos=(+8.87,-8.90,-3.89)  dist=0.096m  q_err=4.8°
+    rollout 358  pos=(+7.26,-0.40,-8.87)  dist=0.053m  q_err=6.4°
+    rollout 365  pos=(+6.81,-5.21,-3.42)  dist=0.554m  q_err=3.6°
+    rollout 366  pos=(+1.02,-8.70,-1.71)  dist=0.600m  q_err=11.1°
+    rollout 367  pos=(-5.94,+8.29,+7.93)  dist=2.234m  q_err=145.1°
+    rollout 368  pos=(-2.74,-5.75,+5.23)  dist=0.109m  q_err=4.3°
+    rollout 369  pos=(+2.70,+8.59,-2.74)  dist=0.043m  q_err=5.6°
+    rollout 370  pos=(+1.00,+1.62,+4.94)  dist=0.135m  q_err=12.0°
+    rollout 371  pos=(-0.28,+8.06,+5.05)  dist=0.525m  q_err=5.7°
+    rollout 372  pos=(-4.60,+1.44,+4.11)  dist=0.598m  q_err=3.4°
+    rollout 374  pos=(-3.04,-8.55,+4.08)  dist=0.204m  q_err=5.0°
+    rollout 375  pos=(-0.25,-1.88,-1.10)  dist=0.032m  q_err=6.6°
+    rollout 380  pos=(-9.89,+0.13,+2.56)  dist=0.086m  q_err=1.8°
+    rollout 382  pos=(+8.82,-4.24,-4.16)  dist=0.061m  q_err=8.8°
+    rollout 383  pos=(+1.78,+8.84,-6.96)  dist=0.226m  q_err=8.6°
+    rollout 385  pos=(-2.80,+0.82,-9.84)  dist=0.142m  q_err=13.7°
+    rollout 386  pos=(-4.16,+5.22,-0.06)  dist=1.622m  q_err=43.8°
+    rollout 387  pos=(-3.46,-5.98,-9.25)  dist=0.124m  q_err=9.9°
+    rollout 388  pos=(-7.09,+6.99,+6.01)  dist=0.095m  q_err=5.4°
+    rollout 389  pos=(+6.29,-0.46,-1.76)  dist=0.181m  q_err=6.1°
+    rollout 390  pos=(-4.08,-3.38,+6.07)  dist=0.252m  q_err=7.6°
+    rollout 391  pos=(-3.30,+7.78,+1.35)  dist=0.845m  q_err=107.8°
+    rollout 392  pos=(-1.36,+7.49,+7.99)  dist=0.110m  q_err=3.6°
+    rollout 393  pos=(-7.50,+8.22,+5.26)  dist=5.067m  q_err=95.8°
+    rollout 394  pos=(-3.77,+8.17,+9.54)  dist=0.118m  q_err=3.1°
+    rollout 395  pos=(-1.25,-4.47,-4.24)  dist=0.137m  q_err=4.8°
+    rollout 396  pos=(+3.47,-9.89,+8.82)  dist=0.439m  q_err=8.4°
+    rollout 397  pos=(+1.74,+6.94,+7.78)  dist=0.342m  q_err=4.8°
+    rollout 401  pos=(+1.71,+9.10,-0.80)  dist=5.593m  q_err=84.0°
+    rollout 402  pos=(-9.13,+5.68,-4.35)  dist=0.292m  q_err=5.1°
+    rollout 405  pos=(-5.57,+3.37,+2.54)  dist=0.632m  q_err=11.3°
+    rollout 406  pos=(+5.96,+6.64,+3.19)  dist=0.123m  q_err=7.1°
+    rollout 407  pos=(-1.36,-3.98,-4.38)  dist=0.120m  q_err=9.1°
+    rollout 408  pos=(-8.59,-7.59,-0.88)  dist=0.159m  q_err=3.3°
+    rollout 410  pos=(-6.31,+1.77,-3.46)  dist=0.095m  q_err=5.5°
+    rollout 413  pos=(+5.87,+4.38,-9.66)  dist=0.161m  q_err=4.5°
+    rollout 414  pos=(+1.44,+5.75,-8.91)  dist=0.205m  q_err=28.1°
+    rollout 416  pos=(+5.83,+0.01,-5.50)  dist=0.334m  q_err=4.0°
+    rollout 417  pos=(-3.82,-5.13,-7.48)  dist=0.282m  q_err=1.0°
+    rollout 419  pos=(-0.22,+2.24,-9.29)  dist=0.069m  q_err=4.8°
+    rollout 420  pos=(-3.21,-8.08,+7.89)  dist=0.069m  q_err=8.0°
+    rollout 421  pos=(-5.27,-9.12,+9.75)  dist=0.600m  q_err=4.4°
+    rollout 423  pos=(-2.01,-3.97,+3.14)  dist=0.236m  q_err=6.2°
+    rollout 424  pos=(+6.54,+9.84,-3.86)  dist=0.072m  q_err=5.5°
+    rollout 425  pos=(-1.57,+8.50,+3.37)  dist=0.077m  q_err=1.8°
+    rollout 427  pos=(-4.23,-8.58,-4.47)  dist=0.087m  q_err=2.7°
+    rollout 428  pos=(+3.79,-8.21,-0.28)  dist=0.305m  q_err=13.7°
+    rollout 429  pos=(-9.39,+4.51,-4.74)  dist=0.214m  q_err=5.3°
+    rollout 430  pos=(-3.07,-5.95,-6.25)  dist=0.095m  q_err=1.9°
+    rollout 431  pos=(+8.89,-4.73,-5.27)  dist=0.838m  q_err=28.7°
+    rollout 433  pos=(+9.14,-9.53,+0.95)  dist=0.079m  q_err=4.5°
+    rollout 436  pos=(-1.30,+7.64,+5.28)  dist=0.034m  q_err=7.1°
+    rollout 437  pos=(+8.18,+1.10,-8.89)  dist=0.049m  q_err=7.9°
+    rollout 439  pos=(+2.36,+4.46,-4.42)  dist=0.165m  q_err=0.5°
+    rollout 441  pos=(-1.88,+0.10,+4.39)  dist=0.106m  q_err=6.8°
+    rollout 442  pos=(+5.19,+2.89,+2.74)  dist=0.418m  q_err=5.6°
+    rollout 443  pos=(-8.04,-9.61,-3.08)  dist=0.467m  q_err=1.6°
+    rollout 444  pos=(-4.93,-0.62,-7.17)  dist=0.301m  q_err=8.4°
+    rollout 448  pos=(+3.85,-7.56,+5.65)  dist=0.360m  q_err=15.4°
+    rollout 449  pos=(+3.56,+3.17,+5.61)  dist=0.690m  q_err=3.1°
+    rollout 455  pos=(-4.78,+8.92,-0.62)  dist=0.278m  q_err=6.6°
+    rollout 456  pos=(+4.04,+7.18,-6.38)  dist=0.060m  q_err=4.3°
+    rollout 457  pos=(-8.58,+0.20,+6.60)  dist=0.058m  q_err=2.8°
+    rollout 459  pos=(+6.31,+8.62,+4.41)  dist=0.112m  q_err=0.8°
+    rollout 460  pos=(+3.53,-6.41,+2.09)  dist=0.479m  q_err=4.9°
+    rollout 461  pos=(+5.69,-7.73,+0.27)  dist=0.220m  q_err=5.1°
+    rollout 463  pos=(+5.28,+2.07,-4.42)  dist=0.395m  q_err=17.6°
+    rollout 464  pos=(-1.13,+7.47,+7.84)  dist=0.135m  q_err=9.0°
+    rollout 465  pos=(-8.64,+4.98,+3.90)  dist=0.535m  q_err=7.1°
+    rollout 466  pos=(+1.78,+9.34,-1.56)  dist=3.050m  q_err=130.1°
+    rollout 467  pos=(-5.29,-7.86,-4.70)  dist=0.115m  q_err=1.1°
+    rollout 468  pos=(+4.04,+7.37,+8.68)  dist=0.097m  q_err=5.1°
+    rollout 469  pos=(-5.22,+5.56,+2.49)  dist=0.169m  q_err=10.1°
+    rollout 471  pos=(+1.33,-0.90,+2.88)  dist=0.164m  q_err=5.3°
+    rollout 474  pos=(-0.96,-2.49,+2.98)  dist=0.069m  q_err=3.7°
+    rollout 476  pos=(+5.33,+1.18,+7.94)  dist=0.260m  q_err=6.7°
+    rollout 478  pos=(-0.05,+4.74,+2.80)  dist=0.512m  q_err=5.1°
+    rollout 480  pos=(+4.58,+3.89,+2.12)  dist=0.081m  q_err=6.2°
+    rollout 481  pos=(-3.74,-5.95,+9.34)  dist=0.062m  q_err=7.0°
+    rollout 482  pos=(+8.79,-7.30,-5.49)  dist=0.462m  q_err=3.6°
+    rollout 483  pos=(-2.00,-1.82,+4.55)  dist=0.646m  q_err=13.1°
+    rollout 484  pos=(-5.58,-8.70,+6.53)  dist=0.313m  q_err=5.8°
+    rollout 485  pos=(+7.22,-7.07,+1.40)  dist=0.353m  q_err=3.9°
+    rollout 487  pos=(+6.07,+6.59,-5.41)  dist=0.081m  q_err=5.6°
+    rollout 493  pos=(+5.13,+7.06,-7.64)  dist=0.096m  q_err=4.6°
+    rollout 495  pos=(+4.34,+6.43,-7.31)  dist=0.141m  q_err=5.6°
+    rollout 496  pos=(+1.60,-8.89,+6.18)  dist=0.226m  q_err=11.6°
+
+  Vanilla BRAT 13D  (3 collision(s)):
+    rollout 164  pos=(+4.29,-8.77,-0.47)  t_coll=19.7s
+    rollout 186  pos=(+4.29,-7.42,+1.53)  t_coll=16.4s
+    rollout 241  pos=(+2.96,-8.38,+3.36)  t_coll=17.4s
+
+  Vanilla BRAT 13D  (497 timeout(s)):
+    rollout   0  pos=(+10.00,-5.00,+2.00)  dist=0.473m  q_err=1.9°
+    rollout   1  pos=(-8.05,+5.22,-5.06)  dist=15.003m  q_err=74.0°
+    rollout   2  pos=(-5.32,-7.73,-0.01)  dist=0.880m  q_err=2.1°
+    rollout   3  pos=(-4.63,+5.00,-4.26)  dist=53.522m  q_err=134.8°
+    rollout   4  pos=(+4.22,-9.12,-8.47)  dist=66.302m  q_err=80.1°
+    rollout   5  pos=(+8.42,+8.71,+8.73)  dist=64.914m  q_err=69.3°
+    rollout   6  pos=(+6.69,+1.81,-2.77)  dist=0.776m  q_err=4.6°
+    rollout   7  pos=(+8.99,-2.00,+3.05)  dist=94.979m  q_err=140.2°
+    rollout   8  pos=(+9.48,-1.56,-8.73)  dist=0.532m  q_err=1.2°
+    rollout   9  pos=(+9.67,+9.18,+3.40)  dist=70.476m  q_err=57.0°
+    rollout  10  pos=(+7.15,+4.24,+7.13)  dist=63.690m  q_err=98.7°
+    rollout  11  pos=(-3.93,-3.37,-8.87)  dist=39.743m  q_err=132.9°
+    rollout  12  pos=(-8.60,+1.95,-3.76)  dist=36.094m  q_err=78.0°
+    rollout  13  pos=(-6.33,-0.27,-8.79)  dist=52.544m  q_err=104.4°
+    rollout  14  pos=(+6.66,+5.17,-4.81)  dist=41.162m  q_err=164.0°
+    rollout  15  pos=(+5.69,+7.29,-2.70)  dist=54.349m  q_err=25.6°
+    rollout  16  pos=(-8.35,-5.68,+5.15)  dist=62.860m  q_err=104.5°
+    rollout  17  pos=(-6.92,+7.05,+3.28)  dist=35.855m  q_err=172.1°
+    rollout  18  pos=(-1.66,-6.94,+4.87)  dist=0.372m  q_err=6.1°
+    rollout  19  pos=(+2.04,+1.17,-3.14)  dist=0.500m  q_err=3.4°
+    rollout  20  pos=(-3.09,-5.37,-5.98)  dist=48.058m  q_err=126.8°
+    rollout  21  pos=(-9.88,-5.24,-6.60)  dist=24.426m  q_err=51.7°
+    rollout  22  pos=(-7.73,+0.10,+2.05)  dist=42.469m  q_err=109.2°
+    rollout  23  pos=(-6.24,+5.89,-7.59)  dist=54.150m  q_err=97.1°
+    rollout  24  pos=(-0.41,+4.71,-1.71)  dist=0.321m  q_err=3.1°
+    rollout  25  pos=(-6.81,+8.59,+2.54)  dist=63.507m  q_err=150.7°
+    rollout  26  pos=(+0.14,-9.87,-3.58)  dist=0.760m  q_err=4.9°
+    rollout  27  pos=(-6.09,-8.20,-8.06)  dist=0.452m  q_err=1.6°
+    rollout  28  pos=(-6.73,-8.85,-5.69)  dist=85.615m  q_err=167.9°
+    rollout  29  pos=(-8.06,+4.43,+7.66)  dist=0.457m  q_err=0.7°
+    rollout  30  pos=(-1.25,+2.78,+7.67)  dist=53.895m  q_err=112.7°
+    rollout  31  pos=(-9.91,-6.41,+9.14)  dist=73.013m  q_err=157.3°
+    rollout  32  pos=(+5.83,+0.76,-8.26)  dist=0.845m  q_err=6.6°
+    rollout  33  pos=(+5.28,-9.02,+1.61)  dist=71.888m  q_err=125.0°
+    rollout  34  pos=(-2.98,+8.90,-8.21)  dist=68.286m  q_err=106.0°
+    rollout  35  pos=(+6.38,+2.23,+5.35)  dist=54.091m  q_err=176.6°
+    rollout  36  pos=(-6.10,-0.80,-6.00)  dist=0.482m  q_err=2.0°
+    rollout  37  pos=(+5.53,+5.92,-1.47)  dist=53.655m  q_err=129.6°
+    rollout  38  pos=(-6.11,+7.11,-7.19)  dist=0.429m  q_err=2.0°
+    rollout  39  pos=(-4.52,+8.05,-0.90)  dist=27.838m  q_err=89.9°
+    rollout  40  pos=(-6.47,+6.70,-1.84)  dist=70.749m  q_err=124.3°
+    rollout  41  pos=(-4.35,-7.48,+6.54)  dist=0.476m  q_err=0.9°
+    rollout  42  pos=(-1.57,-3.32,-0.17)  dist=0.552m  q_err=1.3°
+    rollout  43  pos=(-9.30,+0.85,-3.71)  dist=58.337m  q_err=156.3°
+    rollout  44  pos=(+7.62,+0.59,-2.58)  dist=70.697m  q_err=154.5°
+    rollout  45  pos=(-3.85,-3.99,+1.16)  dist=0.480m  q_err=2.4°
+    rollout  46  pos=(+5.88,+7.96,-6.78)  dist=29.934m  q_err=125.6°
+    rollout  47  pos=(-2.06,-3.34,+8.82)  dist=44.130m  q_err=158.2°
+    rollout  48  pos=(+5.22,-8.39,+2.69)  dist=86.329m  q_err=103.0°
+    rollout  49  pos=(-9.38,-2.26,-2.62)  dist=27.503m  q_err=153.2°
+    rollout  50  pos=(-8.18,+2.79,+2.80)  dist=82.556m  q_err=153.4°
+    rollout  51  pos=(+5.26,+0.44,-6.86)  dist=65.782m  q_err=59.4°
+    rollout  52  pos=(-5.55,+2.06,+4.21)  dist=0.543m  q_err=2.5°
+    rollout  53  pos=(+4.06,+9.65,-4.41)  dist=25.995m  q_err=126.7°
+    rollout  54  pos=(+9.07,+4.63,-7.76)  dist=88.326m  q_err=164.2°
+    rollout  55  pos=(-4.04,+8.69,+4.05)  dist=49.774m  q_err=99.6°
+    rollout  56  pos=(-4.06,+4.73,+0.06)  dist=73.205m  q_err=179.0°
+    rollout  57  pos=(-6.39,+4.93,-4.16)  dist=53.122m  q_err=150.8°
+    rollout  58  pos=(+2.30,+5.55,+6.47)  dist=30.994m  q_err=171.7°
+    rollout  59  pos=(+2.38,-2.88,+4.55)  dist=0.482m  q_err=2.2°
+    rollout  60  pos=(+2.51,-8.19,+4.38)  dist=0.510m  q_err=2.3°
+    rollout  61  pos=(+1.47,-5.74,-8.32)  dist=0.470m  q_err=1.2°
+    rollout  62  pos=(+8.80,-7.90,+2.49)  dist=68.757m  q_err=114.9°
+    rollout  63  pos=(+0.96,-2.50,+3.45)  dist=0.477m  q_err=2.0°
+    rollout  64  pos=(-0.54,+9.12,+3.10)  dist=12.592m  q_err=68.1°
+    rollout  65  pos=(+3.80,-2.32,+7.26)  dist=0.324m  q_err=1.5°
+    rollout  66  pos=(-8.64,+3.06,-5.81)  dist=53.735m  q_err=177.1°
+    rollout  67  pos=(-0.49,-8.52,+7.05)  dist=0.473m  q_err=1.2°
+    rollout  68  pos=(+7.53,-5.13,-4.29)  dist=49.480m  q_err=141.9°
+    rollout  69  pos=(+7.74,-9.41,-7.45)  dist=60.300m  q_err=153.3°
+    rollout  70  pos=(+4.45,-7.46,-0.68)  dist=0.731m  q_err=17.2°
+    rollout  71  pos=(-0.06,+5.70,+6.47)  dist=59.820m  q_err=180.0°
+    rollout  72  pos=(+7.71,+4.34,-3.60)  dist=39.122m  q_err=98.4°
+    rollout  73  pos=(+8.91,-3.31,-6.96)  dist=55.086m  q_err=166.9°
+    rollout  74  pos=(-5.76,+1.18,-6.63)  dist=0.926m  q_err=7.6°
+    rollout  75  pos=(+9.84,+5.52,-7.98)  dist=52.685m  q_err=100.5°
+    rollout  76  pos=(+0.40,+0.16,-7.56)  dist=107.513m  q_err=156.1°
+    rollout  77  pos=(+0.79,-2.26,+1.57)  dist=51.077m  q_err=158.6°
+    rollout  78  pos=(-2.06,+0.85,+3.74)  dist=0.792m  q_err=3.8°
+    rollout  79  pos=(-0.67,+5.52,+6.87)  dist=38.693m  q_err=132.5°
+    rollout  80  pos=(-4.90,+0.26,+7.70)  dist=72.170m  q_err=75.0°
+    rollout  81  pos=(-5.47,-2.58,+4.28)  dist=0.281m  q_err=26.8°
+    rollout  82  pos=(+3.77,+4.47,-9.66)  dist=58.960m  q_err=121.2°
+    rollout  83  pos=(-3.19,-7.91,+9.88)  dist=76.407m  q_err=102.0°
+    rollout  84  pos=(-4.21,-8.45,+2.74)  dist=0.779m  q_err=5.6°
+    rollout  85  pos=(+2.17,-6.18,-0.77)  dist=0.483m  q_err=1.1°
+    rollout  86  pos=(-9.81,+1.91,+2.96)  dist=11.512m  q_err=116.4°
+    rollout  87  pos=(-2.45,+9.70,-7.65)  dist=35.270m  q_err=175.7°
+    rollout  88  pos=(-5.41,-9.75,+0.20)  dist=10.054m  q_err=107.2°
+    rollout  89  pos=(+6.67,-0.09,+1.46)  dist=38.782m  q_err=115.2°
+    rollout  90  pos=(+7.96,+1.19,-3.65)  dist=0.570m  q_err=14.7°
+    rollout  91  pos=(+0.27,+5.91,+8.46)  dist=85.787m  q_err=83.2°
+    rollout  92  pos=(+0.90,+4.51,+7.24)  dist=0.474m  q_err=3.3°
+    rollout  93  pos=(+3.82,-8.65,+4.23)  dist=0.788m  q_err=1.4°
+    rollout  94  pos=(-9.08,-5.00,-1.15)  dist=0.300m  q_err=2.4°
+    rollout  95  pos=(+5.25,+7.40,+7.69)  dist=57.634m  q_err=174.3°
+    rollout  96  pos=(-9.28,-2.85,-0.33)  dist=71.632m  q_err=39.2°
+    rollout  97  pos=(-1.92,-3.30,-0.56)  dist=0.474m  q_err=1.5°
+    rollout  98  pos=(+2.54,-3.66,+2.99)  dist=0.796m  q_err=5.3°
+    rollout  99  pos=(-3.31,+8.61,+5.38)  dist=91.791m  q_err=177.4°
+    rollout 100  pos=(-8.31,+7.26,+6.71)  dist=32.567m  q_err=105.5°
+    rollout 101  pos=(-8.70,-6.98,-6.44)  dist=35.184m  q_err=151.0°
+    rollout 102  pos=(+7.23,+0.72,+3.56)  dist=0.501m  q_err=2.3°
+    rollout 103  pos=(-0.76,-0.32,-3.66)  dist=0.734m  q_err=9.9°
+    rollout 104  pos=(+7.10,-5.59,+9.73)  dist=43.626m  q_err=95.1°
+    rollout 105  pos=(+0.85,-9.72,-2.15)  dist=0.480m  q_err=1.7°
+    rollout 106  pos=(+3.03,-9.34,-0.53)  dist=58.669m  q_err=140.5°
+    rollout 107  pos=(+1.04,-1.35,-6.43)  dist=33.536m  q_err=178.9°
+    rollout 108  pos=(+9.40,+9.37,+9.78)  dist=114.272m  q_err=60.0°
+    rollout 109  pos=(+9.50,-5.36,-1.43)  dist=70.900m  q_err=158.6°
+    rollout 110  pos=(-0.18,-6.84,-4.01)  dist=57.032m  q_err=95.6°
+    rollout 111  pos=(+4.61,-9.43,+5.03)  dist=0.548m  q_err=1.6°
+    rollout 112  pos=(+0.81,-8.36,+3.32)  dist=43.937m  q_err=135.5°
+    rollout 113  pos=(+6.92,-2.49,-4.27)  dist=0.476m  q_err=1.6°
+    rollout 114  pos=(+7.87,+3.81,+0.49)  dist=0.389m  q_err=3.0°
+    rollout 115  pos=(-2.34,-2.35,-3.92)  dist=0.482m  q_err=0.6°
+    rollout 116  pos=(+3.96,+8.24,-7.84)  dist=63.652m  q_err=122.4°
+    rollout 117  pos=(-6.28,+7.40,+5.59)  dist=94.151m  q_err=113.8°
+    rollout 118  pos=(-7.03,-4.33,-5.78)  dist=0.344m  q_err=3.1°
+    rollout 119  pos=(-9.69,+3.53,-8.16)  dist=30.234m  q_err=132.4°
+    rollout 120  pos=(+8.48,+8.11,-9.34)  dist=0.714m  q_err=2.6°
+    rollout 121  pos=(+2.03,+1.32,+7.11)  dist=0.713m  q_err=13.4°
+    rollout 122  pos=(+1.12,-9.11,+5.38)  dist=0.858m  q_err=2.3°
+    rollout 123  pos=(-6.15,+9.92,+1.16)  dist=42.442m  q_err=65.4°
+    rollout 124  pos=(+6.56,-6.65,+5.56)  dist=0.823m  q_err=2.3°
+    rollout 125  pos=(-0.50,-8.87,-0.13)  dist=0.498m  q_err=4.0°
+    rollout 126  pos=(+5.38,+1.27,-4.28)  dist=34.509m  q_err=113.8°
+    rollout 127  pos=(+3.57,-3.47,-6.45)  dist=0.482m  q_err=1.5°
+    rollout 128  pos=(+4.87,-0.83,-8.23)  dist=71.025m  q_err=132.4°
+    rollout 129  pos=(+3.69,+2.35,-6.73)  dist=58.138m  q_err=173.1°
+    rollout 130  pos=(-2.06,-2.01,-1.57)  dist=0.485m  q_err=2.6°
+    rollout 131  pos=(-8.16,-1.04,-3.66)  dist=51.809m  q_err=134.4°
+    rollout 132  pos=(+4.06,+9.81,-4.22)  dist=78.112m  q_err=175.2°
+    rollout 133  pos=(+2.51,+2.45,+7.08)  dist=59.517m  q_err=41.7°
+    rollout 134  pos=(-2.12,-8.62,-6.55)  dist=84.513m  q_err=179.3°
+    rollout 135  pos=(+6.49,+1.48,-3.92)  dist=58.076m  q_err=157.3°
+    rollout 136  pos=(-8.26,-1.13,-8.18)  dist=0.333m  q_err=45.6°
+    rollout 137  pos=(-4.60,+9.41,+3.15)  dist=62.205m  q_err=165.6°
+    rollout 138  pos=(-4.63,-0.76,-9.09)  dist=83.462m  q_err=169.1°
+    rollout 139  pos=(-8.09,-6.41,+6.84)  dist=48.761m  q_err=143.6°
+    rollout 140  pos=(+5.88,-8.33,-3.95)  dist=27.239m  q_err=81.7°
+    rollout 141  pos=(+9.02,+2.58,+5.48)  dist=24.784m  q_err=132.9°
+    rollout 142  pos=(-2.93,-0.10,+6.81)  dist=34.892m  q_err=102.6°
+    rollout 143  pos=(-4.56,+9.16,+0.50)  dist=60.243m  q_err=149.4°
+    rollout 144  pos=(+2.04,-6.33,+4.41)  dist=0.666m  q_err=6.3°
+    rollout 145  pos=(+4.60,-2.75,+0.38)  dist=54.327m  q_err=111.9°
+    rollout 146  pos=(-5.05,-4.66,-7.45)  dist=65.071m  q_err=179.4°
+    rollout 147  pos=(+8.79,-0.42,+9.36)  dist=56.579m  q_err=73.9°
+    rollout 148  pos=(-0.64,+7.84,+1.49)  dist=32.313m  q_err=125.5°
+    rollout 149  pos=(-2.51,+6.45,-0.28)  dist=0.448m  q_err=37.5°
+    rollout 150  pos=(-8.71,+2.41,+3.93)  dist=72.309m  q_err=150.6°
+    rollout 151  pos=(-3.37,-2.46,-7.98)  dist=17.506m  q_err=44.9°
+    rollout 152  pos=(-1.72,+0.56,-9.53)  dist=87.842m  q_err=165.8°
+    rollout 153  pos=(-0.66,+8.02,+7.34)  dist=47.808m  q_err=164.0°
+    rollout 154  pos=(-4.09,+5.03,-8.18)  dist=62.173m  q_err=115.3°
+    rollout 155  pos=(+4.47,-3.03,-6.61)  dist=0.482m  q_err=2.1°
+    rollout 156  pos=(+8.35,-6.98,-8.32)  dist=0.603m  q_err=2.1°
+    rollout 157  pos=(-4.77,+0.97,+2.43)  dist=0.368m  q_err=2.0°
+    rollout 158  pos=(+2.99,-5.22,-2.03)  dist=0.485m  q_err=1.4°
+    rollout 159  pos=(+2.95,-2.31,+9.09)  dist=0.445m  q_err=1.6°
+    rollout 160  pos=(+1.23,+9.94,+7.81)  dist=14.369m  q_err=132.4°
+    rollout 161  pos=(+2.71,-4.97,+5.10)  dist=50.467m  q_err=161.4°
+    rollout 162  pos=(+4.10,-6.76,-4.03)  dist=63.794m  q_err=164.3°
+    rollout 163  pos=(-8.98,-0.79,+8.13)  dist=47.816m  q_err=148.3°
+    rollout 165  pos=(-2.33,+3.34,-3.91)  dist=56.179m  q_err=171.8°
+    rollout 166  pos=(-3.90,-7.85,+5.34)  dist=0.452m  q_err=1.9°
+    rollout 167  pos=(-4.51,+3.91,-4.58)  dist=63.447m  q_err=171.1°
+    rollout 168  pos=(+0.25,-1.55,-4.64)  dist=0.548m  q_err=2.4°
+    rollout 169  pos=(+0.86,-4.90,-5.75)  dist=0.473m  q_err=1.2°
+    rollout 170  pos=(+0.30,+3.46,+6.12)  dist=0.484m  q_err=2.9°
+    rollout 171  pos=(+6.29,+5.04,-5.32)  dist=0.486m  q_err=1.7°
+    rollout 172  pos=(+2.84,-1.83,+2.45)  dist=22.334m  q_err=115.9°
+    rollout 173  pos=(-3.27,+9.73,-0.73)  dist=40.542m  q_err=133.8°
+    rollout 174  pos=(-8.93,-2.06,+1.51)  dist=0.485m  q_err=1.9°
+    rollout 175  pos=(+6.72,+5.62,-9.38)  dist=39.296m  q_err=161.1°
+    rollout 176  pos=(+4.88,-8.09,+7.12)  dist=73.568m  q_err=132.8°
+    rollout 177  pos=(-9.61,+6.49,-8.82)  dist=10.980m  q_err=41.9°
+    rollout 178  pos=(+4.23,+1.27,-8.25)  dist=0.463m  q_err=3.1°
+    rollout 179  pos=(-5.99,-1.24,+9.31)  dist=83.445m  q_err=81.8°
+    rollout 180  pos=(-1.41,-7.61,+8.85)  dist=27.161m  q_err=118.6°
+    rollout 181  pos=(-4.66,+6.51,-4.65)  dist=0.320m  q_err=2.4°
+    rollout 182  pos=(+1.75,+1.52,-4.89)  dist=0.495m  q_err=5.5°
+    rollout 183  pos=(-8.46,-5.77,+5.39)  dist=16.212m  q_err=162.2°
+    rollout 184  pos=(+2.45,-5.14,+1.67)  dist=0.509m  q_err=7.1°
+    rollout 185  pos=(-2.22,+1.93,-7.60)  dist=53.106m  q_err=129.6°
+    rollout 187  pos=(-0.90,+7.02,+7.47)  dist=57.305m  q_err=140.5°
+    rollout 188  pos=(-9.02,+9.13,-6.92)  dist=70.511m  q_err=153.3°
+    rollout 189  pos=(+6.41,-4.29,+6.88)  dist=0.471m  q_err=1.5°
+    rollout 190  pos=(-5.27,-6.05,-0.43)  dist=0.514m  q_err=2.6°
+    rollout 191  pos=(-1.99,-3.95,+8.55)  dist=69.707m  q_err=164.5°
+    rollout 192  pos=(-3.20,+8.63,-2.75)  dist=84.043m  q_err=98.2°
+    rollout 193  pos=(+6.60,+7.66,-4.48)  dist=57.671m  q_err=149.7°
+    rollout 194  pos=(-6.48,-9.69,+4.43)  dist=49.020m  q_err=163.4°
+    rollout 195  pos=(-1.83,+8.11,-7.31)  dist=0.368m  q_err=2.6°
+    rollout 196  pos=(+1.09,-1.55,+9.47)  dist=62.924m  q_err=169.9°
+    rollout 197  pos=(+5.73,+1.38,-6.42)  dist=0.484m  q_err=1.7°
+    rollout 198  pos=(-4.39,+6.39,-2.19)  dist=0.434m  q_err=0.6°
+    rollout 199  pos=(-9.88,-6.70,-0.22)  dist=68.422m  q_err=108.3°
+    rollout 200  pos=(-7.75,-6.96,-2.80)  dist=0.522m  q_err=6.1°
+    rollout 201  pos=(+4.11,-2.98,-7.07)  dist=52.892m  q_err=172.3°
+    rollout 202  pos=(+2.84,-1.66,+1.19)  dist=0.494m  q_err=2.1°
+    rollout 203  pos=(-4.20,+1.38,-7.71)  dist=53.356m  q_err=151.8°
+    rollout 204  pos=(-4.33,-3.56,+1.63)  dist=0.476m  q_err=1.8°
+    rollout 205  pos=(-6.40,+1.00,-5.81)  dist=19.854m  q_err=132.1°
+    rollout 206  pos=(-0.45,-9.04,-4.70)  dist=0.494m  q_err=6.7°
+    rollout 207  pos=(-3.13,+8.75,-8.84)  dist=40.569m  q_err=72.8°
+    rollout 208  pos=(+9.34,-0.72,-3.56)  dist=60.781m  q_err=95.3°
+    rollout 209  pos=(-0.29,+8.19,-3.99)  dist=62.917m  q_err=145.8°
+    rollout 210  pos=(+2.71,-6.04,+8.72)  dist=11.047m  q_err=133.8°
+    rollout 211  pos=(-1.76,-3.87,+6.06)  dist=0.475m  q_err=1.9°
+    rollout 212  pos=(-0.03,-5.52,-1.24)  dist=0.786m  q_err=13.4°
+    rollout 213  pos=(+9.71,+6.54,+1.48)  dist=47.822m  q_err=146.6°
+    rollout 214  pos=(-4.25,+2.86,-3.80)  dist=70.690m  q_err=149.2°
+    rollout 215  pos=(-4.16,-1.88,+5.82)  dist=0.542m  q_err=2.8°
+    rollout 216  pos=(-2.02,+0.34,+3.39)  dist=41.100m  q_err=163.6°
+    rollout 217  pos=(+3.79,-1.11,-0.54)  dist=0.412m  q_err=3.0°
+    rollout 218  pos=(+5.54,-4.26,+1.73)  dist=0.437m  q_err=2.9°
+    rollout 219  pos=(-9.60,+8.34,+0.62)  dist=76.734m  q_err=88.9°
+    rollout 220  pos=(-4.80,-1.31,+0.58)  dist=0.472m  q_err=1.7°
+    rollout 221  pos=(+4.86,+7.04,-0.12)  dist=19.930m  q_err=134.2°
+    rollout 222  pos=(-3.41,+1.13,-3.74)  dist=0.477m  q_err=2.6°
+    rollout 223  pos=(+1.71,-6.21,+8.81)  dist=49.203m  q_err=93.6°
+    rollout 224  pos=(+0.23,-7.62,-0.96)  dist=0.575m  q_err=3.7°
+    rollout 225  pos=(-6.86,-2.52,+4.62)  dist=0.478m  q_err=2.1°
+    rollout 226  pos=(+6.02,+8.82,-2.28)  dist=60.255m  q_err=154.8°
+    rollout 227  pos=(+5.70,+8.19,-3.48)  dist=5.572m  q_err=135.1°
+    rollout 228  pos=(-4.57,+9.51,+3.11)  dist=53.564m  q_err=178.4°
+    rollout 229  pos=(-3.31,+7.12,-0.41)  dist=36.914m  q_err=74.5°
+    rollout 230  pos=(+2.67,-1.66,-8.78)  dist=43.489m  q_err=68.6°
+    rollout 231  pos=(-2.23,+1.47,-7.44)  dist=0.739m  q_err=3.9°
+    rollout 232  pos=(+6.03,+2.21,-0.61)  dist=57.609m  q_err=91.3°
+    rollout 233  pos=(+7.12,+2.57,+5.94)  dist=0.433m  q_err=4.5°
+    rollout 234  pos=(-1.28,+7.35,+5.97)  dist=29.433m  q_err=140.4°
+    rollout 235  pos=(+8.13,+4.45,-6.80)  dist=30.031m  q_err=43.2°
+    rollout 236  pos=(+5.12,-5.66,+4.63)  dist=64.436m  q_err=124.4°
+    rollout 237  pos=(+4.71,+8.86,+6.97)  dist=43.169m  q_err=173.9°
+    rollout 238  pos=(+6.86,-9.39,-2.22)  dist=39.524m  q_err=141.3°
+    rollout 239  pos=(+8.33,-5.42,+6.46)  dist=0.583m  q_err=93.7°
+    rollout 240  pos=(-2.66,+8.60,+6.28)  dist=39.433m  q_err=61.6°
+    rollout 242  pos=(-5.35,-4.03,-1.85)  dist=14.781m  q_err=80.5°
+    rollout 243  pos=(-8.62,+9.83,+2.65)  dist=68.143m  q_err=134.3°
+    rollout 244  pos=(-5.55,-2.48,+4.53)  dist=21.801m  q_err=157.5°
+    rollout 245  pos=(+7.29,-4.77,+8.86)  dist=48.083m  q_err=121.5°
+    rollout 246  pos=(+9.64,+0.49,-6.63)  dist=0.441m  q_err=3.1°
+    rollout 247  pos=(+9.65,-3.80,+9.58)  dist=45.568m  q_err=109.8°
+    rollout 248  pos=(+2.82,-1.21,-3.18)  dist=0.479m  q_err=2.1°
+    rollout 249  pos=(+1.43,-8.39,+6.22)  dist=0.482m  q_err=1.6°
+    rollout 250  pos=(+0.15,-7.07,-2.47)  dist=0.642m  q_err=5.4°
+    rollout 251  pos=(+2.39,-2.97,+6.37)  dist=0.516m  q_err=2.5°
+    rollout 252  pos=(+4.66,-4.52,-2.84)  dist=0.585m  q_err=1.8°
+    rollout 253  pos=(-6.26,-3.74,+3.47)  dist=0.472m  q_err=2.3°
+    rollout 254  pos=(-4.99,-8.49,-6.80)  dist=22.166m  q_err=110.7°
+    rollout 255  pos=(+9.38,+8.06,+8.59)  dist=42.785m  q_err=117.5°
+    rollout 256  pos=(+1.56,+1.12,+8.13)  dist=16.125m  q_err=105.4°
+    rollout 257  pos=(+3.39,+0.54,-4.65)  dist=0.473m  q_err=0.9°
+    rollout 258  pos=(+4.07,-6.83,+5.21)  dist=0.563m  q_err=1.9°
+    rollout 259  pos=(-0.36,+7.09,-0.68)  dist=29.712m  q_err=111.5°
+    rollout 260  pos=(+8.53,-3.67,-9.06)  dist=113.465m  q_err=177.9°
+    rollout 261  pos=(+0.97,+6.36,+5.84)  dist=64.349m  q_err=141.1°
+    rollout 262  pos=(+0.42,+9.30,+0.61)  dist=41.178m  q_err=143.1°
+    rollout 263  pos=(-2.93,-5.85,+1.82)  dist=0.479m  q_err=1.9°
+    rollout 264  pos=(+2.59,-9.34,-4.77)  dist=0.801m  q_err=1.7°
+    rollout 265  pos=(+5.12,+4.31,+2.68)  dist=19.774m  q_err=144.3°
+    rollout 266  pos=(+9.40,+7.61,+2.94)  dist=50.981m  q_err=87.2°
+    rollout 267  pos=(-9.02,+7.63,+5.04)  dist=87.126m  q_err=86.2°
+    rollout 268  pos=(-9.45,-3.69,-8.30)  dist=64.596m  q_err=95.9°
+    rollout 269  pos=(-1.40,-6.49,-1.78)  dist=0.490m  q_err=1.6°
+    rollout 270  pos=(+7.86,+7.01,-2.87)  dist=48.285m  q_err=170.9°
+    rollout 271  pos=(+2.23,-4.47,-1.52)  dist=0.306m  q_err=1.8°
+    rollout 272  pos=(+5.50,-8.29,+6.62)  dist=64.174m  q_err=116.1°
+    rollout 273  pos=(-4.91,-2.52,-0.23)  dist=0.425m  q_err=8.1°
+    rollout 274  pos=(+2.76,+9.73,+2.68)  dist=73.545m  q_err=49.0°
+    rollout 275  pos=(-2.30,+8.93,+7.89)  dist=86.409m  q_err=61.7°
+    rollout 276  pos=(-3.79,+7.70,-6.30)  dist=93.583m  q_err=160.8°
+    rollout 277  pos=(-0.99,+7.77,-3.31)  dist=52.202m  q_err=158.1°
+    rollout 278  pos=(-7.98,-0.11,-6.62)  dist=104.326m  q_err=80.5°
+    rollout 279  pos=(+0.61,-7.16,-4.64)  dist=0.333m  q_err=20.5°
+    rollout 280  pos=(+4.29,-9.61,+7.62)  dist=94.225m  q_err=92.0°
+    rollout 281  pos=(+2.26,-3.93,+9.88)  dist=48.378m  q_err=12.9°
+    rollout 282  pos=(+9.68,+2.86,-6.30)  dist=66.030m  q_err=153.9°
+    rollout 283  pos=(+3.92,-2.20,+8.38)  dist=0.838m  q_err=1.8°
+    rollout 284  pos=(-5.43,+9.29,+4.72)  dist=59.454m  q_err=175.3°
+    rollout 285  pos=(+1.37,-5.41,-8.28)  dist=70.723m  q_err=86.1°
+    rollout 286  pos=(-7.20,-6.27,+8.08)  dist=44.310m  q_err=165.2°
+    rollout 287  pos=(+1.27,+4.28,+6.92)  dist=65.997m  q_err=115.9°
+    rollout 288  pos=(-3.54,+2.44,-8.31)  dist=31.979m  q_err=157.5°
+    rollout 289  pos=(-5.40,+9.09,-0.99)  dist=67.328m  q_err=148.5°
+    rollout 290  pos=(+2.97,-2.29,+2.99)  dist=0.480m  q_err=1.3°
+    rollout 291  pos=(-8.53,+0.82,-4.92)  dist=61.719m  q_err=93.3°
+    rollout 292  pos=(-6.14,+2.04,+7.31)  dist=47.151m  q_err=173.6°
+    rollout 293  pos=(-7.56,+9.06,-8.96)  dist=57.432m  q_err=171.0°
+    rollout 294  pos=(-4.94,-7.21,-1.44)  dist=39.494m  q_err=118.4°
+    rollout 295  pos=(+7.50,-8.64,-0.19)  dist=0.222m  q_err=8.9°
+    rollout 296  pos=(-6.25,-0.75,-3.80)  dist=46.792m  q_err=151.0°
+    rollout 297  pos=(+0.55,+8.92,+0.15)  dist=59.977m  q_err=99.4°
+    rollout 298  pos=(+0.52,-4.18,-4.79)  dist=0.486m  q_err=2.0°
+    rollout 299  pos=(+0.36,-4.44,-8.51)  dist=0.655m  q_err=8.1°
+    rollout 300  pos=(+1.63,+4.10,-4.46)  dist=54.444m  q_err=179.0°
+    rollout 301  pos=(+0.33,-1.81,+3.16)  dist=0.768m  q_err=2.6°
+    rollout 302  pos=(+6.14,+1.14,+9.39)  dist=32.035m  q_err=133.4°
+    rollout 303  pos=(+8.67,+1.01,+6.11)  dist=62.444m  q_err=158.8°
+    rollout 304  pos=(-4.68,-4.15,+5.32)  dist=0.555m  q_err=2.2°
+    rollout 305  pos=(-8.73,-0.79,+5.56)  dist=34.901m  q_err=152.1°
+    rollout 306  pos=(-7.95,+0.24,+8.22)  dist=8.227m  q_err=158.4°
+    rollout 307  pos=(+3.52,-3.56,+6.16)  dist=49.006m  q_err=127.2°
+    rollout 308  pos=(-4.49,+2.36,-6.82)  dist=47.658m  q_err=109.3°
+    rollout 309  pos=(-8.37,-7.84,+8.00)  dist=86.177m  q_err=136.4°
+    rollout 310  pos=(-0.10,+6.05,+1.08)  dist=34.122m  q_err=136.5°
+    rollout 311  pos=(+7.58,-8.22,-5.46)  dist=69.537m  q_err=162.0°
+    rollout 312  pos=(-5.04,-5.50,-5.55)  dist=0.478m  q_err=0.6°
+    rollout 313  pos=(-9.47,-7.76,+3.85)  dist=0.712m  q_err=9.9°
+    rollout 314  pos=(-3.20,-0.46,+9.01)  dist=60.107m  q_err=157.2°
+    rollout 315  pos=(-3.14,-9.22,-2.28)  dist=0.431m  q_err=5.2°
+    rollout 316  pos=(-6.56,-5.48,+8.26)  dist=45.638m  q_err=163.6°
+    rollout 317  pos=(+4.16,+9.45,-3.04)  dist=49.835m  q_err=127.0°
+    rollout 318  pos=(+2.54,+2.53,-6.81)  dist=0.473m  q_err=3.3°
+    rollout 319  pos=(+6.27,-8.61,+3.42)  dist=30.002m  q_err=178.5°
+    rollout 320  pos=(+4.51,+4.28,-6.97)  dist=28.499m  q_err=97.3°
+    rollout 321  pos=(+3.19,-1.28,-3.21)  dist=0.470m  q_err=1.0°
+    rollout 322  pos=(+1.01,+8.51,+0.97)  dist=57.640m  q_err=175.7°
+    rollout 323  pos=(-9.17,+4.32,-2.75)  dist=13.743m  q_err=131.6°
+    rollout 324  pos=(-2.57,-7.66,+1.11)  dist=0.475m  q_err=2.0°
+    rollout 325  pos=(+4.81,-9.38,-2.44)  dist=0.488m  q_err=1.5°
+    rollout 326  pos=(-0.90,+4.64,+6.10)  dist=0.608m  q_err=5.2°
+    rollout 327  pos=(-8.66,-6.15,+9.54)  dist=32.463m  q_err=143.3°
+    rollout 328  pos=(-6.62,-0.39,+1.65)  dist=0.483m  q_err=2.3°
+    rollout 329  pos=(-4.24,+3.98,-3.52)  dist=25.133m  q_err=142.2°
+    rollout 330  pos=(+2.23,-6.62,+3.01)  dist=0.498m  q_err=2.0°
+    rollout 331  pos=(-0.31,+5.63,-2.04)  dist=60.183m  q_err=170.8°
+    rollout 332  pos=(+6.53,+2.45,-7.32)  dist=19.785m  q_err=130.8°
+    rollout 333  pos=(+3.63,-3.64,+5.76)  dist=71.813m  q_err=142.1°
+    rollout 334  pos=(-7.74,-7.90,-7.43)  dist=39.983m  q_err=89.1°
+    rollout 335  pos=(-7.73,-4.27,-4.86)  dist=61.859m  q_err=177.5°
+    rollout 336  pos=(+0.36,-3.10,+2.62)  dist=0.462m  q_err=8.4°
+    rollout 337  pos=(-9.67,+5.88,+9.27)  dist=49.602m  q_err=42.0°
+    rollout 338  pos=(+5.55,+3.88,-5.23)  dist=91.930m  q_err=160.5°
+    rollout 339  pos=(-4.28,-7.76,+9.54)  dist=6.663m  q_err=35.5°
+    rollout 340  pos=(-5.41,+2.46,+7.10)  dist=40.477m  q_err=67.8°
+    rollout 341  pos=(-2.59,+5.58,+9.63)  dist=26.979m  q_err=78.2°
+    rollout 342  pos=(+6.86,-8.13,-9.90)  dist=0.555m  q_err=7.1°
+    rollout 343  pos=(-5.66,-6.52,-7.53)  dist=119.732m  q_err=124.2°
+    rollout 344  pos=(-6.34,+5.58,-8.47)  dist=74.892m  q_err=171.4°
+    rollout 345  pos=(-6.64,+1.52,+6.59)  dist=33.504m  q_err=160.7°
+    rollout 346  pos=(+9.86,-0.90,-3.93)  dist=71.600m  q_err=158.5°
+    rollout 347  pos=(-4.95,-4.48,+8.25)  dist=66.050m  q_err=114.8°
+    rollout 348  pos=(-0.42,+5.84,+5.94)  dist=78.789m  q_err=167.1°
+    rollout 349  pos=(-2.19,-1.98,-7.46)  dist=113.164m  q_err=110.5°
+    rollout 350  pos=(+2.63,+7.77,+8.90)  dist=14.573m  q_err=132.0°
+    rollout 351  pos=(-4.49,+4.17,+6.12)  dist=0.290m  q_err=2.4°
+    rollout 352  pos=(-4.00,+1.70,+0.13)  dist=50.747m  q_err=170.4°
+    rollout 353  pos=(+0.56,+9.94,-9.17)  dist=38.560m  q_err=150.9°
+    rollout 354  pos=(-3.54,+5.94,+3.35)  dist=36.902m  q_err=171.3°
+    rollout 355  pos=(-8.26,-5.58,-2.46)  dist=0.488m  q_err=2.5°
+    rollout 356  pos=(-8.44,-4.60,-5.47)  dist=18.850m  q_err=107.6°
+    rollout 357  pos=(+8.87,-8.90,-3.89)  dist=103.753m  q_err=168.2°
+    rollout 358  pos=(+7.26,-0.40,-8.87)  dist=48.294m  q_err=148.0°
+    rollout 359  pos=(+7.56,+0.26,-1.33)  dist=0.482m  q_err=2.4°
+    rollout 360  pos=(+3.33,-8.72,+7.07)  dist=61.986m  q_err=155.4°
+    rollout 361  pos=(+3.68,-6.75,-2.12)  dist=0.457m  q_err=1.3°
+    rollout 362  pos=(+6.25,-9.34,+5.43)  dist=56.365m  q_err=157.1°
+    rollout 363  pos=(+6.50,+2.93,+6.74)  dist=0.529m  q_err=2.9°
+    rollout 364  pos=(+2.44,-1.82,-1.40)  dist=0.484m  q_err=1.7°
+    rollout 365  pos=(+6.81,-5.21,-3.42)  dist=0.319m  q_err=2.4°
+    rollout 366  pos=(+1.02,-8.70,-1.71)  dist=69.094m  q_err=135.0°
+    rollout 367  pos=(-5.94,+8.29,+7.93)  dist=43.024m  q_err=93.5°
+    rollout 368  pos=(-2.74,-5.75,+5.23)  dist=24.822m  q_err=171.6°
+    rollout 369  pos=(+2.70,+8.59,-2.74)  dist=66.850m  q_err=58.5°
+    rollout 370  pos=(+1.00,+1.62,+4.94)  dist=0.436m  q_err=5.9°
+    rollout 371  pos=(-0.28,+8.06,+5.05)  dist=10.029m  q_err=133.0°
+    rollout 372  pos=(-4.60,+1.44,+4.11)  dist=0.465m  q_err=2.0°
+    rollout 373  pos=(+4.61,-7.51,-5.95)  dist=67.370m  q_err=78.1°
+    rollout 374  pos=(-3.04,-8.55,+4.08)  dist=44.519m  q_err=57.9°
+    rollout 375  pos=(-0.25,-1.88,-1.10)  dist=0.480m  q_err=1.9°
+    rollout 376  pos=(-0.10,+4.19,-9.06)  dist=22.017m  q_err=145.8°
+    rollout 377  pos=(+0.72,-3.07,+2.43)  dist=0.487m  q_err=2.0°
+    rollout 378  pos=(-0.18,-4.45,-7.24)  dist=0.510m  q_err=1.6°
+    rollout 379  pos=(+1.70,+0.25,-8.98)  dist=78.896m  q_err=52.5°
+    rollout 380  pos=(-9.89,+0.13,+2.56)  dist=17.196m  q_err=44.9°
+    rollout 381  pos=(-7.98,+7.17,+6.65)  dist=96.784m  q_err=156.8°
+    rollout 382  pos=(+8.82,-4.24,-4.16)  dist=0.472m  q_err=2.2°
+    rollout 383  pos=(+1.78,+8.84,-6.96)  dist=99.753m  q_err=176.0°
+    rollout 384  pos=(-4.32,-2.14,+8.90)  dist=60.017m  q_err=113.6°
+    rollout 385  pos=(-2.80,+0.82,-9.84)  dist=0.485m  q_err=2.1°
+    rollout 386  pos=(-4.16,+5.22,-0.06)  dist=88.866m  q_err=162.3°
+    rollout 387  pos=(-3.46,-5.98,-9.25)  dist=81.650m  q_err=91.6°
+    rollout 388  pos=(-7.09,+6.99,+6.01)  dist=50.019m  q_err=165.3°
+    rollout 389  pos=(+6.29,-0.46,-1.76)  dist=0.334m  q_err=2.3°
+    rollout 390  pos=(-4.08,-3.38,+6.07)  dist=0.439m  q_err=6.0°
+    rollout 391  pos=(-3.30,+7.78,+1.35)  dist=83.069m  q_err=125.5°
+    rollout 392  pos=(-1.36,+7.49,+7.99)  dist=39.345m  q_err=75.7°
+    rollout 393  pos=(-7.50,+8.22,+5.26)  dist=54.927m  q_err=161.4°
+    rollout 394  pos=(-3.77,+8.17,+9.54)  dist=42.459m  q_err=67.8°
+    rollout 395  pos=(-1.25,-4.47,-4.24)  dist=0.799m  q_err=3.7°
+    rollout 396  pos=(+3.47,-9.89,+8.82)  dist=37.436m  q_err=165.8°
+    rollout 397  pos=(+1.74,+6.94,+7.78)  dist=0.429m  q_err=2.3°
+    rollout 398  pos=(+7.41,+3.05,-5.20)  dist=82.157m  q_err=144.9°
+    rollout 399  pos=(-2.20,+0.52,+3.50)  dist=0.484m  q_err=1.6°
+    rollout 400  pos=(-6.86,-6.34,-8.11)  dist=45.071m  q_err=122.7°
+    rollout 401  pos=(+1.71,+9.10,-0.80)  dist=63.572m  q_err=106.2°
+    rollout 402  pos=(-9.13,+5.68,-4.35)  dist=42.254m  q_err=80.6°
+    rollout 403  pos=(+5.63,+3.79,+7.07)  dist=61.701m  q_err=147.5°
+    rollout 404  pos=(-6.42,+6.44,+4.11)  dist=1.085m  q_err=4.9°
+    rollout 405  pos=(-5.57,+3.37,+2.54)  dist=21.855m  q_err=95.6°
+    rollout 406  pos=(+5.96,+6.64,+3.19)  dist=17.313m  q_err=137.8°
+    rollout 407  pos=(-1.36,-3.98,-4.38)  dist=1.643m  q_err=27.4°
+    rollout 408  pos=(-8.59,-7.59,-0.88)  dist=0.456m  q_err=0.6°
+    rollout 409  pos=(-3.90,+3.71,+2.89)  dist=49.483m  q_err=163.9°
+    rollout 410  pos=(-6.31,+1.77,-3.46)  dist=0.565m  q_err=2.7°
+    rollout 411  pos=(-2.72,+0.23,+9.63)  dist=53.932m  q_err=111.0°
+    rollout 412  pos=(-0.55,-0.92,+9.38)  dist=30.731m  q_err=176.4°
+    rollout 413  pos=(+5.87,+4.38,-9.66)  dist=50.997m  q_err=153.1°
+    rollout 414  pos=(+1.44,+5.75,-8.91)  dist=32.712m  q_err=76.2°
+    rollout 415  pos=(+1.58,-4.88,-1.30)  dist=0.473m  q_err=2.4°
+    rollout 416  pos=(+5.83,+0.01,-5.50)  dist=0.678m  q_err=9.1°
+    rollout 417  pos=(-3.82,-5.13,-7.48)  dist=72.408m  q_err=170.9°
+    rollout 418  pos=(+2.80,-1.88,+8.00)  dist=0.345m  q_err=2.9°
+    rollout 419  pos=(-0.22,+2.24,-9.29)  dist=47.533m  q_err=70.9°
+    rollout 420  pos=(-3.21,-8.08,+7.89)  dist=24.833m  q_err=143.7°
+    rollout 421  pos=(-5.27,-9.12,+9.75)  dist=76.195m  q_err=159.0°
+    rollout 422  pos=(-0.34,-5.51,+1.82)  dist=37.274m  q_err=164.1°
+    rollout 423  pos=(-2.01,-3.97,+3.14)  dist=0.772m  q_err=2.1°
+    rollout 424  pos=(+6.54,+9.84,-3.86)  dist=45.857m  q_err=116.1°
+    rollout 425  pos=(-1.57,+8.50,+3.37)  dist=96.327m  q_err=47.6°
+    rollout 426  pos=(+6.05,-3.70,+2.36)  dist=0.546m  q_err=2.4°
+    rollout 427  pos=(-4.23,-8.58,-4.47)  dist=0.245m  q_err=3.8°
+    rollout 428  pos=(+3.79,-8.21,-0.28)  dist=0.522m  q_err=1.3°
+    rollout 429  pos=(-9.39,+4.51,-4.74)  dist=43.654m  q_err=147.1°
+    rollout 430  pos=(-3.07,-5.95,-6.25)  dist=28.309m  q_err=159.0°
+    rollout 431  pos=(+8.89,-4.73,-5.27)  dist=43.519m  q_err=47.7°
+    rollout 432  pos=(-9.01,+5.00,+7.01)  dist=77.231m  q_err=45.2°
+    rollout 433  pos=(+9.14,-9.53,+0.95)  dist=0.472m  q_err=1.5°
+    rollout 434  pos=(+8.72,+6.46,-0.96)  dist=102.528m  q_err=133.0°
+    rollout 435  pos=(-8.03,+9.64,-6.85)  dist=44.355m  q_err=139.2°
+    rollout 436  pos=(-1.30,+7.64,+5.28)  dist=67.481m  q_err=111.0°
+    rollout 437  pos=(+8.18,+1.10,-8.89)  dist=61.688m  q_err=158.5°
+    rollout 438  pos=(-1.62,+4.11,+0.38)  dist=0.660m  q_err=2.5°
+    rollout 439  pos=(+2.36,+4.46,-4.42)  dist=69.018m  q_err=48.4°
+    rollout 440  pos=(-9.42,+0.31,+4.50)  dist=71.470m  q_err=124.1°
+    rollout 441  pos=(-1.88,+0.10,+4.39)  dist=30.261m  q_err=86.6°
+    rollout 442  pos=(+5.19,+2.89,+2.74)  dist=0.536m  q_err=2.4°
+    rollout 443  pos=(-8.04,-9.61,-3.08)  dist=45.078m  q_err=48.0°
+    rollout 444  pos=(-4.93,-0.62,-7.17)  dist=60.112m  q_err=110.1°
+    rollout 445  pos=(-7.28,-6.46,+4.53)  dist=37.434m  q_err=179.7°
+    rollout 446  pos=(-6.96,-4.84,-5.68)  dist=0.475m  q_err=2.5°
+    rollout 447  pos=(+9.89,+6.89,-1.42)  dist=37.453m  q_err=157.4°
+    rollout 448  pos=(+3.85,-7.56,+5.65)  dist=11.324m  q_err=144.1°
+    rollout 449  pos=(+3.56,+3.17,+5.61)  dist=59.784m  q_err=80.8°
+    rollout 450  pos=(-2.36,-7.05,-6.89)  dist=56.081m  q_err=162.3°
+    rollout 451  pos=(-1.59,-5.23,+9.48)  dist=36.711m  q_err=16.7°
+    rollout 452  pos=(+5.37,+6.95,-3.05)  dist=47.934m  q_err=93.9°
+    rollout 453  pos=(-0.99,-2.01,-1.84)  dist=0.525m  q_err=7.9°
+    rollout 454  pos=(-1.55,-9.53,+1.59)  dist=0.440m  q_err=0.7°
+    rollout 455  pos=(-4.78,+8.92,-0.62)  dist=38.802m  q_err=83.0°
+    rollout 456  pos=(+4.04,+7.18,-6.38)  dist=37.563m  q_err=78.6°
+    rollout 457  pos=(-8.58,+0.20,+6.60)  dist=63.448m  q_err=157.4°
+    rollout 458  pos=(+6.85,+5.60,+5.54)  dist=50.988m  q_err=148.3°
+    rollout 459  pos=(+6.31,+8.62,+4.41)  dist=47.289m  q_err=71.6°
+    rollout 460  pos=(+3.53,-6.41,+2.09)  dist=61.936m  q_err=96.9°
+    rollout 461  pos=(+5.69,-7.73,+0.27)  dist=36.881m  q_err=163.3°
+    rollout 462  pos=(+7.03,-1.41,-8.61)  dist=0.394m  q_err=2.6°
+    rollout 463  pos=(+5.28,+2.07,-4.42)  dist=0.477m  q_err=1.5°
+    rollout 464  pos=(-1.13,+7.47,+7.84)  dist=41.057m  q_err=64.0°
+    rollout 465  pos=(-8.64,+4.98,+3.90)  dist=83.455m  q_err=99.8°
+    rollout 466  pos=(+1.78,+9.34,-1.56)  dist=29.973m  q_err=165.0°
+    rollout 467  pos=(-5.29,-7.86,-4.70)  dist=0.344m  q_err=2.8°
+    rollout 468  pos=(+4.04,+7.37,+8.68)  dist=23.801m  q_err=85.6°
+    rollout 469  pos=(-5.22,+5.56,+2.49)  dist=0.434m  q_err=2.3°
+    rollout 470  pos=(-1.45,-7.68,+0.88)  dist=0.479m  q_err=2.0°
+    rollout 471  pos=(+1.33,-0.90,+2.88)  dist=0.475m  q_err=6.3°
+    rollout 472  pos=(-2.15,+3.64,-2.50)  dist=0.480m  q_err=2.0°
+    rollout 473  pos=(-4.93,-4.90,-7.04)  dist=86.819m  q_err=96.5°
+    rollout 474  pos=(-0.96,-2.49,+2.98)  dist=1.003m  q_err=17.5°
+    rollout 475  pos=(+6.73,+0.25,-5.70)  dist=0.485m  q_err=1.5°
+    rollout 476  pos=(+5.33,+1.18,+7.94)  dist=61.443m  q_err=148.5°
+    rollout 477  pos=(+1.26,-7.81,-0.57)  dist=0.468m  q_err=6.5°
+    rollout 478  pos=(-0.05,+4.74,+2.80)  dist=49.322m  q_err=154.7°
+    rollout 479  pos=(-3.16,+3.99,+8.14)  dist=0.452m  q_err=0.7°
+    rollout 480  pos=(+4.58,+3.89,+2.12)  dist=0.683m  q_err=4.0°
+    rollout 481  pos=(-3.74,-5.95,+9.34)  dist=64.403m  q_err=67.6°
+    rollout 482  pos=(+8.79,-7.30,-5.49)  dist=23.017m  q_err=163.2°
+    rollout 483  pos=(-2.00,-1.82,+4.55)  dist=0.898m  q_err=13.7°
+    rollout 484  pos=(-5.58,-8.70,+6.53)  dist=35.268m  q_err=133.9°
+    rollout 485  pos=(+7.22,-7.07,+1.40)  dist=0.469m  q_err=2.1°
+    rollout 486  pos=(-5.03,-0.64,+4.51)  dist=0.457m  q_err=2.8°
+    rollout 487  pos=(+6.07,+6.59,-5.41)  dist=69.444m  q_err=143.1°
+    rollout 488  pos=(-2.73,+3.73,-4.86)  dist=2.398m  q_err=150.5°
+    rollout 489  pos=(+4.42,+0.79,-0.90)  dist=0.535m  q_err=2.3°
+    rollout 490  pos=(-4.15,+7.68,+3.96)  dist=43.932m  q_err=111.3°
+    rollout 491  pos=(-9.38,-3.00,+4.69)  dist=36.947m  q_err=155.2°
+    rollout 492  pos=(+8.33,+4.44,-8.66)  dist=52.317m  q_err=71.6°
+    rollout 493  pos=(+5.13,+7.06,-7.64)  dist=51.930m  q_err=90.8°
+    rollout 494  pos=(+4.31,+5.35,-9.47)  dist=59.675m  q_err=144.7°
+    rollout 495  pos=(+4.34,+6.43,-7.31)  dist=27.318m  q_err=100.8°
+    rollout 496  pos=(+1.60,-8.89,+6.18)  dist=35.008m  q_err=143.2°
+    rollout 497  pos=(+5.11,+6.58,+1.70)  dist=10.411m  q_err=135.0°
+    rollout 498  pos=(+2.96,-6.04,-9.67)  dist=56.894m  q_err=39.8°
+    rollout 499  pos=(-5.55,-2.88,+2.91)  dist=0.839m  q_err=16.6°
+------------------------------------------------------------
+
+Results saved to ./outputs/13d_comparison_safety/comparison_results.json
+Metrics plot saved to ./outputs/13d_comparison_safety/metrics_comparison.png
+
+All outputs saved to ./outputs/13d_comparison_safety
+Done.
+COMPARE_13D_DONE

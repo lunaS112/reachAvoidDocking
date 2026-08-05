@@ -214,3 +214,8 @@ deepReachMPCReachAvoid/data/
 deepReachMPCReachAvoid/outputs/
 deepReachMPCReachAvoid/outputs_Old/
 codebase_paper_context.md
+# Large ground truth files (>100MB)
+gridBased10DImplementation/artifacts/ground_truth/*.npy
+gridBased13DImplementation/artifacts/ground_truth/*.npy
+gridBased6DImplementation/artifacts/ground_truth/*.npy
+*.npy

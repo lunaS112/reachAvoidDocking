@@ -163,6 +163,15 @@ def build_controller(name, args):
             architecture=args.rl_architecture,
             activation=args.rl_activation,
         )
+    elif name == 'hybrid_learning':
+        from utils.controllers.hybrid_learning_controller import HybridLearningController
+        return HybridLearningController(
+            checkpoint_path=args.hybrid_learning_checkpoint_path,
+            dt=args.dt,
+            max_sim_time=args.max_sim_time,
+            device=args.device,
+            cache_dir=getattr(args, 'grid_cache_dir', None),
+        )
     else:
         raise ValueError(f"Unknown controller: {name}")
 
@@ -220,11 +229,16 @@ def sample_initial_conditions(dynamics, n, device='cuda', seed=42,
     """
     rng = np.random.RandomState(seed)
 
-    # Intersect SAMPLING_STATE_RANGE with the dynamics' state_range_
-    dyn_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
-    dyn_hi = dynamics.state_range_[:, 1].cpu().numpy().astype(np.float64)
-    state_lo = np.maximum(dyn_lo, SAMPLING_STATE_RANGE[:, 0])
-    state_hi = np.minimum(dyn_hi, SAMPLING_STATE_RANGE[:, 1])
+    # Intersect SAMPLING_STATE_RANGE with the dynamics' state_range_ (if available)
+    if hasattr(dynamics, 'state_range_') and dynamics.state_range_ is not None:
+        dyn_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
+        dyn_hi = dynamics.state_range_[:, 1].cpu().numpy().astype(np.float64)
+        state_lo = np.maximum(dyn_lo, SAMPLING_STATE_RANGE[:, 0])
+        state_hi = np.minimum(dyn_hi, SAMPLING_STATE_RANGE[:, 1])
+    else:
+        # Fallback: use SAMPLING_STATE_RANGE directly (for grid-based dynamics proxy)
+        state_lo = SAMPLING_STATE_RANGE[:, 0]
+        state_hi = SAMPLING_STATE_RANGE[:, 1]
 
     samples = []
     attempts = 0
@@ -745,6 +759,10 @@ def run_single(args):
         if not args.vanilla_checkpoint_path or not os.path.exists(args.vanilla_checkpoint_path):
             print(f"ERROR: vanilla checkpoint not found: {args.vanilla_checkpoint_path}")
             return
+    elif ctrl_type == 'hybrid_learning':
+        if not args.hybrid_learning_checkpoint_path or not os.path.exists(args.hybrid_learning_checkpoint_path):
+            print(f"ERROR: hybrid_learning checkpoint not found: {args.hybrid_learning_checkpoint_path}")
+            return
     elif ctrl_type != 'grid_based' and not os.path.exists(args.checkpoint_path):
         print(f"ERROR: checkpoint not found: {args.checkpoint_path}")
         return
@@ -933,25 +951,32 @@ def run_compare(args):
     """Run N rollouts per controller and compare metrics."""
     os.makedirs(args.output_dir, exist_ok=True)
 
-    if not os.path.exists(args.checkpoint_path):
+    # Only need checkpoint if running non-grid-based controllers
+    needs_checkpoint = any(c != 'grid_based' for c in args.controllers)
+
+    if needs_checkpoint and not os.path.exists(args.checkpoint_path):
         print(f"ERROR: checkpoint not found: {args.checkpoint_path}")
         return
 
-    # Load dynamics for IC sampling
-    dynamics = load_dynamics(args.checkpoint_path)
+    # Load dynamics for IC sampling (only if needed)
+    dynamics = load_dynamics(args.checkpoint_path) if needs_checkpoint else None
 
-    # Log feasibility bounds for diagnostics
-    v_fb, omega_fb = compute_feasibility_bounds(dynamics, args.tMax)
-    print(f"\nFeasibility bounds (2/3 tMax budget): "
-          f"v_max={v_fb:.3f} m/s  omega_max={omega_fb:.4f} rad/s")
-    if SAMPLING_STATE_RANGE[2, 1] > v_fb or SAMPLING_STATE_RANGE[5, 1] > omega_fb:
-        print("  WARNING: SAMPLING_STATE_RANGE exceeds feasibility bounds")
+    # Log feasibility bounds for diagnostics (only for checkpoint-based controllers)
+    if dynamics is not None:
+        v_fb, omega_fb = compute_feasibility_bounds(dynamics, args.tMax)
+        print(f"\nFeasibility bounds (2/3 tMax budget): "
+              f"v_max={v_fb:.3f} m/s  omega_max={omega_fb:.4f} rad/s")
+        if SAMPLING_STATE_RANGE[2, 1] > v_fb or SAMPLING_STATE_RANGE[5, 1] > omega_fb:
+            print("  WARNING: SAMPLING_STATE_RANGE exceeds feasibility bounds")
 
     # Pre-build grid controller if present (needed for IC filtering)
     grid_controller = None
     if 'grid_based' in args.controllers:
         print("\nBuilding grid-based controller (for IC filtering & rollouts)...")
         grid_controller = build_controller('grid_based', args)
+        # Use grid controller's dynamics proxy if checkpoint not available
+        if dynamics is None:
+            dynamics = grid_controller.dynamics
 
     # Build avoid-BRT filter: reject ICs doomed to collide even under
     # optimal avoidance control.
@@ -984,7 +1009,7 @@ def run_compare(args):
             states)
         print(f"  Grid-based BRAT filter ready — ICs will satisfy "
               f"max(V_4D, V_2D) <= 0 at t={args.max_sim_time}s horizon")
-    elif getattr(args, 'sampling_method', 'uniform') == 'brat':
+    elif getattr(args, 'sampling_method', 'uniform') == 'brat' and dynamics is not None:
         print(f"Loading model for BRAT IC filtering (tMax={args.tMax}) ...")
         query_ctrl = BRATController(
             checkpoint_path=args.checkpoint_path,
@@ -1360,6 +1385,13 @@ def _add_shared_args(parser):
                         help='Path to vanilla DeepReach checkpoint for '
                              'vanilla_brat controller (no MPC supervision, '
                              'no refinement, no exact boundary)')
+    # Hybrid-learning controller (cmpt720_hybrid_hj 4D translational net + this
+    # project's 2D rotational grid; see utils/controllers/hybrid_learning_controller.py)
+    parser.add_argument('--hybrid_learning_checkpoint_path', type=str, default=None,
+                        help='Path to a cmpt720_hybrid_hj docking4d_translational '
+                             'checkpoint (e.g. .../deepreach_hybrid_sampled/'
+                             'docking4d_hybrid/best_model.pth) for the '
+                             'hybrid_learning controller')
 
 
 def main():
@@ -1380,7 +1412,7 @@ def main():
     _add_shared_args(sp_single)
     sp_single.add_argument(
         '--controller', type=str, default='brat',
-        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
+        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl', 'hybrid_learning'],
         help='Controller type to run')
     # Initial state — either as a single 6-element list or individual components
     sp_single.add_argument('--initial_state', type=float, nargs=6,
@@ -1409,7 +1441,7 @@ def main():
     sp_compare.add_argument(
         '--controllers', type=str, nargs='+',
         default=['brat', 'mpc', 'mpc_terminal'],
-        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl'],
+        choices=['brat', 'vanilla_brat', 'mpc', 'mpc_terminal', 'grid_based', 'rl', 'hybrid_learning'],
         help='Controllers to compare')
     sp_compare.add_argument('--n_rollouts', type=int, default=50,
                             help='Number of rollouts per controller')

@@ -1,0 +1,23 @@
+Step 2: Run Grid-Based HJ Ground Truth @ tMax=17.0, dt=0.5
+
+Building grid-based controller (for IC filtering & rollouts)...
+  JAX backend: gpu  devices: [CudaDevice(id=0)]
+Loading cached grid values  (fingerprint=4a920e85f2469820) ...
+  Cache loaded successfully.
+  Converting value arrays to numpy ...
+  Avoid checkpoint not found at 'runs/Docking6D_RA_avoid', skipping avoid-BRT filter.
+  Grid-based BRAT filter ready — ICs will satisfy max(V_4D, V_2D) <= 0 at t=60.0s horizon
+
+Sampling 500 initial conditions (seed=19, method=grid_brat) ...
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1462, in <module>
+    main()
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1458, in main
+    run_compare(args)
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1023, in run_compare
+    ics = sample_initial_conditions(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 233, in sample_initial_conditions
+    dyn_lo = dynamics.state_range_[:, 0].cpu().numpy().astype(np.float64)
+             ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: '_DynamicsProxy' object has no attribute 'state_range_'

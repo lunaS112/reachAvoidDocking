@@ -1,0 +1,3 @@
+Step 2: Run Grid-Based HJ Ground Truth @ tMax=17.0, dt=0.5
+ERROR: checkpoint not found: runs/Docking6D_RA_14sec/training/checkpoints/model_epoch_145000.pth
+GRID_17S_DONE

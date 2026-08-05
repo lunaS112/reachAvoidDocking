@@ -1,0 +1,69 @@
+/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py:117: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  ckpt = torch.load(checkpoint_path, map_location=device)
+============================================================
+Hybrid Learning Controller -- Single Run
+============================================================
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=5, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=256, out_features=1, bias=True)
+      )
+    )
+  )
+)
+Loading cached grid values  (fingerprint=b99a01192e663a9e) ...
+  Cache loaded successfully.
+
+Initial state: px=2.00, py=10.00, vx=0.00, vy=0.00, theta=-1.57, omega=0.00
+
+Running simulation for 60.0s ...
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1455, in <module>
+    main()
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1449, in main
+    run_single(args)
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 795, in run_single
+    result = controller.simulate_docking(initial_state, args.max_sim_time)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py", line 319, in simulate_docking
+    g4 = self._min_time_and_grad_4d(s_4d, t_remaining_4d)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py", line 243, in _min_time_and_grad_4d
+    t_star, _status = find_min_brat_time_single(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/min_time_search.py", line 194, in find_min_brat_time_single
+    win_values = value_fn(win_times)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py", line 244, in <lambda>
+    value_fn=lambda times: self._value_fn_4d(s_4d, times),
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py", line 221, in _value_fn_4d
+    out = self.model({'coords': model_input})
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/modules.py", line 125, in forward
+    coords_transformed=self.periodic_transform_fn(coords_org)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'NoneType' object is not callable

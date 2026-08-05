@@ -1,0 +1,62 @@
+/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py:178: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  ckpt = torch.load(checkpoint_path, map_location=device)
+============================================================
+Hybrid Learning Controller -- Single Run
+============================================================
+SingleBVPNet(
+  (net): FCBlock(
+    (net): Sequential(
+      (0): Sequential(
+        (0): BatchLinear(in_features=5, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (1): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (2): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (3): Sequential(
+        (0): BatchLinear(in_features=256, out_features=256, bias=True)
+        (1): Sine()
+      )
+      (4): Sequential(
+        (0): BatchLinear(in_features=256, out_features=1, bias=True)
+      )
+    )
+  )
+)
+Loading cached grid values  (fingerprint=b99a01192e663a9e) ...
+  Cache loaded successfully.
+
+Initial state: px=2.00, py=10.00, vx=0.00, vy=0.00, theta=-1.57, omega=0.00
+
+Running simulation for 60.0s ...
+
+============================================================
+SIMULATION RESULTS
+============================================================
+Success:  False
+Docked:   False
+Collision:False
+Final state: px=-3.7779m  py=-2.9631m  vx=0.1904m/s  vy=-0.1269m/s  θ_err=0.0389rad (2.23°)  ω=-0.0000rad/s
+Duration: 60.00s
+Control effort: 1699.44
+Wall time: 9.88s
+
+============================================================
+GENERATING OUTPUTS
+============================================================
+Saving run summary: ./outputs/test_hybrid_learning_single/single_run_results.json
+Generating trajectory plot: ./outputs/test_hybrid_learning_single/trajectory.png
+Figure saved to ./outputs/test_hybrid_learning_single/trajectory.png
+Generating data plots: ./outputs/test_hybrid_learning_single/simulation_data.png
+Figure saved to ./outputs/test_hybrid_learning_single/simulation_data.png
+
+============================================================
+DONE
+============================================================
+Outputs saved to: ./outputs/test_hybrid_learning_single
+TEST_DONE

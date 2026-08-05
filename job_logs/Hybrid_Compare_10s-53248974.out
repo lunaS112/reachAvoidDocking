@@ -1,0 +1,2 @@
+Step 1: Compare Hybrid (17s trained) vs Baseline (10s) @ tMax=10.0, dt=0.5
+slurmstepd: error: *** JOB 53248974 ON fc10413 CANCELLED AT 2026-08-05T16:18:17 ***

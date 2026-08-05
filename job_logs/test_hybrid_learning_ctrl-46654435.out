@@ -1,0 +1,51 @@
+/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py:178: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  ckpt = torch.load(checkpoint_path, map_location=device)
+============================================================
+Hybrid Learning Controller -- Single Run
+============================================================
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1455, in <module>
+    main()
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1449, in main
+    run_single(args)
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 771, in run_single
+    controller = build_controller(ctrl_type, args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 168, in build_controller
+    return HybridLearningController(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/hybrid_learning_controller.py", line 178, in __init__
+    ckpt = torch.load(checkpoint_path, map_location=device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1097, in load
+    return _load(
+           ^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1525, in _load
+    result = unpickler.load()
+             ^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1492, in persistent_load
+    typed_storage = load_tensor(dtype, nbytes, key, _maybe_decode_ascii(location))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1466, in load_tensor
+    wrap_storage=restore_location(storage, location),
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1389, in restore_location
+    return default_restore_location(storage, map_location)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 414, in default_restore_location
+    result = fn(storage, location)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/serialization.py", line 392, in _deserialize
+    return obj.to(device=device)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/storage.py", line 187, in to
+    return _to(self, device, non_blocking)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/torch/_utils.py", line 89, in _to
+    untyped_storage = torch.UntypedStorage(self.size(), device=device)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: CUDA error: out of memory
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+

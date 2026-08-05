@@ -28,6 +28,7 @@ CONTROLLER_COLORS = {
     'mpc_terminal': '#2ca02c',   # green
     'grid_based': '#d62728',     # red
     'rl': '#9467bd',             # purple
+    'hybrid_learning': '#e377c2', # pink
 }
 
 CONTROLLER_LABELS = {
@@ -37,6 +38,7 @@ CONTROLLER_LABELS = {
     'mpc_terminal': 'MPC+Terminal',
     'grid_based': 'Grid-Based HJ',
     'rl': 'RL (DDQN)',
+    'hybrid_learning': 'Hybrid Learning',
 }
 
 

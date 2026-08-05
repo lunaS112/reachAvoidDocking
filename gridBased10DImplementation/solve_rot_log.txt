@@ -1,0 +1,29 @@
+================================================================================
+PHASE 1.1: HJ REACHABILITY SOLVER FOR ROTATIONAL4D
+================================================================================
+
+Grid Configuration:
+  θ range: [-0.5236, 0.5236] rad (±30.0°)
+  ω range: [-2.00, 2.00] rad/s
+  Grid size: 25 × 25 × 25 × 25
+  Target: |θ| ≤ 5.00°, |ω| ≤ 0.20 rad/s
+  Time: [0, 10.0] s, 101 steps, dt=0.1000
+
+Creating 4D grid...
+  Grid shape: (25, 25, 25, 25)
+  Total grid points: 390625
+
+Initializing target set...
+  V shape: (25, 25, 25, 25)
+  V range: [0.000000, 9.000000]
+  Points in target (V=0): 144
+
+Running backward Bellman iteration...
+  (This is a simplified solver without full HJI verification)
+  Starting backward propagation...
+  Time step: 0.1000s
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/gridBased10DImplementation/src/solve_hj_rotational4d.py", line 121, in <module>
+    MAX_ANGULAR_ACC = np.linalg.norm(MAX_CONTROL) / dyn.i_scalar  # max angular acceleration
+                                                    ^^^^^^^^^^^^
+AttributeError: 'Rotational10D' object has no attribute 'i_scalar'

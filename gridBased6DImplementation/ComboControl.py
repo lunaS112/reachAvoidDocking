@@ -215,9 +215,9 @@ class ComboController:
         loaded = self._try_load_cache(cache_dir)
         if not loaded:
             print("Solving 4D HJ PDE ...")
-            self.values_4D = hj.solve(self.solver_settings_4D, self.docking_problem_4D, self.grid_4D, self.times, self.terminal_values_4D)
+            self.values_4D = hj.solve(self.solver_settings_4D, self.docking_problem_4D, self.grid_4D, self.times, self.terminal_values_4D, progress_bar=False)
             print("Solving 2D HJ PDE ...")
-            self.values_2D = hj.solve(self.solver_settings_2D, self.docking_problem_2D, self.grid_2D, self.times, self.terminal_values_2D)
+            self.values_2D = hj.solve(self.solver_settings_2D, self.docking_problem_2D, self.grid_2D, self.times, self.terminal_values_2D, progress_bar=False)
             self._save_cache(cache_dir)
 
         # Obtain values from 4D value function

@@ -1,0 +1,27 @@
+{
+  "type": "point-wise max reconstruction",
+  "subsystem_1": "Rotational4D",
+  "subsystem_2": "Translational6D",
+  "reconstruction_method": "max(V_rot, V_trans)",
+  "time_steps": 101,
+  "time_range": [
+    0.0,
+    10.0
+  ],
+  "rotational_shape": [
+    101,
+    25,
+    25,
+    25,
+    25
+  ],
+  "translational_shape": [
+    101,
+    15,
+    15,
+    15,
+    15,
+    15,
+    15
+  ]
+}

@@ -1,0 +1,125 @@
+
+Feasibility bounds (2/3 tMax budget): v_max=0.767 m/s  omega_max=0.3500 rad/s
+  WARNING: SAMPLING_STATE_RANGE exceeds feasibility bounds
+
+Building grid-based controller (for IC filtering & rollouts)...
+  JAX backend: gpu  devices: [CudaDevice(id=0)]
+Solving 4D HJ PDE ...
+  0%|          |  0.0000/60.0 [00:00<?, ?sim_s/s]jax.io_callback failed
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 377, in io_callback_impl
+    return tree_util.tree_map(np.asarray, callback(*args))
+                                          ^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 64, in __call__
+    return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/experimental/host_callback.py", line 838, in __call__
+    return self.callback_func(args[0], ())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/hj_reachability/solver.py", line 117, in <lambda>
+    return jax.experimental.host_callback.id_tap(lambda n, __: self._tqdm.update(n - self._tqdm.n), n)
+                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1242, in update
+    self.refresh(lock_args=self.lock_args)
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1347, in refresh
+    self.display()
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1495, in display
+    self.sp(self.__str__() if msg is None else msg)
+            ^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1151, in __str__
+    return self.format_meter(**self.format_dict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 576, in format_meter
+    eta_dt = (datetime.now() + timedelta(seconds=remaining)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported type for timedelta seconds component: jaxlib.xla_extension.ArrayImpl
+E0701 12:14:23.394507 3605111 pjrt_stream_executor_client.cc:3084] Execution of replica 0 failed: INTERNAL: CustomCall failed: CpuCallback error: Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1435, in <module>
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1431, in main
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 954, in run_compare
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 137, in build_controller
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/grid_based_controller.py", line 118, in __init__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/gridBased6DImplementation/ComboControl.py", line 218, in __init__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/traceback_util.py", line 180, in reraise_with_filtered_traceback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 356, in cache_miss
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 189, in _python_pjit_helper
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 2781, in bind
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 442, in bind_with_trace
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 948, in process_primitive
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1764, in _pjit_call_impl
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1739, in call_impl_cache_miss
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1693, in _pjit_call_impl_python
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/profiler.py", line 333, in wrapper
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py", line 1279, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 2845, in _wrapped_callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 2793, in _wrapped_callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 433, in _callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 380, in io_callback_impl
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 64, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/experimental/host_callback.py", line 838, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/hj_reachability/solver.py", line 117, in <lambda>
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1242, in update
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1347, in refresh
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1495, in display
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1151, in __str__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 578, in format_meter
+TypeError: unsupported type for timedelta seconds component: jaxlib.xla_extension.ArrayImpl
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1435, in <module>
+    main()
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1431, in main
+    run_compare(args)
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 954, in run_compare
+    grid_controller = build_controller('grid_based', args)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 137, in build_controller
+    return GridBasedController(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/grid_based_controller.py", line 118, in __init__
+    self.combo = _ComboController(
+                 ^^^^^^^^^^^^^^^^^
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/gridBased6DImplementation/ComboControl.py", line 218, in __init__
+    self.values_4D = hj.solve(self.solver_settings_4D, self.docking_problem_4D, self.grid_4D, self.times, self.terminal_values_4D)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+jaxlib.xla_extension.XlaRuntimeError: INTERNAL: CustomCall failed: CpuCallback error: Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1435, in <module>
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 1431, in main
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 954, in run_compare
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/run_controller.py", line 137, in build_controller
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/deepReachMPCReachAvoid/utils/controllers/grid_based_controller.py", line 118, in __init__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/gridBased6DImplementation/ComboControl.py", line 218, in __init__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/traceback_util.py", line 180, in reraise_with_filtered_traceback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 356, in cache_miss
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 189, in _python_pjit_helper
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 2781, in bind
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 442, in bind_with_trace
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/core.py", line 948, in process_primitive
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1764, in _pjit_call_impl
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1739, in call_impl_cache_miss
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/pjit.py", line 1693, in _pjit_call_impl_python
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/profiler.py", line 333, in wrapper
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py", line 1279, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 2845, in _wrapped_callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 2793, in _wrapped_callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 433, in _callback
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 380, in io_callback_impl
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/callback.py", line 64, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/experimental/host_callback.py", line 838, in __call__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/hj_reachability/solver.py", line 117, in <lambda>
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1242, in update
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1347, in refresh
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1495, in display
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1151, in __str__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 578, in format_meter
+TypeError: unsupported type for timedelta seconds component: jaxlib.xla_extension.ArrayImpl
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+Exception ignored in: <function tqdm.__del__ at 0x14c60ace5620>
+Traceback (most recent call last):
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1148, in __del__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1302, in close
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1495, in display
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 1151, in __str__
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/tqdm/std.py", line 534, in format_meter
+  File "/scratch/dandans/Deepreach_mpc/reachAvoidDocking/.venv/lib/python3.11/site-packages/jax/_src/array.py", line 289, in __bool__
+AttributeError: 'NoneType' object has no attribute 'check_bool_conversion'

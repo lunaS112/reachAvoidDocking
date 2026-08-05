@@ -95,7 +95,7 @@ solver_settings = hj.SolverSettings.with_accuracy(
 # Propogate the value function backwards in time
 times = jnp.linspace(0, -25, 251, endpoint=True)
 
-values = hj.solve(solver_settings, docking_problem, grid, times, terminal_values)
+values = hj.solve(solver_settings, docking_problem, grid, times, terminal_values, progress_bar=False)
 
 
 def save_values_gif(values, grid, times, save_path="outputs/values_2D.gif"):
