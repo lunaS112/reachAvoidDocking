@@ -219,3 +219,7 @@ gridBased10DImplementation/artifacts/ground_truth/*.npy
 gridBased13DImplementation/artifacts/ground_truth/*.npy
 gridBased6DImplementation/artifacts/ground_truth/*.npy
 *.npy
+
+# SLURM / profiling logs (regenerated per-job, not source)
+job_logs/
+profile_logs/
